@@ -1,8 +1,17 @@
 @import "tailwindcss";
 
+/*
+ * Viewport lock. The renderer screenshots a viewport sized exactly to the
+ * canvas, so the document must contribute ZERO extra pixels: default body
+ * margins, scrollbars or a shrinking html box would crop or offset every frame.
+ */
 html,
 body {
+  width: 100%;
   height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
   background: #000;
 }
 
@@ -15,6 +24,11 @@ body {
   overflow: hidden;
   background: #000;
   transform-origin: 50% 50%;
+  /* inherited by every text layer: hint-free, hinted-crisp glyph rasterization */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
+  font-kerning: normal;
 }
 
 /* 2.5D virtual camera rig */
@@ -37,12 +51,40 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  transform-style: preserve-3d;
 }
 
-/* kinetic text split unit */
+/*
+ * One wrapper per motion phase (entrance → emphasis → exit). Nested, so their
+ * transforms compose instead of overwriting each other; `preserve-3d` keeps
+ * 3D presets projecting correctly through the chain.
+ */
+.mf-slot {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+
+/*
+ * Kinetic text split unit.
+ * The padding/margin pair is a clipping guard: mask-reveal presets clip at the
+ * element box, and Arabic ascenders/descenders/diacritics overflow the nominal
+ * line box. The negative margins keep the layout footprint unchanged.
+ * `white-space: pre` and `unicode-bidi: isolate` keep each word intact and
+ * stop mixed AR/EN runs from reordering across span boundaries.
+ * NO `will-change` here on purpose: a permanently promoted text element is
+ * rasterized once at its initial scale and then stretched (blurred) when the
+ * camera zooms.
+ */
 .mf-unit {
   display: inline-block;
-  will-change: transform, opacity, filter;
+  padding-top: 0.15em;
+  padding-bottom: 0.2em;
+  margin-top: -0.15em;
+  margin-bottom: -0.2em;
+  line-height: 1.35;
+  white-space: pre;
+  unicode-bidi: isolate;
 }
 
 .mf-sweep {

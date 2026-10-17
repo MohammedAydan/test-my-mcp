@@ -5,11 +5,13 @@ build/
 coverage/
 .vite/
 .cache/
-logs/
 *.log
 .DS_Store
 .env
 .env.*
 tmp/
-renders/
-data/
+
+# Engine working data (vault, sfx bank, renders). Anchored on purpose: an
+# unanchored `renders/` or `logs/` here would also swallow the client-job
+# template's renders/ and logs/ directories.
+/packages/core-engine/data/

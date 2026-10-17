@@ -34,15 +34,18 @@ const SIZE_TABLE: Record<CanvasShape, Partial<Record<CanvasScale, readonly [numb
   "4:5": { 1080: [1080, 1350], 2160: [2160, 2700] },
 };
 
-export const canvasSchema = z
+/**
+ * Canvas shape + scale, including the shape/scale pairing rule (1:1 and 4:5
+ * have no 720p master). Exported unwrapped so other contracts — e.g. the
+ * creative project manifest — validate a canvas with exactly the same rules
+ * instead of restating them.
+ */
+export const canvasShapeScaleSchema = z
   .strictObject({
     shape: z.enum(CANVAS_SHAPES).default("16:9"),
-    scale: z.union([
-      z.literal(720),
-      z.literal(1080),
-      z.literal(1440),
-      z.literal(2160),
-    ]).default(1080),
+    scale: z
+      .union([z.literal(720), z.literal(1080), z.literal(1440), z.literal(2160)])
+      .default(1080),
   })
   .superRefine((canvas, ctx) => {
     if (!SCALES_PER_SHAPE[canvas.shape].includes(canvas.scale)) {
@@ -53,6 +56,8 @@ export const canvasSchema = z
       });
     }
   });
+
+export const canvasSchema = canvasShapeScaleSchema;
 export type Canvas = z.infer<typeof canvasSchema>;
 
 /** Resolve a validated canvas to pixel dimensions. */

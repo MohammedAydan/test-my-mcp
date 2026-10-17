@@ -30,12 +30,26 @@ export class RendererPool {
   }): Promise<IPage> {
     const browser = await chromium.launch({
       headless: true,
-      args: ["--disable-lcd-text", "--force-device-scale-factor=1", "--hide-scrollbars"],
+      args: [
+        // grayscale AA + no subpixel fringing: identical glyph rasterization on
+        // every machine and every worker, so parallel parts never disagree
+        "--disable-lcd-text",
+        "--font-render-hinting=none",
+        // one device pixel per CSS pixel, whatever the host display scale is
+        "--force-device-scale-factor=1",
+        "--hide-scrollbars",
+      ],
     });
     this.browsers.push(browser);
+    // Viewport lock: the screenshot is exactly `viewportWidth × viewportHeight`
+    // CSS pixels at DSF 1. Production renders the canvas 1:1; draft renders a
+    // uniform downscale of it. Any scrollbar or body margin would crop frames —
+    // the runtime zeroes those in `style.css`.
     const context = await browser.newContext({
       viewport: { width: opts.viewportWidth, height: opts.viewportHeight },
       deviceScaleFactor: 1,
+      reducedMotion: "no-preference",
+      colorScheme: "dark",
     });
     const page = await context.newPage();
     const url =
@@ -70,12 +84,20 @@ export interface IPage {
   close: () => Promise<unknown>;
 }
 
-/** Frame screenshot, JPEG in memory. */
+/**
+ * Frame screenshot, JPEG in memory.
+ *
+ * `seekToFrame` only resolves once the frame is fully settled (timeline seek →
+ * layer lifecycle → media resync → fonts → image decode → layout flush → two
+ * committed animation frames), so the very next screenshot is that frame. The
+ * screenshot is clipped to the viewport, never full-page: a full-page capture
+ * would silently change resolution if the document ever overflowed.
+ */
 async function captureFrame(page: Page, frame: number, jpegQuality: number): Promise<Buffer> {
   await page.evaluate((f) => {
     return (globalThis as unknown as { seekToFrame(frame: number): Promise<void> }).seekToFrame(f);
   }, frame);
-  return (await page.screenshot({ type: "jpeg", quality: jpegQuality })) as Buffer;
+  return (await page.screenshot({ type: "jpeg", quality: jpegQuality, fullPage: false })) as Buffer;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "name": "{{PROJECT_NAME}}",
+  "createdAt": "{{CREATED_AT}}",
+  "engine": {
+    "url": "{{ENGINE_URL}}",
+    "preferredQuality": "draft"
+  },
+  "canvasDefault": { "shape": "16:9", "scale": 1080 },
+  "language": { "primary": "{{LANG}}", "secondary": "en" },
+  "brand": {
+    "colors": { "bg": "#05070d", "accent": "#38bdf8", "text": "#ffffff" },
+    "logoAssetId": null
+  },
+  "scenes": [
+    { "id": "scene-01", "file": "scenes/scene-01.json", "status": "draft" }
+  ],
+  "workflow": {
+    "requireInspectBeforeProduction": true,
+    "autoOpenPreview": true
+  }
+}

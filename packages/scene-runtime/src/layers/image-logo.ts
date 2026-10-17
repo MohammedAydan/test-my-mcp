@@ -24,6 +24,25 @@ function maskStyle(mask: LogoMask, radiusPx?: number): Partial<CSSStyleDeclarati
   }
 }
 
+/**
+ * Aspect-ratio safety for bitmaps and SVG marks.
+ *
+ * Without `object-fit: contain` + max dimensions, a logo whose intrinsic
+ * aspect ratio differs from the requested box is stretched to fill it — the
+ * classic "warped logo" defect. `max-width/max-height: 100%` also keeps the
+ * mark inside its layer box, and `flex-shrink: 0` stops it collapsing when the
+ * frame is a flex container.
+ */
+export const SAFE_IMG_CSS = [
+  "width:100%",
+  "height:100%",
+  "object-fit:contain",
+  "max-width:100%",
+  "max-height:100%",
+  "flex-shrink:0",
+  "display:block",
+].join(";");
+
 export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { content: HTMLElement } {
   const host = document.createElement("div");
   host.style.cssText = [
@@ -33,6 +52,8 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
     "transform:translate(-50%,-50%)",
     `width:${layer.widthPx}px`,
     layer.heightPx ? `height:${layer.heightPx}px` : "",
+    "max-width:100%",
+    "max-height:100%",
   ].join(";");
 
   const filters: string[] = [];
@@ -70,7 +91,7 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
   const img = document.createElement("img");
   img.src = ctx.resolveAsset(layer.assetId);
   img.alt = layer.name ?? "logo";
-  img.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
+  img.style.cssText = SAFE_IMG_CSS;
   frame.appendChild(img);
 
   if (layer.ring) {

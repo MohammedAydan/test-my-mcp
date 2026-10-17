@@ -1,11 +1,27 @@
 import "./style.css";
+import type { gsap } from "gsap";
 import { resolveCanvasSize, type SceneSpec } from "@motionforge/scene-spec";
-import { createStage } from "./stage.js";
+import { createStage, resetStage, type Stage } from "./stage.js";
 import { loadSceneFonts } from "./fonts.js";
 import { assetKindOf, fetchScene, preloadAssets, resolveAssetUrl } from "./api.js";
 import { buildScene } from "./scene-builder.js";
-import { mountTimelineUI } from "./timeline-ui.js";
+import { mountTimelineUI, type TimelineUIHandle } from "./timeline-ui.js";
+import {
+  clampFrame,
+  configureDeterministicGsap,
+  createFrameSettler,
+  decodeImages,
+  flushLayout,
+  IMAGE_LOAD_GRACE_MS,
+  nextPaintFrame,
+  type FrameSettler,
+} from "./determinism.js";
+import type { LayerLifecycle } from "./motion-slots.js";
 import type { RenderConfig, Seekable } from "./types.js";
+
+// Must run before any timeline exists: disables GSAP's clock compensation and
+// forced 3D promotion (see determinism.ts for why each one matters).
+configureDeterministicGsap();
 
 function showError(message: string): void {
   const box = document.getElementById("mf-error");
@@ -18,9 +34,19 @@ function showError(message: string): void {
   console.error(`[motionforge] ${message}`);
 }
 
-async function nextPaint(): Promise<void> {
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+interface MountedScene {
+  sceneId: string;
+  scene: SceneSpec;
+  fps: number;
+  totalFrames: number;
+  tl: gsap.core.Timeline;
+  lifecycle: LayerLifecycle;
+  settle: FrameSettler;
+  ui: TimelineUIHandle | null;
 }
+
+let stage: Stage | null = null;
+let mounted: MountedScene | null = null;
 
 async function boot(): Promise<void> {
   let readyResolve!: () => void;
@@ -53,67 +79,144 @@ async function boot(): Promise<void> {
   }
 
   const { width, height } = resolveCanvasSize(scene.canvas);
-  const stage = createStage(width, height);
+  stage = createStage(width, height);
+
+  // one frame-index → one timeline-time mapping, independent of what was
+  // captured before; the engine drives it exclusively
+  window.seekToFrame = async (frame: number): Promise<void> => {
+    if (!mounted) return;
+    await mounted.settle(clampFrame(frame, mounted.totalFrames) / mounted.fps);
+  };
 
   try {
-    const { lottieJson } = await preloadAssets(scene);
-
-    const seekables: Seekable[] = [];
-    const fonts = await loadSceneFonts(scene);
-    // assetId → engine URL (the LLM references ids; the runtime needs srcs)
-    const srcById = new Map(scene.assets.map((asset) => [asset.id, asset.src]));
-    const { tl } = buildScene(scene, stage, {
-      fonts,
-      resolveAsset: (assetId) => {
-        const src = srcById.get(assetId);
-        if (src === undefined) throw new Error(`asset "${assetId}" is not declared in scene.assets`);
-        return resolveAssetUrl(src);
-      },
-      assetKind: assetKindOf(scene),
-      lottieData: (assetId) => {
-        const data = lottieJson.get(assetId);
-        if (!data) throw new Error(`lottie data for "${assetId}" was not preloaded`);
-        return data;
-      },
-      registerSeekable: (seekable) => seekables.push(seekable),
-    });
-
-    const totalFrames = Math.max(1, Math.round((scene.durationMs / 1000) * fps));
-    const config: RenderConfig = {
-      fps,
-      width,
-      height,
-      durationMs: scene.durationMs,
-      totalFrames,
-    };
-    window.renderConfig = config;
-
-    window.seekToFrame = async (frame: number) => {
-      const clamped = Math.min(totalFrames - 1, Math.max(0, Math.round(frame)));
-      tl.pause();
-      tl.seek(clamped / fps, false);
-      await document.fonts.ready;
-      const tSec = clamped / fps;
-      await Promise.all(seekables.map((seek) => seek(tSec)));
-      await nextPaint(); // let the compositor flush before capture
-    };
-
-    if (renderMode) {
-      // headless render entry: settle on frame 0, then signal readiness
-      await window.seekToFrame(0);
-    } else {
-      mountTimelineUI(tl, scene, fps);
-      // live updates from the engine: refetch and rebuild the page
-      const events = new EventSource(`/api/scenes/${encodeURIComponent(sceneId)}/events`);
-      events.addEventListener("updated", () => window.location.reload());
-      events.onerror = () => events.close(); // engine restarts must not spam the console
-    }
-
+    await mountScene(scene, sceneId, fps, renderMode);
     readyResolve();
   } catch (error) {
     showError(error instanceof Error ? error.message : String(error));
     readyResolve();
+    return;
+  }
+
+  if (!renderMode) {
+    // Live preview: rebuild in place when the engine pushes an update. A full
+    // page reload would drop the scrubber position and flash a blank stage;
+    // more importantly, a rebuild MUST start from a clean stage or the previous
+    // scene's DOM and inline camera styles bleed into the new one.
+    const events = new EventSource(`/api/scenes/${encodeURIComponent(sceneId)}/events`);
+    let pending: Promise<void> = Promise.resolve();
+    events.addEventListener("updated", () => {
+      pending = pending.then(() => void rebuild(sceneId, fps)).catch(() => undefined);
+    });
+    events.onerror = () => events.close(); // engine restarts must not spam the console
   }
 }
 
-boot();
+async function mountScene(
+  scene: SceneSpec,
+  sceneId: string,
+  fps: number,
+  renderMode: boolean
+): Promise<void> {
+  if (!stage) throw new Error("stage not created");
+
+  const { width, height } = resolveCanvasSize(scene.canvas);
+  stage.setSize(width, height);
+
+  const { lottieJson } = await preloadAssets(scene);
+  const fonts = await loadSceneFonts(scene);
+  // assetId → engine URL (the LLM references ids; the runtime needs srcs)
+  const srcById = new Map(scene.assets.map((asset) => [asset.id, asset.src]));
+
+  const seekables: Seekable[] = [];
+  const { tl, lifecycle } = buildScene(scene, stage, {
+    fonts,
+    resolveAsset: (assetId) => {
+      const src = srcById.get(assetId);
+      if (src === undefined) throw new Error(`asset "${assetId}" is not declared in scene.assets`);
+      return resolveAssetUrl(src);
+    },
+    assetKind: assetKindOf(scene),
+    lottieData: (assetId) => {
+      const data = lottieJson.get(assetId);
+      if (!data) throw new Error(`lottie data for "${assetId}" was not preloaded`);
+      return data;
+    },
+    registerSeekable: (seekable) => seekables.push(seekable),
+  });
+  // `focusTarget` camera moves measure element boxes, so the rig must be laid
+  // out before the first keyframe tween is evaluated
+  flushLayout(stage.stage);
+
+  const totalFrames = Math.max(1, Math.round((scene.durationMs / 1000) * fps));
+  const config: RenderConfig = {
+    fps,
+    width,
+    height,
+    durationMs: scene.durationMs,
+    totalFrames,
+  };
+  window.renderConfig = config;
+
+  let targetTimeSec = 0;
+  const settle: FrameSettler = createFrameSettler({
+    seekTimeline: () => {
+      // suppressEvents = false → onUpdate callbacks (counters, progress bars,
+      // Lottie scrubbing) run on every seek, including non-linear jumps
+      tl.seek(targetTimeSec, false);
+    },
+    applyLifecycle: (timeSec) => lifecycle.apply(timeSec * 1000),
+    runSeekables: async (timeSec) => {
+      for (const seek of seekables) await seek(timeSec);
+    },
+    fontsReady: () => document.fonts.ready.then(() => undefined),
+    decodeImages: () => decodeImages(stage!.content),
+    imageLoadGraceMs: IMAGE_LOAD_GRACE_MS,
+    flushLayout: () => flushLayout(stage!.stage),
+    nextFrame: nextPaintFrame,
+  });
+
+  mounted = {
+    sceneId,
+    scene,
+    fps,
+    totalFrames,
+    tl,
+    lifecycle,
+    settle: async (timeSec: number) => {
+      targetTimeSec = timeSec;
+      await settle(timeSec);
+    },
+    ui: null,
+  };
+
+  if (renderMode) {
+    // headless render entry: settle on frame 0, then signal readiness
+    await mounted.settle(0);
+  } else {
+    mounted.ui = mountTimelineUI(tl, scene, fps);
+  }
+}
+
+function unmountScene(): void {
+  if (!mounted || !stage) return;
+  mounted.ui?.dispose();
+  mounted.tl.kill();
+  mounted.lifecycle.clear();
+  resetStage(stage);
+  mounted = null;
+}
+
+async function rebuild(sceneId: string, fps: number): Promise<void> {
+  try {
+    const next = await fetchScene(sceneId);
+    const previousFrame = mounted ? mounted.tl.time() : 0;
+    unmountScene();
+    await mountScene(next, sceneId, fps, false);
+    // keep the operator where they were instead of jumping back to frame 0
+    if (mounted) await mounted.settle(previousFrame);
+  } catch (error) {
+    showError(`Could not apply scene update: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+void boot();

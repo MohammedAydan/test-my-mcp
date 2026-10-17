@@ -18,3 +18,5 @@ export * from "./scene.js";
 export * from "./validate.js";
 // --- authoring guidance (LLM-facing, derived from the schemas above) -------
 export * from "./field-guide.js";
+// --- creative project manifest (client/job workspaces) ---------------------
+export * from "./project-manifest.js";

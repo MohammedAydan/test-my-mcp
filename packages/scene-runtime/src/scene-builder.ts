@@ -5,6 +5,12 @@ import { applyCamera } from "./camera.js";
 import { PRESET_DEFAULTS, applyEmphasis, applyEntrance, applyExit, type PresetTarget } from "./presets.js";
 import { renderLayer, type BuiltLayer } from "./layers/index.js";
 import type { LayerContext } from "./layers/context.js";
+import {
+  createMotionWrappers,
+  LayerLifecycle,
+  planMotionSlots,
+  type SceneLayer,
+} from "./motion-slots.js";
 import type { Seekable } from "./types.js";
 
 export interface SceneBuildOptions {
@@ -18,12 +24,15 @@ export interface SceneBuildOptions {
 export interface BuiltScene {
   tl: gsap.core.Timeline;
   layerFocus: Map<string, HTMLElement>;
+  lifecycle: LayerLifecycle;
 }
 
 /**
  * Builds the full DOM scene graph and one deterministic GSAP master timeline
  * (paused). The whole scene is seekable frame-by-frame; nothing runs on wall
- * clock.
+ * clock. Each layer gets a nested entrance/emphasis/exit wrapper chain so the
+ * three motion phases never write to the same element
+ * (see `motion-slots.ts` for why that matters).
  */
 export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptions): BuiltScene {
   const tl = gsap.timeline({ paused: true });
@@ -31,6 +40,7 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
   tl.to({}, { duration: scene.durationMs / 1000 }, 0);
 
   const layerFocus = new Map<string, HTMLElement>();
+  const lifecycle = new LayerLifecycle();
 
   const sorted = scene.layers
     .map((layer, index) => ({ layer, index }))
@@ -39,14 +49,17 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
   sorted.forEach(({ layer, index }) => {
     const layerRoot = document.createElement("div");
     layerRoot.className = "mf-layer";
+    layerRoot.dataset.layerId = layer.id;
     const baseZ = 10 + index * 10;
     layerRoot.style.zIndex = `${layer.type === "foregroundFX" ? baseZ + 400 : baseZ}`;
     stage.content.appendChild(layerRoot);
 
+    const wrappers = createMotionWrappers(layerRoot);
+
     const ctx: LayerContext = {
       tl,
       scene,
-      content: layerRoot,
+      content: wrappers.content,
       stageContent: stage.content,
       rig: stage.rig,
       width: stage.width,
@@ -60,75 +73,90 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
     };
 
     const built = renderLayer(layer, ctx);
-    applyLayerTiming(tl, scene, layer, built, stage.rig, layerFocus);
+    applyLayerTiming(tl, scene, layer, built, wrappers, stage.rig, layerFocus, lifecycle);
   });
 
   applyCamera(tl, scene, stage.rig, layerFocus);
   applyTransitions(tl, scene, stage.rig);
 
+  lifecycle.applyInitial();
+
   window.masterTimeline = tl;
-  return { tl, layerFocus };
+  return { tl, layerFocus, lifecycle };
 }
 
 function applyLayerTiming(
   tl: gsap.core.Timeline,
   scene: SceneSpec,
-  layer: SceneSpec["layers"][number],
+  layer: SceneLayer,
   built: BuiltLayer,
+  wrappers: ReturnType<typeof createMotionWrappers>,
   rig: HTMLElement,
-  layerFocus: Map<string, HTMLElement>
+  layerFocus: Map<string, HTMLElement>,
+  lifecycle: LayerLifecycle
 ): void {
-  const startMs = layer.at;
-  const endMs = layer.duration !== undefined ? layer.at + layer.duration : scene.durationMs;
-
-  gsap.set(built.content, { autoAlpha: 0 });
-
-  const entranceDurMs = layer.entrance
-    ? (layer.entrance.durationMs ?? PRESET_DEFAULTS[layer.entrance.name].durationMs)
-    : 0;
-  const exitDurMs = layer.exit
-    ? (layer.exit.durationMs ?? PRESET_DEFAULTS[layer.exit.name].durationMs)
-    : 0;
-
+  const plan = planMotionSlots(layer, scene.durationMs);
   const staggerMs =
     layer.entrance?.staggerMs ??
     (layer.type === "kineticText" ? (layer.animateBy === "char" ? 30 : 80) : 60);
 
-  const target: PresetTarget = {
-    el: built.content,
+  lifecycle.register({
+    id: layer.id,
+    root: wrappers.root,
+    startMs: plan.visibleStartMs,
+    endMs: plan.visibleEndMs,
+  });
+
+  const slotTarget = (
+    el: HTMLElement,
+    window: { startMs: number; endMs: number }
+  ): PresetTarget => ({
+    el,
+    // overlays (lightSweep) belong to the painted content, not the wrapper,
+    // so the sweep keeps hugging the element's own box
+    sweepHost: built.content,
     units: built.units,
     unitStaggerMs: staggerMs,
-    startMs,
-    endMs,
+    startMs: window.startMs,
+    endMs: window.endMs,
     rig,
-  };
+  });
 
-  if (layer.entrance) {
-    applyEntrance(tl, layer.entrance, target);
+  if (plan.entrance && layer.entrance) {
+    applyEntrance(tl, layer.entrance, slotTarget(wrappers.entrance, plan.entrance));
   } else {
-    tl.set(built.content, { autoAlpha: 1 }, startMs / 1000);
+    gsap.set(wrappers.entrance, { autoAlpha: 1 });
   }
 
-  const emphasisStart = startMs + entranceDurMs;
-  const emphasisEnd = endMs - exitDurMs;
-  if (layer.emphasis && emphasisEnd - emphasisStart > 200) {
-    applyEmphasis(tl, layer.emphasis, { ...target, startMs: emphasisStart, endMs: emphasisEnd });
+  if (plan.emphasis && layer.emphasis) {
+    applyEmphasis(tl, layer.emphasis, slotTarget(wrappers.emphasis, plan.emphasis));
   }
 
-  if (layer.exit) {
-    applyExit(tl, layer.exit, target);
-  } else if (endMs < scene.durationMs) {
-    tl.set(built.content, { autoAlpha: 0 }, endMs / 1000);
+  if (plan.exit && layer.exit) {
+    applyExit(tl, layer.exit, slotTarget(wrappers.exit, plan.exit));
   }
 
+  // camera `focusTarget` centers on the painted content, not the full-bleed wrapper
   layerFocus.set(layer.id, built.content);
 }
 
 /**
  * Scene-level transition overlays (they sit above every layer, below the UI).
  * All are timeline tweens → frame-deterministic.
+ *
+ * Every overlay starts `display: none` and is switched on with an explicit
+ * `tl.set` at its `at` time, instead of relying on `fromTo`'s implicit
+ * `immediateRender`. That keeps overlays hidden at every time before `at`
+ * under arbitrary (non-linear) seeking — otherwise a solid wipe cover can be
+ * painted over the opening frames.
  */
 function applyTransitions(tl: gsap.core.Timeline, scene: SceneSpec, rig: HTMLElement): void {
+  const prepare = (el: HTMLElement, at: number, dur: number): void => {
+    el.style.display = "none";
+    tl.set(el, { display: "block" }, at);
+    tl.set(el, { display: "none" }, at + dur + 0.001);
+  };
+
   for (const tr of scene.transitions) {
     const at = tr.at / 1000;
     const dur = tr.durationMs / 1000;
@@ -145,14 +173,15 @@ function applyTransitions(tl: gsap.core.Timeline, scene: SceneSpec, rig: HTMLEle
         cover.style.maskImage = cover.style.webkitMaskImage ?? "";
       }
       rig.appendChild(cover);
+      prepare(cover, at, dur);
+
       const from = { xPercent: 0, yPercent: 0 };
       const to = { xPercent: 0, yPercent: 0 };
       if (tr.direction === "left") { from.xPercent = -130; to.xPercent = 130; }
       if (tr.direction === "right") { from.xPercent = 130; to.xPercent = -130; }
       if (tr.direction === "up") { from.yPercent = -130; to.yPercent = 130; }
       if (tr.direction === "down") { from.yPercent = 130; to.yPercent = -130; }
-      tl.fromTo(cover, from, { ...to, duration: dur, ease: "power4.inOut" }, at);
-      tl.set(cover, { display: "none" }, at + dur + 0.001);
+      tl.fromTo(cover, from, { ...to, duration: dur, ease: "power4.inOut", immediateRender: false }, at);
     } else if (tr.kind === "glitch") {
       // stepped RGB-fringe flicker + rig jitter, fully stepped (deterministic)
       const fringe = document.createElement("div");
@@ -161,6 +190,7 @@ function applyTransitions(tl: gsap.core.Timeline, scene: SceneSpec, rig: HTMLEle
         "background:repeating-linear-gradient(0deg, rgba(255,0,60,0.16) 0 3px, transparent 3px 7px, rgba(0,255,255,0.14) 7px 9px, transparent 9px 14px);",
       ].join(";");
       rig.appendChild(fringe);
+      prepare(fringe, at, dur);
 
       const steps = 8;
       const jitters = [-1, 1, -0.6, 0.8, -0.3, 0.5, -0.2, 0].map((k) => k * 16 * tr.intensity);
@@ -169,7 +199,6 @@ function applyTransitions(tl: gsap.core.Timeline, scene: SceneSpec, rig: HTMLEle
         tl.set(fringe, { opacity: i % 2 === 0 ? 0.9 : 0.3 }, at + (dur * i) / steps);
       });
       tl.set(rig, { x: 0 }, at + dur);
-      tl.set(fringe, { display: "none" }, at + dur + 0.001);
     } else if (tr.kind === "whipPan") {
       const band = document.createElement("div");
       band.style.cssText = [
@@ -178,12 +207,13 @@ function applyTransitions(tl: gsap.core.Timeline, scene: SceneSpec, rig: HTMLEle
         "backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);",
       ].join(";");
       rig.appendChild(band);
+      prepare(band, at, dur);
+
       const dir = tr.direction === "left" ? -1 : 1;
       tl.to(rig, { xPercent: `+=${dir * 24}`, duration: dur / 2, ease: "power2.in" }, at);
       tl.to(rig, { xPercent: `-=${dir * 24}`, duration: dur / 2, ease: "power2.out" }, at + dur / 2);
-      tl.fromTo(band, { opacity: 0 }, { opacity: 1, duration: dur * 0.3, ease: "none" }, at);
+      tl.fromTo(band, { opacity: 0 }, { opacity: 1, duration: dur * 0.3, ease: "none", immediateRender: false }, at);
       tl.to(band, { opacity: 0, duration: dur * 0.7, ease: "none" }, at + dur * 0.3);
-      tl.set(band, { display: "none" }, at + dur + 0.001);
     } else {
       // morph: blur-dissolve veil
       const veil = document.createElement("div");
@@ -193,9 +223,10 @@ function applyTransitions(tl: gsap.core.Timeline, scene: SceneSpec, rig: HTMLEle
         "backdrop-filter:blur(50px);-webkit-backdrop-filter:blur(50px);",
       ].join(";");
       rig.appendChild(veil);
+      prepare(veil, at, dur);
+
       tl.to(veil, { opacity: 1, duration: dur / 2, ease: "sine.in" }, at);
       tl.to(veil, { opacity: 0, duration: dur / 2, ease: "sine.out" }, at + dur / 2);
-      tl.set(veil, { display: "none" }, at + dur + 0.001);
     }
   }
 }

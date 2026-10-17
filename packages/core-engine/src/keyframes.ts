@@ -6,7 +6,14 @@ let browserPromise: Promise<Browser> | null = null;
 async function browser(): Promise<Browser> {
   browserPromise ??= chromium.launch({
     headless: true,
-    args: ["--disable-lcd-text", "--force-device-scale-factor=1", "--hide-scrollbars"],
+    args: [
+      // identical rasterization flags to the render pipeline (renderer.ts), so
+      // an inspected frame looks exactly like the delivered video
+      "--disable-lcd-text",
+      "--font-render-hinting=none",
+      "--force-device-scale-factor=1",
+      "--hide-scrollbars",
+    ],
   });
   return browserPromise;
 }

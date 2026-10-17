@@ -2,10 +2,19 @@ import { gsap } from "gsap";
 import type { SceneSpec } from "@motionforge/scene-spec";
 
 /**
+ * Handle returned by `mountTimelineUI`. The live preview rebuilds the scene in
+ * place, so the previous scrubber must be fully torn down — otherwise every
+ * update stacks another bar and another set of global key handlers.
+ */
+export interface TimelineUIHandle {
+  dispose(): void;
+}
+
+/**
  * Minimal interactive scrubber for human inspection: play/pause, frame-accurate
  * seek, frame counter. Only mounted in preview mode (never during rendering).
  */
-export function mountTimelineUI(tl: gsap.core.Timeline, scene: SceneSpec, fps: number): void {
+export function mountTimelineUI(tl: gsap.core.Timeline, scene: SceneSpec, fps: number): TimelineUIHandle {
   const totalFrames = Math.max(1, Math.round((scene.durationMs / 1000) * fps));
   const pad = (n: number) => String(Math.max(0, n)).padStart(4, "0");
 
@@ -79,21 +88,20 @@ export function mountTimelineUI(tl: gsap.core.Timeline, scene: SceneSpec, fps: n
   };
 
   const toggle = () => (playing ? stop() : play());
-  playBtn.addEventListener("click", toggle);
 
-  range.addEventListener("input", () => {
+  const onScrub = () => {
     stop();
     tl.pause();
     tl.seek(Number(range.value) / fps, false);
     sync();
-  });
+  };
 
   tl.eventCallback("onComplete", () => {
     stop();
     sync();
   });
 
-  window.addEventListener("keydown", (e) => {
+  const onKeyDown = (e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement && e.target !== range) return;
     if (e.code === "Space") {
       e.preventDefault();
@@ -107,7 +115,21 @@ export function mountTimelineUI(tl: gsap.core.Timeline, scene: SceneSpec, fps: n
       tl.seek(frame / fps, false);
       sync();
     }
-  });
+  };
+  window.addEventListener("keydown", onKeyDown);
+  playBtn.addEventListener("click", toggle);
+  range.addEventListener("input", onScrub);
 
   sync();
+
+  return {
+    dispose() {
+      stop();
+      playBtn.removeEventListener("click", toggle);
+      range.removeEventListener("input", onScrub);
+      window.removeEventListener("keydown", onKeyDown);
+      tl.eventCallback("onComplete", null);
+      bar.remove();
+    },
+  };
 }

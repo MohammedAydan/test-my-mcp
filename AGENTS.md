@@ -51,6 +51,19 @@ npm run demo -w @motionforge/core-engine          # showcase scene: keyframe ins
 npm run start -w @motionforge/mcp-server          # MCP stdio server (MOTIONFORGE_ENGINE_URL, default :4000)
 ```
 
+### Creative project kit (client jobs)
+
+```bash
+npm run init-project -- --name "client-reel" --path "../jobs/client-reel"   # scaffold a client job
+npm run sync-scene   -- --project ../jobs/client-reel --file scenes/scene-01.json
+npm run pull-render  -- --project ../jobs/client-reel --jobId <id> --quality draft
+npm run sync-template-scenes   # regenerate templates/creative-project/scenes/*.json from scene-spec
+```
+
+`templates/creative-project/` is the job template, `skills/motionforge-creative-project/SKILL.md`
+is the agent skill, and `scripts/*.mjs` are the CLIs. **The project kit is CLI-only — it
+never adds a sixth MCP tool.**
+
 FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 `npm run doctor -w @motionforge/core-engine` verifies the toolchain once implemented.
 
@@ -97,6 +110,9 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 | --- | --- |
 | New layer type / preset / SFX name | `packages/scene-spec/src/**` first, then implement in runtime+engine; update `docs/02_SCENESPEC.md` |
 | Authoring guidance shown to LLMs (`layerFieldGuide`, `minimalValidScene`, …) | `packages/scene-spec/src/field-guide.ts` — typed as `SceneSpecInput` and drift-tested; regenerate nothing by hand |
+| Creative-project manifest schema | `packages/scene-spec/src/project-manifest.ts` (strict Zod; validated by `scripts/sync-scene.mjs`) |
+| Client-job scaffolding + CLI | `templates/creative-project/**` and `scripts/*.mjs` (`npm run init-project` / `sync-scene` / `pull-render`) |
+| Agent skill | `skills/motionforge-creative-project/SKILL.md` |
 | MCP tool wiring | `packages/mcp-server/src/**` (never drop engine `issues[]`; advertise `sceneShapeSchema`, not a cast raw shape) |
 | HTTP route, render pipeline, audio | `packages/core-engine/src/**` |
 | Visual layer rendering, timeline UI | `packages/scene-runtime/src/**` |

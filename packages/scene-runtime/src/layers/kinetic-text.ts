@@ -1,13 +1,44 @@
 import type { KineticTextLayer, Paint } from "@motionforge/scene-spec";
+import { CRISP_TEXT_CSS, TEXT_UNIT_GUARD_CSS } from "../determinism.js";
 import { fontFamilyFor } from "../fonts.js";
 import type { LayerContext } from "./context.js";
 
+/** Arabic, Arabic Supplement/Extended-A/B and Arabic Presentation Forms-A. */
+const ARABIC_RE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF]/;
+
 /**
- * RTL note: splitting Arabic text into per-character spans breaks contextual
- * letter joining (ligatures/shaping). When the text contains Arabic-script
- * characters, "char" granularity gracefully degrades to "word".
+ * Other scripts that are also shaped contextually (Hebrew, Kana, Devanagari,
+ * Thai, Hangul). Splitting these per glyph detaches marks and clusters just as
+ * Arabic does, so they share the same guard.
  */
-const ARABIC_RE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]/;
+const CURSIVE_RE = /[\u0590-\u05FF\u3040-\u30FF\u0900-\u097F\u0E00-\u0E7F\uAC00-\uD7AF]/;
+
+export type TextGranularity = "char" | "word" | "line";
+
+export function containsArabicScript(text: string): boolean {
+  return ARABIC_RE.test(text);
+}
+
+/**
+ * Decide the split granularity for a text layer.
+ *
+ * Per-character spans break contextual shaping: Arabic cursive joining loses
+ * its ligatures and each isolated glyph is drawn in its isolated form, which
+ * looks like deformed, disconnected letters. So character splitting is
+ * **forbidden** whenever the text contains Arabic *or* the layer declares RTL
+ * direction (mixed AR/EN lines are exactly the case that looks fine in a text
+ * editor and breaks in the renderer). Those layers degrade to word splitting,
+ * which preserves shaping inside each word.
+ */
+export function resolveGranularity(
+  text: string,
+  direction: "ltr" | "rtl",
+  animateBy: TextGranularity
+): TextGranularity {
+  if (animateBy === "line") return "line";
+  if (direction === "rtl" || ARABIC_RE.test(text) || CURSIVE_RE.test(text)) return "word";
+  return animateBy;
+}
 
 export function renderKineticText(
   layer: KineticTextLayer,
@@ -29,6 +60,7 @@ export function renderKineticText(
     `line-height:${layer.lineHeight}`,
     `letter-spacing:${layer.letterSpacingPx}px`,
     "unicode-bidi:plaintext",
+    CRISP_TEXT_CSS,
   ].join(";");
 
   if (layer.box) {
@@ -55,10 +87,7 @@ export function renderKineticText(
       `rgba(0,0,0,${layer.shadow.opacity})`;
   }
 
-  const granularity =
-    layer.animateBy === "char" && ARABIC_RE.test(layer.text) && layer.direction === "rtl"
-      ? "word"
-      : layer.animateBy;
+  const granularity = resolveGranularity(layer.text, layer.direction, layer.animateBy);
 
   const lines = layer.text.split("\n");
   const units: HTMLElement[] = [];
@@ -67,33 +96,42 @@ export function renderKineticText(
     const lineEl = document.createElement("div");
     if (granularity === "line") {
       lineEl.className = "mf-unit";
+      lineEl.style.cssText = TEXT_UNIT_GUARD_CSS;
       applyTextPaint(lineEl, layer.fill, layer.stroke);
+      // a non-breaking space keeps empty lines at full line height
       lineEl.textContent = line || "\u00a0";
       units.push(lineEl);
     } else {
+      // whitespace tokens stay as plain text nodes so words keep natural spacing
       const tokens = granularity === "word" ? line.split(/(\s+)/) : [...line];
       for (const token of tokens) {
         if (/^\s+$/.test(token)) {
           lineEl.appendChild(document.createTextNode(token));
           continue;
         }
+        // isolate each word: `unicode-bidi: isolate` keeps mixed AR/EN runs and
+        // numerals from reordering across span boundaries
         const wrap = document.createElement("span");
-        wrap.style.cssText = "position:relative;display:inline-block;";
-        if (granularity === "word") {
-          if (layer.highlight) {
-            const hl = document.createElement("span");
-            hl.style.cssText = [
-              "position:absolute",
-              `inset:${-layer.highlight.paddingPx}px`,
-              `border-radius:${layer.highlight.radiusPx}px`,
-              `background:${layer.highlight.color}`,
-              "z-index:-1",
-            ].join(";");
-            wrap.appendChild(hl);
-          }
+        wrap.style.cssText = [
+          "position:relative",
+          "display:inline-block",
+          "white-space:pre",
+          "unicode-bidi:isolate",
+        ].join(";");
+        if (granularity === "word" && layer.highlight) {
+          const hl = document.createElement("span");
+          hl.style.cssText = [
+            "position:absolute",
+            `inset:${-layer.highlight.paddingPx}px`,
+            `border-radius:${layer.highlight.radiusPx}px`,
+            `background:${layer.highlight.color}`,
+            "z-index:-1",
+          ].join(";");
+          wrap.appendChild(hl);
         }
         const span = document.createElement("span");
         span.className = "mf-unit";
+        span.style.cssText = TEXT_UNIT_GUARD_CSS;
         applyTextPaint(span, layer.fill, layer.stroke);
         span.textContent = token;
         wrap.appendChild(span);

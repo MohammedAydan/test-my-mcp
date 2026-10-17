@@ -1,4 +1,6 @@
 import type { CardLayer } from "@motionforge/scene-spec";
+import { CRISP_TEXT_CSS } from "../determinism.js";
+import { SAFE_IMG_CSS } from "./image-logo.js";
 import { fontFamilyFor } from "../fonts.js";
 import type { LayerContext } from "./context.js";
 
@@ -28,6 +30,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     card.style.cssText = [
       "position:relative",
       `width:${v.widthPx ? `${v.widthPx}px` : "max-content"}`,
+      "max-width:100%",
       `padding:${v.paddingPx}px`,
       `border-radius:${v.radiusPx}px`,
       glassCss(v.glass.blurPx, v.glass.tintColor, v.glass.tintOpacity, v.variant === "glassCard" ? v.borderOpacity : 0.18),
@@ -52,20 +55,20 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     if (v.variant === "glassCard" && v.iconAssetId) {
       const icon = document.createElement("img");
       icon.src = ctx.resolveAsset(v.iconAssetId);
-      icon.style.cssText = "width:56px;height:56px;object-fit:contain;margin-bottom:12px;display:block;";
+      icon.style.cssText = `${SAFE_IMG_CSS};width:56px;height:56px;margin-bottom:12px;`;
       card.appendChild(icon);
     }
 
     if (v.title) {
       const title = document.createElement("div");
       title.textContent = v.title;
-      title.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "headline")};font-weight:800;font-size:34px;color:#fff;margin-bottom:10px;`;
+      title.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "headline")};font-weight:800;font-size:34px;color:#fff;margin-bottom:10px;${CRISP_TEXT_CSS};`;
       card.appendChild(title);
     }
     if (v.body) {
       const body = document.createElement("div");
       body.textContent = v.body;
-      body.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:400;font-size:22px;line-height:1.45;color:rgba(255,255,255,0.82);`;
+      body.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:400;font-size:22px;line-height:1.45;color:rgba(255,255,255,0.82);${CRISP_TEXT_CSS};`;
       card.appendChild(body);
     }
   } else if (v.variant === "progressBar") {
@@ -76,7 +79,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     if (v.label) {
       const label = document.createElement("div");
       label.textContent = v.label;
-      label.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:600;font-size:24px;color:#fff;margin-bottom:12px;`;
+      label.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:600;font-size:24px;color:#fff;margin-bottom:12px;${CRISP_TEXT_CSS};`;
       col.appendChild(label);
     }
     const track = document.createElement("div");
@@ -96,7 +99,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
 
     if (v.showPercentage) {
       const pctText = document.createElement("div");
-      pctText.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "metric")};font-weight:800;font-size:26px;color:#fff;margin-top:10px;text-align:right;`;
+      pctText.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "metric")};font-weight:800;font-size:26px;color:#fff;margin-top:10px;text-align:right;${CRISP_TEXT_CSS};`;
       col.appendChild(pctText);
       const proxy = { n: 0 };
       ctx.tl.to(proxy, {
@@ -113,7 +116,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     const v2 = v.variant === "counter" ? v : undefined;
     if (!v2) throw new Error("unreachable card variant");
     const num = document.createElement("div");
-    num.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, v2.role)};font-weight:800;font-size:${v2.sizePx}px;color:#fff;font-variant-numeric:tabular-nums;`;
+    num.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, v2.role)};font-weight:800;font-size:${v2.sizePx}px;color:#fff;font-variant-numeric:tabular-nums;${CRISP_TEXT_CSS};`;
     host.appendChild(num);
 
     const fmt = new Intl.NumberFormat(v2.locale ?? "en-US", {

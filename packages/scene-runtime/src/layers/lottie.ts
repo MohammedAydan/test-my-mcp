@@ -15,6 +15,7 @@ export function renderLottie(layer: LottieLayer, ctx: LayerContext): { content: 
     `top:${layer.position.yPct}%`,
     "transform:translate(-50%,-50%)",
     layer.widthPx ? `width:${layer.widthPx}px` : "width:25%",
+    "max-width:100%",
   ].join(";");
 
   const box = document.createElement("div");

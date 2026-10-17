@@ -110,7 +110,6 @@ interactive timeline scrubber.
 
 These are decisions that differ from the design sketch above. They exist because
 the naive version of each was measured and failed — keep them unless you re-measure.
-
 - **One Chromium per worker, not one browser with N pages.** Headless renderers
   inside a single browser process share raster/GPU threads, so N pages in one
   browser serialize frame capture. Separate browser processes give real
@@ -169,3 +168,65 @@ the naive version of each was measured and failed — keep them unless you re-me
   `fullShowcaseSketch` (see `scene-spec/src/field-guide.ts`).
 - **The authoring guide ships as a resource, not a sixth tool.** `motionforge://scenespec/v1`
   is served from `@motionforge/scene-spec` directly, so it works with the engine down.
+
+## 7. Engine monorepo vs creative project workspace
+
+There are two kinds of repository in this system, and they are deliberately
+separate:
+
+| | Engine monorepo | Creative project |
+| --- | --- | --- |
+| Example | this repo | a folder created by `npm run init-project` |
+| Contains | `packages/*` source, tests, docs | brief, brand, `scenes/*.json`, renders |
+| Owns | the SceneSpec contract, render pipeline | one client job and its deliverables |
+| Talks to the engine | is the engine | over HTTP (the 5 MCP tools / REST API) |
+| Changes the schema | yes, with a `schemaVersion` bump | never |
+
+The monorepo ships the **contract** (`@motionforge/scene-spec`), the **engine**,
+and the **scaffolding** (`templates/creative-project/`, `scripts/*`, the agent
+skill). It never ships a client job. A creative project is a consumer workspace
+that may live anywhere; its only coupling to the engine is
+`motionforge.project.json → engine.url`, and its scenes are validated by the very
+same Zod schemas (the CLI imports `@motionforge/scene-spec` to do it, so there is
+one validator, not two).
+
+**Rules that keep the boundary clean:**
+
+- The monorepo never imports anything from a creative project.
+- A creative project never imports engine internals; it talks HTTP or uses the
+  MCP tools.
+- Project-kit helpers are **CLI scripts**, never a sixth MCP tool. The 5-tool
+  contract is fixed by `TOOL_NAMES` and by a contract test.
+- `.psd` / `.aep` / `.ai` / Figma files stay in `design/`; they are masters for
+  humans. Only exported PNG/SVG/WebP/Lottie in `assets/` may appear in a
+  SceneSpec.
+
+## 8. Deterministic frame settlement (Milestone 4)
+
+A screenshot taken immediately after `timeline.seek(t)` is **not** frame `t`:
+the seek only mutates inline styles, and the compositor paints later. The
+runtime therefore defines settlement as a pipeline and refuses to report ready
+until every stage has completed (`scene-runtime/src/determinism.ts`):
+
+```
+seek(suppressEvents=false) → layer lifecycle → media resync
+  → document.fonts.ready → image decode → layout flush → rAF → rAF
+```
+
+- `gsap.ticker.lagSmoothing(0)` removes clock compensation entirely: a frame
+  index maps to exactly one timeline time, no matter how slow the host is.
+- `gsap.config({ force3D: false })` stops GSAP promoting text/SVG into
+  composited texture quads, which is what blurred text when the camera scaled it.
+  Genuine 3D presets keep working because they declare `rotationY` /
+  `transformPerspective` / `transform-style: preserve-3d` explicitly.
+- The **second** rAF is not redundant: the first runs the callback, the second
+  proves the compositor committed the resulting frame.
+- Image decode has a bounded grace period, so a hung asset degrades to
+  "capture what is painted" instead of wedging a 60 fps render.
+- The order is enforced by a dependency-injected settler, so it is unit-testable
+  without a browser.
+
+Layer visibility is recomputed from each layer's `[start, end)` window on **every**
+seek (`LayerLifecycle`), never derived from "what was applied last". That is what
+makes non-linear seeking (a worker jumping from frame 900 to frame 30) artifact
+free.

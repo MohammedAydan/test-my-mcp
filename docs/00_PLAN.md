@@ -2,6 +2,9 @@
 
 Status legend: ☐ planned · ◐ in progress · ✅ done
 
+Milestones: **0** workspace + SceneSpec contract · **1** visual canvas ·
+**2** engine room · **3** AI surface · **4** creative project kit + visual stabilization.
+
 ## Milestone 0 — Repository & Contracts
 **Goal:** workspace skeleton + the shared `SceneSpec` contract, fully validated.
 
@@ -65,6 +68,64 @@ Status legend: ☐ planned · ◐ in progress · ✅ done
   ~1.5 production frames/s effective — the bottleneck is per-frame capture
   (screenshot + seek round-trip), not encoding. Scale is linear in workers/cores;
   hardware encoders are picked automatically when present.
+
+## Milestone 4 — Creative Project Kit & Visual Stabilization
+**Goal:** make rendered video visually trustworthy, and make a client job a
+first-class artifact an agent can scaffold and run without re-discovering the
+workflow every session.
+
+- ✅ **Step 7 — Deterministic frame settlement.** `scene-runtime` now freezes GSAP
+  (`lagSmoothing(0)`, `force3D: false`, `nullTargetWarn: false`) and defines the
+  frame contract explicitly: seek (`suppressEvents = false`) → per-layer lifecycle
+  visibility → media resync → `document.fonts.ready` → image decode → layout flush
+  → **two** committed animation frames. Anything less lets a screenshot catch an
+  unfinished frame.
+  *Acceptance:* ✅ `packages/scene-runtime/tests/visual-stability.test.ts` locks the
+  call order, the double-rAF, the frame clamping and the image-decode grace period;
+  the demo render still lands exactly 360 frames / 12.00 s at 6.9 effective fps
+  (faster than before, because forced-3D promotion is off).
+- ✅ **Step 8 — Text fidelity.** Arabic and RTL text is never split per character
+  (word/line only, each word in an isolated inline-block span), typography is
+  hint-free (`antialiased` / `geometricPrecision` / `font-kerning`), text units carry
+  a padding+margin clipping guard for mask-reveal presets, and `.mf-unit` no longer
+  keeps a permanent `will-change: transform` (that bitmap was what blurred text when
+  the camera scaled it).
+  *Acceptance:* ✅ inspected frames of the showcase scene show correctly joined
+  Arabic ligatures and crisp glyphs under a 1.2× camera push-in.
+- ✅ **Step 9 — Transition & element integrity.** Entrance, emphasis and exit now own
+  three nested wrappers (`.mf-entrance` → `.mf-emphasis` → `.mf-exit`), so no two
+  presets write the same `transform`/`autoAlpha`; their timeline windows are computed
+  non-overlapping by `planMotionSlots`. Logos/icons enforce
+  `object-fit: contain; max-width/height: 100%; flex-shrink: 0`; every transition
+  overlay is `display: none` until its own `tl.set` at `at`, so nothing bleeds into
+  the frames before it; `resetStage()` fully clears the previous scene on rebuild.
+  *Acceptance:* ✅ lifecycle visibility is order-independent under non-linear seeks
+  (test), and no wipe cover is visible at t=0 in the demo frames.
+- ✅ **Step 10 — `templates/creative-project/`.** A complete client-job tree:
+  `AGENTS.md`, `README.md`, `motionforge.project.json`, structured `brief/BRIEF.md`,
+  `design/*` masters, `brand/*`, `assets/{images,video,lottie,audio}`, `scenes/` with
+  validated templates, `renders/`, `exports/`, `logs/`. Empty directories carry a
+  `.gitkeep`; explanatory ones carry a `README.md`.
+  *Acceptance:* ✅ every shipped scene validates against `scene-spec`; the two
+  templates are byte-identical to `MINIMAL_VALID_SCENE` / `SHOWCASE_SCENE_SKETCH`;
+  the manifest validates after token substitution.
+- ✅ **Step 11 — Agent guidance.** Project-local `AGENTS.md` (hard rules, the 5-tool
+  map, disk-sync rule, Arabic rules, definition of done, forbidden actions) and
+  `skills/motionforge-creative-project/SKILL.md` (mandatory startup reads, six-step
+  checklist).
+  *Acceptance:* ✅ both assert the same contract: `minimalValidScene` first, fix the
+  exact issue paths, inspect keyframes before any production render, keep disk and
+  engine in sync.
+- ✅ **Step 12 — Project CLI.** `npm run init-project` (scaffolds, substitutes
+  `{{PROJECT_NAME}}`/`{{CREATED_AT}}`/`{{LANG}}`/`{{ENGINE_URL}}`, validates the
+  manifest, prints next steps), `npm run sync-scene` (validates locally with the same
+  schema, then POSTs, printing the id + preview URL), `npm run pull-render` (downloads
+  a finished job into `renders/<quality>/<sceneId>-<timestamp>.mp4`).
+  *Acceptance:* ✅ integration tests spawn the real scripts: full tree, all tokens
+  substituted, non-empty refusal without `--force` + success with `--force`, exact
+  field-level issues for a broken scene with nothing sent to the engine; a live
+  end-to-end run (init → sync → draft render → pull) produced a valid MP4 in the
+  generated project's `renders/draft/`.
 
 ## Standing constraints (all milestones)
 - Zero MCP imports outside `mcp-server`; zero GSAP outside `scene-runtime`.

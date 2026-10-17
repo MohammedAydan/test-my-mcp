@@ -60,8 +60,13 @@ export const PRESET_DEFAULTS: Record<MotionPreset, PresetDef> = {
 };
 
 export interface PresetTarget {
-  /** primary element the preset animates */
+  /** the element this slot owns — one of the nested phase wrappers */
   el: HTMLElement;
+  /**
+   * the painted layer content. Overlays (lightSweep) attach here so they hug
+   * the content box rather than the full-bleed wrapper.
+   */
+  sweepHost: HTMLElement;
   /** optional split units (word/char spans) that receive staggered versions */
   units?: HTMLElement[];
   unitStaggerMs: number;
@@ -200,7 +205,7 @@ export function applyEmphasis(tl: gsap.core.Timeline, ref: PresetRef, target: Pr
       break;
     }
     case "lightSweep": {
-      applySweepOverlay(target.el, tl, {
+      applySweepOverlay(target.sweepHost, tl, {
         at: target.startMs,
         durationMs: refDurationMs(ref, def),
         angleDeg: 25,

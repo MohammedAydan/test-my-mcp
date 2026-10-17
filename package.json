@@ -15,10 +15,15 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "init-project": "node --import tsx scripts/init-project.mjs",
+    "sync-scene": "node --import tsx scripts/sync-scene.mjs",
+    "pull-render": "node --import tsx scripts/pull-render.mjs",
+    "sync-template-scenes": "node --import tsx scripts/sync-template-scenes.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "jsdom": "^26.1.0",
     "typescript": "^5.6.3",
     "vitest": "^5.0.5"
   }

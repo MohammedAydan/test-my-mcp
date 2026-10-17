@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "name": "{{PROJECT_NAME}} — scene 01",
+  "canvas": {
+    "shape": "16:9",
+    "scale": 1080
+  },
+  "durationMs": 8000,
+  "fonts": [
+    {
+      "role": "hero",
+      "family": "Cairo",
+      "provider": "google",
+      "weights": [
+        700,
+        900
+      ]
+    },
+    {
+      "role": "body",
+      "family": "Inter",
+      "provider": "google",
+      "weights": [
+        400,
+        600
+      ]
+    }
+  ],
+  "layers": [
+    {
+      "id": "bg",
+      "type": "background",
+      "variant": {
+        "variant": "meshGradient",
+        "base": "#05070d",
+        "blobs": [
+          {
+            "color": "#1d3a8a",
+            "xPct": 22,
+            "yPct": 28,
+            "radiusPct": 58,
+            "drift": 0.4
+          },
+          {
+            "color": "#0e7490",
+            "xPct": 78,
+            "yPct": 62,
+            "radiusPct": 52,
+            "drift": 0.28
+          }
+        ]
+      }
+    },
+    {
+      "id": "hero-ar",
+      "name": "{{PROJECT_NAME}} — hero title (AR)",
+      "type": "kineticText",
+      "at": 500,
+      "text": "اكتب عنوانك هنا",
+      "direction": "rtl",
+      "role": "hero",
+      "googleFamily": "Cairo",
+      "sizePx": 92,
+      "position": {
+        "xPct": 50,
+        "yPct": 42
+      },
+      "fill": "#ffffff",
+      "animateBy": "word",
+      "entrance": {
+        "name": "blurFadeIn",
+        "staggerMs": 140
+      },
+      "sfx": [
+        {
+          "sfx": "whoosh",
+          "offsetMs": 0
+        }
+      ]
+    },
+    {
+      "id": "hero-en",
+      "name": "{{PROJECT_NAME}} — hero title (EN)",
+      "type": "kineticText",
+      "at": 1500,
+      "text": "Your headline here",
+      "sizePx": 44,
+      "position": {
+        "xPct": 50,
+        "yPct": 56
+      },
+      "fill": "#93c5fd",
+      "entrance": {
+        "name": "smoothSlideUp",
+        "staggerMs": 90
+      }
+    },
+    {
+      "id": "fgx",
+      "type": "foregroundFX",
+      "effects": [
+        {
+          "kind": "vignette",
+          "strength": 0.5
+        },
+        {
+          "kind": "filmGrain",
+          "opacity": 0.05
+        }
+      ]
+    }
+  ],
+  "camera": {
+    "keyframes": [
+      {
+        "at": 0,
+        "scale": 1
+      },
+      {
+        "at": 7000,
+        "scale": 1.18,
+        "ease": "power3.inOut"
+      }
+    ],
+    "drift": {
+      "amplitudePct": 0.4,
+      "periodMs": 5200
+    }
+  },
+  "transitions": [
+    {
+      "kind": "wipe",
+      "at": 6900,
+      "direction": "left",
+      "durationMs": 700,
+      "color": "#05070d"
+    }
+  ],
+  "audio": {
+    "cues": [
+      {
+        "at": 1500,
+        "sfx": "click"
+      }
+    ]
+  }
+}

@@ -1,3 +1,5 @@
+import { gsap } from "gsap";
+
 /**
  * The fixed design-space canvas: `#stage` is exactly canvas-sized and scaled
  * uniformly to fit the window (preview) or kept 1:1 (render mode).
@@ -10,6 +12,7 @@ export interface Stage {
   width: number;
   height: number;
   fitToWindow(): void;
+  setSize(width: number, height: number): void;
 }
 
 export function createStage(width: number, height: number): Stage {
@@ -37,6 +40,13 @@ export function createStage(width: number, height: number): Stage {
     content,
     width,
     height,
+    setSize(nextWidth: number, nextHeight: number) {
+      stageRef.width = nextWidth;
+      stageRef.height = nextHeight;
+      stage.style.width = `${nextWidth}px`;
+      stage.style.height = `${nextHeight}px`;
+      stageRef.fitToWindow();
+    },
     fitToWindow() {
       const params = new URLSearchParams(window.location.search);
       const renderMode = params.get("render") === "1";
@@ -55,6 +65,24 @@ export function createStage(width: number, height: number): Stage {
     window.addEventListener("resize", () => stageRef.fitToWindow());
   }
   return stageRef;
+}
+
+/**
+ * Wipe the stage back to a pristine state before a scene is rebuilt.
+ *
+ * Live preview rebuilds in place, so anything left behind becomes visible
+ * ghosting: stale layer DOM, transition overlays parented to the rig, and
+ * inline camera transforms from the previous scene's rig. Killing the timeline
+ * (done by the caller) removes the tweens; this removes their targets and
+ * their inline styles.
+ */
+export function resetStage(stage: Stage): void {
+  // transition overlays are appended directly to the rig, layers under content
+  for (const child of Array.from(stage.rig.children)) {
+    if (child !== stage.content) child.remove();
+  }
+  stage.content.replaceChildren();
+  gsap.set(stage.rig, { clearProps: "all" });
 }
 
 function renderMode(): boolean {
