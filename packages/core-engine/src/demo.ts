@@ -19,6 +19,7 @@ import type { SceneSpecInput } from "@motionforge/scene-spec";
 const exec = promisify(execFile);
 const PORT = 4144;
 const DURATION_MS = 12_000;
+const QUALITY = process.env.DEMO_QUALITY === "production" ? "production" : "draft";
 
 async function generateAsset(paths: EnginePaths, file: string, filter: string): Promise<void> {
   const out = path.join(paths.vaultDir, file);
@@ -259,16 +260,18 @@ async function main(): Promise<void> {
   const enq = await fetch(`${base}/api/renders`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sceneId: "showcase", quality: "draft" }),
+    body: JSON.stringify({ sceneId: "showcase", quality: QUALITY }),
   });
   if (!enq.ok) throw new Error(`render enqueue failed: ${enq.status}`);
   const { jobId } = (await enq.json()) as { jobId: string };
 
-  let job: { status: string; error?: string; result?: Record<string, unknown> } = {
+  let job: { status: string; progress?: number; error?: string; result?: Record<string, unknown> } = {
     status: "queued",
-  };  for (let i = 0; i < 240; i++) {
-    job = (await (await fetch(`${base}/api/renders/${jobId}`)).json()) as { status: string; error?: string; result?: Record<string, unknown> };
+  };
+  for (let i = 0; i < 1800; i++) {
+    job = (await (await fetch(`${base}/api/renders/${jobId}`)).json()) as { status: string; progress?: number; error?: string; result?: Record<string, unknown> };
     if (job.status === "succeeded" || job.status === "failed") break;
+    if (i % 30 === 29) console.log(`demo: render ${((job.progress ?? 0) * 100) | 0}% after ${i + 1}s`);
     await new Promise((r) => setTimeout(r, 1000));
   }
   if (job?.status !== "succeeded") throw new Error(`demo render failed: ${job?.status} ${job?.error ?? ""}`);

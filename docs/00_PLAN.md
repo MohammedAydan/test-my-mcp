@@ -57,12 +57,14 @@ Status legend: ☐ planned · ◐ in progress · ✅ done
   layer-relative and absolute SFX), inspects 6 keyframes, and renders a draft MP4.
   *Acceptance:* ✅ draft render of the 12 s / 1080p-design scene lands at exactly
   12.00 s, h264+aac, 360 frames through the full pipeline; visual inspection of
-  extracted frames confirms every layer composes correctly.
+  extracted frames confirms every layer composes correctly. Production profile
+  verified too (`DEMO_QUALITY=production npm run demo -w @motionforge/core-engine`):
+  1920×1080@60, 720 frames across two worker parts, exactly 12.00 s, h264+aac.
   *Wall-time note:* the plan's "< 5 s" target assumed dev-grade hardware (8+ cores
-  + NVENC). Measured here on a 2-core CPU-only VM: ~4.3 draft frames/s effective
-  (~85 s for 360 frames) — the bottleneck is per-frame capture (screenshot + seek
-  round-trip), not encoding. Scale is linear in workers/cores; hardware encoders
-  are picked automatically when present.
+  + NVENC). Measured here on a 2-core CPU-only VM: ~4.3 draft frames/s and
+  ~1.5 production frames/s effective — the bottleneck is per-frame capture
+  (screenshot + seek round-trip), not encoding. Scale is linear in workers/cores;
+  hardware encoders are picked automatically when present.
 
 ## Standing constraints (all milestones)
 - Zero MCP imports outside `mcp-server`; zero GSAP outside `scene-runtime`.
