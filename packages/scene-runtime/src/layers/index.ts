@@ -1,0 +1,35 @@
+import type { Layer } from "@motionforge/scene-spec";
+import type { LayerContext } from "./context.js";
+import { renderBackground } from "./background.js";
+import { renderImageLogo } from "./image-logo.js";
+import { renderKineticText } from "./kinetic-text.js";
+import { renderCard } from "./card.js";
+import { renderLottie } from "./lottie.js";
+import { renderForegroundFx } from "./foreground-fx.js";
+
+export interface BuiltLayer {
+  /** element that entrance/emphasis/exit presets animate */
+  content: HTMLElement;
+  /** split units (word/char/line spans) for staggered text presets */
+  units?: HTMLElement[];
+}
+
+export type AnyLayerRenderer = (layer: never, ctx: LayerContext) => BuiltLayer;
+
+/** Type-safe dispatch from layer type → renderer. */
+export function renderLayer(layer: Layer, ctx: LayerContext): BuiltLayer {
+  switch (layer.type) {
+    case "background":
+      return renderBackground(layer, ctx);
+    case "imageLogo":
+      return renderImageLogo(layer, ctx);
+    case "kineticText":
+      return renderKineticText(layer, ctx);
+    case "card":
+      return renderCard(layer, ctx);
+    case "lottie":
+      return renderLottie(layer, ctx);
+    case "foregroundFX":
+      return renderForegroundFx(layer, ctx);
+  }
+}

@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+html,
+body {
+  height: 100%;
+  background: #000;
+}
+
+/* Fixed design-space canvas; scaled uniformly to fit the window (or 1:1 in render mode). */
+#stage {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  background: #000;
+  transform-origin: 50% 50%;
+}
+
+/* 2.5D virtual camera rig */
+#camera-rig {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+/* #camera-rig's inner content wrapper receives color-grade filters */
+#stage-content {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+
+.mf-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* kinetic text split unit */
+.mf-unit {
+  display: inline-block;
+  will-change: transform, opacity, filter;
+}
+
+.mf-sweep {
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  width: 60%;
+  pointer-events: none;
+  mix-blend-mode: screen;
+  filter: blur(6px);
+}
+
+.mf-grain {
+  background-repeat: repeat;
+}

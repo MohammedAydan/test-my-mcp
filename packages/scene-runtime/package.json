@@ -8,10 +8,19 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@motionforge/scene-spec": "*"
+    "@motionforge/scene-spec": "*",
+    "gsap": "^3.13.0",
+    "lottie-web": "^5.12.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.4",
+    "tailwindcss": "^4.1.4",
+    "vite": "^7.3.7"
   }
 }
