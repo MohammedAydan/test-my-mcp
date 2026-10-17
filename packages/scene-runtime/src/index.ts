@@ -60,9 +60,15 @@ async function boot(): Promise<void> {
 
     const seekables: Seekable[] = [];
     const fonts = await loadSceneFonts(scene);
+    // assetId → engine URL (the LLM references ids; the runtime needs srcs)
+    const srcById = new Map(scene.assets.map((asset) => [asset.id, asset.src]));
     const { tl } = buildScene(scene, stage, {
       fonts,
-      resolveAsset: resolveAssetUrl,
+      resolveAsset: (assetId) => {
+        const src = srcById.get(assetId);
+        if (src === undefined) throw new Error(`asset "${assetId}" is not declared in scene.assets`);
+        return resolveAssetUrl(src);
+      },
       assetKind: assetKindOf(scene),
       lottieData: (assetId) => {
         const data = lottieJson.get(assetId);

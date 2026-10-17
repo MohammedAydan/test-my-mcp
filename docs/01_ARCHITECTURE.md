@@ -105,3 +105,46 @@ interactive timeline scrubber.
   other workers are drained, no partial file published.
 - **No hardware encoder** → automatic fallback chain
   `h264_nvenc → h264_videotoolbox → libx264(-preset ultrafast)`, encoder name in telemetry.
+
+## 6. As-built notes (Step 4/6 hardening decisions)
+
+These are decisions that differ from the design sketch above. They exist because
+the naive version of each was measured and failed — keep them unless you re-measure.
+
+- **One Chromium per worker, not one browser with N pages.** Headless renderers
+  inside a single browser process share raster/GPU threads, so N pages in one
+  browser serialize frame capture. Separate browser processes give real
+  parallelism (`renderer.ts`, `RendererPool`).
+- **Encoder selection is a round-trip probe, not `-encoders` listing.** A driver
+  can be installed while encoder init still fails. `pickEncoder` encodes 15
+  frames to a temp MP4 with the candidate's real flags, then ffprobes the frame
+  count; only a verified encoder is selected, otherwise it falls through. A
+  subtle trap this caught: `encoderArgs` must cover every candidate explicitly,
+  or the "probe" silently tests a different codec and falsely passes.
+- **Worker parts are plain MP4 files (not fragmented).** Fragmented-MP4 parts
+  (`frag_keyframe+empty_moov`) concatenated with `-c copy` silently dropped
+  frames. Plain MP4 (a real file, so seeking is fine) + concat demuxer is exact.
+  `concatParts` hard-fails on any zero-byte part.
+- **Audio is clamped, never `-shortest`.** Every chain ends with
+  `apad=whole_dur=<scene>` + `atrim=end=<scene>`, so the mix spans the scene
+  exactly regardless of source lengths. `-shortest` in the mux step is what
+  truncated video to the length of the last SFX tail (2.06 s instead of 12 s).
+- **Mux input order is audio-first.** The filtergraph indexes inputs positionally,
+  so audio inputs come first and the video input index is computed — otherwise
+  every `[N:a]` label is off by one.
+- **`/preview` must end in a trailing slash.** The built bundle references
+  relative `./assets/*`; without the slash they resolve to `/assets/*` and 404.
+  The engine redirects `/preview?...` → `/preview/?...` preserving the query.
+- **Stage centering is explicit** (`position:absolute; left/top:50%` +
+  `translate(-50%,-50%) scale(s)`). Grid/flex centering of the canvas — which is
+  usually *larger* than the viewport — is not dependable across engines and
+  silently cropped renders to the top-left quadrant.
+- **Staggered text needs a container visibility fix.** Word/char units animate
+  their own opacity, so the layer container's initial `autoAlpha: 0` must be
+  released at the entrance position, or all text is invisible.
+- **Transition overlays declare their initial hidden state.** An overlay whose
+  first timeline touch is at `at=7.9s` is visible from t=0 (CSS initial state)
+  until that touch — always set the resting state at build time.
+- **Asset references resolve `assetId → src → URL`.** The runtime must look the
+  id up in `scene.assets`; passing the id straight through as a URL yields a
+  broken image (the browser silently shows alt text).

@@ -11,6 +11,7 @@
     "dev": "tsx src/main.ts",
     "doctor": "tsx -e \"import('./src/doctor.js').then(async (m) => { const { engineConfig } = await import('./src/config.js'); console.log(JSON.stringify(await m.doctor(engineConfig()), null, 2)); })\"",
     "smoke": "tsx src/smoke.ts",
+    "demo": "tsx src/demo.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run"

@@ -132,6 +132,8 @@ export function applyEntrance(tl: gsap.core.Timeline, ref: PresetRef, target: Pr
   const strength = ref.strength ?? 1;
 
   if (target.units && target.units.length > 1) {
+    // staggered units carry their own opacity — the container only gates visibility
+    tl.set(target.el, { autoAlpha: 1 }, at);
     tl.fromTo(
       target.units,
       withStrength({ ...vars.from }, strength),

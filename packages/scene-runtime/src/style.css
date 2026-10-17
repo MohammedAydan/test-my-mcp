@@ -8,7 +8,9 @@ body {
 
 /* Fixed design-space canvas; scaled uniformly to fit the window (or 1:1 in render mode). */
 #stage {
-  position: relative;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   flex: none;
   overflow: hidden;
   background: #000;

@@ -13,16 +13,12 @@ import { FfmpegError, encoderArgs, StdinWriter } from "./encoder.js";
 // ---------------------------------------------------------------------------
 
 export class RendererPool {
-  private browser: Browser | null = null;
-
-  private async ensureBrowser(): Promise<Browser> {
-    if (this.browser?.isConnected()) return this.browser;
-    this.browser = await chromium.launch({
-      headless: true,
-      args: ["--disable-lcd-text", "--force-device-scale-factor=1", "--hide-scrollbars"],
-    });
-    return this.browser;
-  }
+  /**
+   * One Chromium PER RENDER PAGE: headless renderers share GPU/raster threads
+   * within a browser process, so N pages in one browser would serialize frame
+   * capture. Separate browsers == true parallel workers.
+   */
+  private browsers: Browser[] = [];
 
   async openRenderPage(opts: {
     baseUrl: string;
@@ -32,7 +28,11 @@ export class RendererPool {
     viewportHeight: number;
     fit: boolean;
   }): Promise<IPage> {
-    const browser = await this.ensureBrowser();
+    const browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-lcd-text", "--force-device-scale-factor=1", "--hide-scrollbars"],
+    });
+    this.browsers.push(browser);
     const context = await browser.newContext({
       viewport: { width: opts.viewportWidth, height: opts.viewportHeight },
       deviceScaleFactor: 1,
@@ -59,10 +59,9 @@ export class RendererPool {
   }
 
   async close(): Promise<void> {
-    if (this.browser) {
-      await this.browser.close().catch(() => undefined);
-      this.browser = null;
-    }
+    await Promise.all(
+      this.browsers.splice(0).map((b) => b.close().catch(() => undefined))
+    );
   }
 }
 

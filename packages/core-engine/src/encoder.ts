@@ -210,7 +210,8 @@ export function buildAudioGraph(
       (music.normalize ? "loudnorm=I=-21:TP=-1.5:LRA=11," : "") +
       `volume=${music.gain},` +
       fades.join(",") +
-      `,apad=whole_dur=${durationSec.toFixed(3)}` +
+      // pad short music, clamp long music — every chain spans the scene exactly
+      `,apad=whole_dur=${durationSec.toFixed(3)},atrim=end=${durationSec.toFixed(3)}` +
       `[m${inputIndex}]`;
     chains.push(chain);
     inputIndex++;
@@ -224,7 +225,7 @@ export function buildAudioGraph(
       `[${inputIndex}:a]volume=${cue.gain},` +
         `adelay=${delayMs}:all=1` +
         (Math.abs(cue.pan) > 0.01 ? `,pan=stereo:c0=c0*${1 - Math.max(0, cue.pan) * 0.7}:c1=c1*${1 - Math.max(0, -cue.pan) * 0.7}` : "") +
-        `,apad=whole_dur=${durationSec.toFixed(3)}` +
+        `,apad=whole_dur=${durationSec.toFixed(3)},atrim=end=${durationSec.toFixed(3)}` +
         `[s${i}]`
     );
     inputIndex++;
@@ -249,8 +250,8 @@ export function buildAudioGraph(
       `${chains.join(";")};${mixLabels.join("")}` +
       `amix=inputs=${mixLabels.length}:normalize=0:duration=longest,` +
       `loudnorm=I=-16:TP=-1.5:LRA=11,` +
-      // clamp the mix to the exact scene length (apad guards shorter sources)
-      `apad=whole_dur=${durationSec.toFixed(3)}[aout]`,
+      // pad to the scene length, then hard-clamp (loudnorm adds a few frames of latency)
+      `apad=whole_dur=${durationSec.toFixed(3)},atrim=end=${durationSec.toFixed(3)}[aout]`,
     outLabel: "aout",
   };
 }

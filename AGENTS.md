@@ -45,6 +45,10 @@ npm run typecheck -ws            # tsc --noEmit everywhere
 npm test                         # vitest across packages
 npm run dev -w @motionforge/core-engine   # API on :4000
 npm run dev -w @motionforge/scene-runtime # Vite preview UI on :5173 (proxies to :4000)
+npm run doctor -w @motionforge/core-engine        # toolchain check (ffmpeg, chromium, sfx bank, runtime dist)
+npm run smoke -w @motionforge/core-engine         # tiny full-pipeline draft render + ffprobe assertions
+npm run demo -w @motionforge/core-engine          # showcase scene: keyframe inspection + draft render
+npm run start -w @motionforge/mcp-server          # MCP stdio server (MOTIONFORGE_ENGINE_URL, default :4000)
 ```
 
 FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.

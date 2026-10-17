@@ -2,19 +2,22 @@
   "name": "@motionforge/mcp-server",
   "version": "0.1.0",
   "type": "module",
-  "description": "Thin MCP adapter exposing 5 tools that proxy core-engine over HTTP.",
+  "description": "Thin MCP adapter: exactly 5 tools proxying core-engine HTTP. Zero rendering logic lives here.",
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts"
   },
-  "bin": {
-    "motionforge-mcp": "./dist/mcp-main.js"
-  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@motionforge/scene-spec": "*"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@motionforge/scene-spec": "*",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
   }
 }

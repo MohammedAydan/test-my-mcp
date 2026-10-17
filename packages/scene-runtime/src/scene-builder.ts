@@ -157,7 +157,7 @@ function applyTransitions(tl: gsap.core.Timeline, scene: SceneSpec, rig: HTMLEle
       // stepped RGB-fringe flicker + rig jitter, fully stepped (deterministic)
       const fringe = document.createElement("div");
       fringe.style.cssText = [
-        "position:absolute;inset:0;z-index:900;pointer-events:none;mix-blend-mode:screen;",
+        "position:absolute;inset:0;z-index:900;pointer-events:none;mix-blend-mode:screen;opacity:0;",
         "background:repeating-linear-gradient(0deg, rgba(255,0,60,0.16) 0 3px, transparent 3px 7px, rgba(0,255,255,0.14) 7px 9px, transparent 9px 14px);",
       ].join(";");
       rig.appendChild(fringe);

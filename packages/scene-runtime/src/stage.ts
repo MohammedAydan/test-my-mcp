@@ -42,8 +42,11 @@ export function createStage(width: number, height: number): Stage {
       const renderMode = params.get("render") === "1";
       const fitParam = params.get("fit") === "1";
       // render mode captures 1:1 unless ?fit=1 asks for a downscaled fit (draft)
-      const scale = renderMode && !fitParam ? 1 : Math.min(window.innerWidth / width, window.innerHeight / height);
-      stage.style.transform = `scale(${scale})`;
+      const scale =
+        renderMode && !fitParam ? 1 : Math.min(window.innerWidth / width, window.innerHeight / height);
+      // explicit centering: the canvas is usually LARGER than the viewport, and
+      // grid centering of an oversized item is not dependable across engines
+      stage.style.transform = `translate(-50%, -50%) scale(${scale})`;
     },
   };
 
