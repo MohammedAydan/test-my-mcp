@@ -1,0 +1,18 @@
+{
+  "name": "@motionforge/scene-spec",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Declarative SceneSpec contract: Zod schemas, TS types, motion preset & SFX registries.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  }
+}

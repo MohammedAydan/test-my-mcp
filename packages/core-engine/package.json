@@ -1,0 +1,17 @@
+{
+  "name": "@motionforge/core-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Fastify service: scene validation, asset vault, Playwright frame rendering, FFmpeg encoding, SFX mixing.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@motionforge/scene-spec": "*"
+  }
+}

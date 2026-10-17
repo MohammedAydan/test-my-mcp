@@ -1,0 +1,17 @@
+{
+  "name": "@motionforge/scene-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Browser canvas: Vite + TS + Tailwind + GSAP v3 + Lottie. Layer renderers, 2.5D camera rig, timeline scrubber.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@motionforge/scene-spec": "*"
+  }
+}
