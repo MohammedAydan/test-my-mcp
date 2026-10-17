@@ -16,13 +16,14 @@ Status legend: ☐ planned · ◐ in progress · ✅ done
   schema has zero deps beyond zod.*
 
 ## Milestone 1 — The Visual Canvas
-- ☐ **Step 3 — `scene-runtime`.** Vite + vanilla TS + Tailwind + GSAP v3 + lottie-web.
+- ✅ **Step 3 — `scene-runtime`.** Vite + vanilla TS + Tailwind + GSAP v3 + lottie-web.
   2.5D `#camera-rig`, the 5 layer renderers, preset engine (`presets.ts`), RTL/LTR +
   Google Fonts loading, foreground FX (vignette/grain/grade), transitions
   (wipe/morph/glitch/whip-pan), and the bottom timeline scrubber
   (play / pause / seek / frame counter).
   *Acceptance: dev server plays a demo scene smoothly; scrubbing is frame-accurate;
-  `window.seekToFrame(n)` is deterministic.*
+  `window.seekToFrame(n)` is deterministic.* (Visual pass pending Step 6 E2E; build
+  + typecheck + dev-server smoke test green.)
 
 ## Milestone 2 — The Engine Room
 - ☐ **Step 4 — `core-engine`.** Fastify REST API (scenes CRUD, assets, render jobs,

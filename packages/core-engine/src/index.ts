@@ -1,11 +1,8 @@
-/**
- * @motionforge/core-engine — the backend service.
- *
- * Owns: SceneSpec validation, asset vault, live preview hosting, the parallel
- * Playwright frame renderer, memory-piped FFmpeg encoding, and the millisecond-
- * accurate SFX mixer. Implemented in Step 4 (docs/00_PLAN.md).
- *
- * This package must have ZERO knowledge of MCP.
- */
-export const PACKAGE_NAME = "@motionforge/core-engine" as const;
-export const PACKAGE_VERSION = "0.1.0" as const;
+export * from "./config.js";
+export * from "./capabilities.js";
+export { startEngine, type Engine } from "./server.js";
+export { SceneStore } from "./scene-store.js";
+export { ensureSfxBank, SFX_BANK } from "./sfx-bank.js";
+export { doctor, type DoctorReport } from "./doctor.js";
+export { RenderRunner, type RenderJob, type RenderQuality } from "./render-runner.js";
+export { profileFor, pickEncoder, buildAudioGraph, availableEncoders, type RenderProfile } from "./encoder.js";

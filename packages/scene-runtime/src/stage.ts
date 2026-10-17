@@ -38,10 +38,11 @@ export function createStage(width: number, height: number): Stage {
     width,
     height,
     fitToWindow() {
-      const renderMode = new URLSearchParams(window.location.search).get("render") === "1";
-      const scale = renderMode
-        ? 1
-        : Math.min(window.innerWidth / width, window.innerHeight / height);
+      const params = new URLSearchParams(window.location.search);
+      const renderMode = params.get("render") === "1";
+      const fitParam = params.get("fit") === "1";
+      // render mode captures 1:1 unless ?fit=1 asks for a downscaled fit (draft)
+      const scale = renderMode && !fitParam ? 1 : Math.min(window.innerWidth / width, window.innerHeight / height);
       stage.style.transform = `scale(${scale})`;
     },
   };
