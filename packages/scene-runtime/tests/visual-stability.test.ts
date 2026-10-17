@@ -9,6 +9,7 @@ import {
   type CardLayer,
   type ImageLogoLayer,
   type KineticTextLayer,
+  type LogoMask,
   type SceneSpecInput,
 } from "@motionforge/scene-spec";
 
@@ -466,6 +467,89 @@ describe("layer lifecycle", () => {
 // ---------------------------------------------------------------------------
 // 5. asset aspect ratio
 // ---------------------------------------------------------------------------
+
+describe("logo frosted plate geometry", () => {
+  /** Renders a logo layer with the given mask/glass and returns its plate. */
+  function renderLogoPlate(input: { mask: LogoMask; cornerRadiusPx?: number; widthPx?: number }) {
+    const ctx = makeCtx();
+    const layer = parsedLayer({
+      id: "logo",
+      type: "imageLogo",
+      assetId: "logo",
+      widthPx: input.widthPx ?? 200,
+      position: { xPct: 50, yPct: 30 },
+      mask: input.mask,
+      cornerRadiusPx: input.cornerRadiusPx,
+      glass: { blurPx: 22, tintColor: "#ffffff", tintOpacity: 0.08 },
+    } as SceneSpecInput["layers"][number]) as unknown as ImageLogoLayer;
+
+    renderImageLogo(layer, ctx);
+    const host = ctx.content.firstElementChild as HTMLElement;
+    return {
+      host,
+      plate: host.querySelector(".mf-logo-plate") as HTMLElement,
+      frame: host.querySelector("div:not(.mf-logo-plate)") as HTMLElement,
+    };
+  }
+
+  it("curves the plate to match a squircle logo instead of framing it in a square", () => {
+    const { plate, frame } = renderLogoPlate({ mask: "squircle", cornerRadiusPx: 52, widthPx: 200 });
+    // frame radius 52 → 46.8px; the plate is 12% wider per side (24px), so its
+    // radius is the frame radius plus exactly that offset
+    expect(frame.style.borderRadius).toMatch(/^46\.8\d*px$/);
+    expect(plate.style.borderRadius).toBe("calc(46.800000000000004px + 24px)");
+    expect(plate.style.borderRadius).not.toBe("");
+    expect(plate.style.borderRadius).not.toBe("0px");
+  });
+
+  it("keeps percentage geometry as-is (it scales with the box)", () => {
+    const circle = renderLogoPlate({ mask: "circle" });
+    expect(circle.plate.style.borderRadius).toBe("50%");
+
+    const blob = renderLogoPlate({ mask: "blob" });
+    expect(blob.plate.style.borderRadius).toBe(blob.frame.style.borderRadius);
+  });
+
+  it("reuses a percentage clip-path so the plate keeps the mask's shape", () => {
+    const { plate, frame } = renderLogoPlate({ mask: "hexagon" });
+    expect(frame.style.clipPath).toMatch(/^polygon\(/);
+    expect(plate.style.clipPath).toBe(frame.style.clipPath);
+  });
+
+  it("offsets a rect plate by the same inset", () => {
+    const { plate } = renderLogoPlate({ mask: "rect", cornerRadiusPx: 16, widthPx: 200 });
+    expect(plate.style.borderRadius).toBe("calc(16px + 24px)");
+  });
+
+  it("draws the plate behind the logo and grows it symmetrically", () => {
+    const { host, plate } = renderLogoPlate({ mask: "squircle", cornerRadiusPx: 52 });
+    expect(host.firstElementChild).toBe(plate);
+    expect(plate.style.inset).toBe("-12%");
+    expect(plate.style.border).toMatch(/^1px solid rgba\(255,\s*255,\s*255,\s*0\.14\)$/);
+    expect(plate.style.boxShadow).toContain("rgba(0,0,0,0.35)");
+  });
+
+  it("never inherits a radius from the positioning host", () => {
+    const { host, plate } = renderLogoPlate({ mask: "squircle" });
+    expect(plate.style.cssText).not.toContain("inherit");
+    // the host itself stays a plain positioning box
+    expect((host as HTMLElement).style.borderRadius).toBe("");
+  });
+
+  it("renders no plate when the scene asks for no glass", () => {
+    const ctx = makeCtx();
+    const layer = parsedLayer({
+      id: "logo",
+      type: "imageLogo",
+      assetId: "logo",
+      widthPx: 200,
+      position: { xPct: 50, yPct: 30 },
+      mask: "squircle",
+    } as SceneSpecInput["layers"][number]) as unknown as ImageLogoLayer;
+    renderImageLogo(layer, ctx);
+    expect(ctx.content.querySelector(".mf-logo-plate")).toBeNull();
+  });
+});
 
 describe("asset sizing", () => {
   it("never stretches a logo to its box", () => {

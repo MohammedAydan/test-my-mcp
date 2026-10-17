@@ -9,7 +9,18 @@ const CLIP_PATHS: Record<Exclude<LogoMask, "rect" | "circle" | "squircle">, stri
   blob: "border-radius: 62% 38% 46% 54% / 56% 44% 56% 44%",
 };
 
-function maskStyle(mask: LogoMask, radiusPx?: number): Partial<CSSStyleDeclaration> {
+interface MaskGeometry {
+  borderRadius?: string;
+  clipPath?: string;
+  overflow?: string;
+}
+
+/**
+ * Frame geometry for a mask. Percentage geometry (`50%`, `62% 38% …`) and
+ * `clip-path: polygon(…)` are *relative to the box*, so they scale perfectly
+ * when the box is enlarged — which is exactly what the frosted plate needs.
+ */
+function geometryFor(mask: LogoMask, radiusPx?: number): MaskGeometry {
   switch (mask) {
     case "circle":
       return { borderRadius: "50%", overflow: "hidden" };
@@ -23,6 +34,31 @@ function maskStyle(mask: LogoMask, radiusPx?: number): Partial<CSSStyleDeclarati
       return { borderRadius: `${radiusPx ?? 0}px`, overflow: "hidden" };
   }
 }
+
+/**
+ * Geometry for the frosted plate that sits *behind* the logo.
+ *
+ * THE BUG THIS FIXES: the plate used `border-radius: inherit`, but its parent is
+ * the positioning host, which has no radius of its own — so a squircle logo
+ * ended up framed by a hard square. The plate must carry the same curve as the
+ * mask, expanded by exactly the amount the box grows:
+ *
+ * - a pixel radius grows by the inset (offsetting a rounded rect outward by `d`
+ *   on all sides gives radius `r + d` — exact for these curves);
+ * - percentage radii and percentage `clip-path` polygons need no adjustment,
+ *   because they are relative to the box they are painted on.
+ */
+function chipGeometry(mask: LogoMask, radiusPx: number | undefined, insetPx: number): MaskGeometry {
+  const geometry = geometryFor(mask, radiusPx);
+  const pxRadius = geometry.borderRadius?.match(/^(-?[\d.]+)px$/);
+  return {
+    borderRadius: pxRadius ? `calc(${pxRadius[1]}px + ${insetPx}px)` : geometry.borderRadius,
+    clipPath: geometry.clipPath,
+  };
+}
+
+/** How far the frosted plate extends beyond the logo box, as a percent. */
+const CHIP_INSET_PCT = 12;
 
 /**
  * Aspect-ratio safety for bitmaps and SVG marks.
@@ -68,24 +104,31 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
   }
   if (filters.length > 0) host.style.filter = filters.join(" ");
 
-  // frosted chip behind the logo
+  // frosted plate behind the logo: same curve as the mask, grown by the inset
   if (layer.glass) {
-    const chip = document.createElement("div");
-    chip.style.cssText = [
+    const plate = document.createElement("div");
+    plate.className = "mf-logo-plate";
+    const insetPx = (layer.widthPx * CHIP_INSET_PCT) / 100;
+    const geometry = chipGeometry(layer.mask, layer.cornerRadiusPx, insetPx);
+    plate.style.cssText = [
       "position:absolute",
-      "inset:-14%",
-      `border-radius:inherit`,
+      `inset:-${CHIP_INSET_PCT}%`,
+      geometry.borderRadius ? `border-radius:${geometry.borderRadius}` : "",
+      geometry.clipPath ? `clip-path:${geometry.clipPath}` : "",
       `backdrop-filter:blur(${layer.glass.blurPx}px)`,
       `-webkit-backdrop-filter:blur(${layer.glass.blurPx}px)`,
       `background:${hexToRgba(layer.glass.tintColor, layer.glass.tintOpacity)}`,
-      "border:1px solid rgba(255,255,255,0.12)",
-    ].join(";");
-    host.appendChild(chip);
+      "border:1px solid rgba(255,255,255,0.14)",
+      `box-shadow:0 ${Math.round(insetPx * 0.6)}px ${Math.round(insetPx * 1.6)}px rgba(0,0,0,0.35)`,
+    ]
+      .filter(Boolean)
+      .join(";");
+    host.appendChild(plate);
   }
 
   const frame = document.createElement("div");
   frame.style.cssText = "position:absolute;inset:0;";
-  Object.assign(frame.style, maskStyle(layer.mask, layer.cornerRadiusPx));
+  Object.assign(frame.style, geometryFor(layer.mask, layer.cornerRadiusPx));
   host.appendChild(frame);
 
   const img = document.createElement("img");
