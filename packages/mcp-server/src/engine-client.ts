@@ -4,13 +4,17 @@
  */
 export const ENGINE_URL = process.env.MOTIONFORGE_ENGINE_URL ?? "http://127.0.0.1:4000";
 
+/**
+ * An engine HTTP failure. The class carries DATA (status + body issues); prefixing
+ * is the presenter's job, so callers can format it without doubling the status.
+ */
 export class EngineError extends Error {
   constructor(
     readonly status: number,
     message: string,
     readonly issues?: string[]
   ) {
-    super(`core-engine ${status}: ${message}`);
+    super(message);
     this.name = "EngineError";
   }
 }

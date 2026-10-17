@@ -11,6 +11,9 @@ const blobSchema = z.strictObject({
   drift: z.number().min(0).max(2).default(0.3),
 });
 
+/** Discriminant values of the `variant` union (authoring-facing registry). */
+export const BACKGROUND_VARIANTS = ["solid", "meshGradient", "particles", "media"] as const;
+
 const kenBurnsSchema = z.strictObject({
   fromScale: z.number().min(1).max(2),
   toScale: z.number().min(1).max(2.5),

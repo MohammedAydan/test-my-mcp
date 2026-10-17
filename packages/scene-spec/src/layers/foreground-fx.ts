@@ -2,6 +2,9 @@ import { z } from "zod";
 import { colorSchema, unitSchema } from "../common.js";
 import { layerBaseSchema } from "./base.js";
 
+/** Discriminant values of each effect's `kind` union (authoring-facing registry). */
+export const FOREGROUND_FX_KINDS = ["vignette", "filmGrain", "colorGrade"] as const;
+
 /** Full-frame overlays applied above all content layers. */
 export const foregroundFxLayerSchema = layerBaseSchema.extend({
   type: z.literal("foregroundFX"),

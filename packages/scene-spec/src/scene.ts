@@ -128,20 +128,29 @@ export type Layer = z.infer<typeof layerSchema>;
 // SceneSpec
 // ---------------------------------------------------------------------------
 
-export const sceneSpecSchema = z
-  .strictObject({
-    schemaVersion: z.literal(1),
-    id: idSchema.optional(),
-    name: z.string().min(1).max(120),
-    canvas: canvasSchema,
-    durationMs: z.number().int().min(300).max(600_000),
-    assets: z.array(assetSchema).max(64).default([]),
-    fonts: z.array(fontRefSchema).max(12).default([]),
-    layers: z.array(layerSchema).max(40),
-    camera: cameraSchema.default({}),
-    transitions: z.array(transitionSchema).max(32).default([]),
-    audio: audioSchema.default({}),
-  })
+/**
+ * The structural SceneSpec shape WITHOUT the cross-field rules below.
+ *
+ * Exported separately so consumers that need to *advertise or pre-validate* the
+ * structure (e.g. an MCP tool input schema, which must be a ZodObject to be
+ * serialized) can use this, while `sceneSpecSchema` remains the full validator.
+ * Both accept and produce identical fields — this is the same object, unwrapped.
+ */
+export const sceneShapeSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  id: idSchema.optional(),
+  name: z.string().min(1).max(120),
+  canvas: canvasSchema,
+  durationMs: z.number().int().min(300).max(600_000),
+  assets: z.array(assetSchema).max(64).default([]),
+  fonts: z.array(fontRefSchema).max(12).default([]),
+  layers: z.array(layerSchema).max(40),
+  camera: cameraSchema.default({}),
+  transitions: z.array(transitionSchema).max(32).default([]),
+  audio: audioSchema.default({}),
+});
+
+export const sceneSpecSchema = sceneShapeSchema
   .superRefine((scene, ctx) => {
     const fail = (path: (string | number)[], message: string) =>
       ctx.addIssue({ code: z.ZodIssueCode.custom, path, message });

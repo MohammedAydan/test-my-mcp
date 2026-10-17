@@ -15,6 +15,9 @@ export type CardGlass = z.infer<typeof glassSchema>;
 const titleSchema = z.string().max(200).optional();
 const bodySchema = z.string().max(800).optional();
 
+/** Discriminant values of the `variant` union (authoring-facing registry). */
+export const CARD_VARIANTS = ["glassCard", "callout", "progressBar", "counter"] as const;
+
 export const cardLayerSchema = layerBaseSchema.extend({
   type: z.literal("card"),
   /** center anchor of the card, percent of canvas */

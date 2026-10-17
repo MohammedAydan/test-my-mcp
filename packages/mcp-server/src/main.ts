@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { registerTools } from "./tools.js";
+import { registerAuthoringResource, registerTools } from "./tools.js";
 import { ENGINE_URL } from "./engine-client.js";
 
 /**
@@ -11,6 +11,7 @@ import { ENGINE_URL } from "./engine-client.js";
  */
 const server = new McpServer({ name: "motionforge", version: "0.1.0" });
 registerTools(server);
+registerAuthoringResource(server);
 
 console.error(`[motionforge-mcp] core-engine: ${ENGINE_URL}`);
 const transport = new StdioServerTransport();

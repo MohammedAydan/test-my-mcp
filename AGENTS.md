@@ -69,6 +69,19 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 
 ## Scene-authoring guidance (for LLM-driven scenes)
 
+- **Always start from `get_motion_capabilities().minimalValidScene`.** It is generated
+  from the schemas (`scene-spec/src/field-guide.ts`), guaranteed to validate, and is
+  the fastest path to a valid scene. Post it as-is if you just need a working baseline.
+  `fullShowcaseSketch` is the same idea with every asset-free feature exercised.
+- Do not guess structure from field names. Copy shapes from
+  `get_motion_capabilities().layerFieldGuide[...]` and read `nestedShapeNotes` — the
+  recurring failures are structural, not vocabulary: `background.variant`/`card.variant`
+  are **objects** discriminated by `variant`, motion is `entrance/emphasis/exit:
+  {name: <preset>}`, positions are `{xPct, yPct}`, sizes use `*Px` keys, times are ms.
+  The same guide is available offline as the MCP resource `motionforge://scenespec/v1`.
+- When `create_or_update_scene` rejects a scene, the response lists **every** field-level
+  issue (`layers.0.variant: Expected object, received string`). Fix exactly those paths
+  and re-post — never re-send the same scene hoping for a different result.
 - Pick presets from the registry only (`docs/02_SCENESPEC.md` lists all valid names).
   Easing defaults are already professional; override only with intent.
 - Budget durations: one idea per 2–4 s; total scenes typically 8–30 s.
@@ -83,9 +96,10 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 | Task | Location |
 | --- | --- |
 | New layer type / preset / SFX name | `packages/scene-spec/src/**` first, then implement in runtime+engine; update `docs/02_SCENESPEC.md` |
+| Authoring guidance shown to LLMs (`layerFieldGuide`, `minimalValidScene`, …) | `packages/scene-spec/src/field-guide.ts` — typed as `SceneSpecInput` and drift-tested; regenerate nothing by hand |
+| MCP tool wiring | `packages/mcp-server/src/**` (never drop engine `issues[]`; advertise `sceneShapeSchema`, not a cast raw shape) |
 | HTTP route, render pipeline, audio | `packages/core-engine/src/**` |
 | Visual layer rendering, timeline UI | `packages/scene-runtime/src/**` |
-| MCP tool wiring | `packages/mcp-server/src/**` |
 
 Changing the `SceneSpec` schema is a **breaking contract change**: bump
 `schemaVersion`, keep the old version parsing (or migrate), and update the docs in the

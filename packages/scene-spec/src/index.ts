@@ -16,3 +16,5 @@ export * from "./layers/foreground-fx.js";
 // --- scene + validation -----------------------------------------------------
 export * from "./scene.js";
 export * from "./validate.js";
+// --- authoring guidance (LLM-facing, derived from the schemas above) -------
+export * from "./field-guide.js";

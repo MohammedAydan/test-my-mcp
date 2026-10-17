@@ -148,3 +148,24 @@ the naive version of each was measured and failed — keep them unless you re-me
 - **Asset references resolve `assetId → src → URL`.** The runtime must look the
   id up in `scene.assets`; passing the id straight through as a URL yields a
   broken image (the browser silently shows alt text).
+- **MCP must forward Zod issues verbatim — never summarize.** `core-engine` returns
+  `{ error, issues[] }` with one entry per field path (`layers.0.variant: Expected
+  object, received string`). The MCP adapter converts every `EngineError` into a tool
+  result containing the status, the message and one bullet per issue, plus a pointer
+  to the authoring guide. A bare `invalid scene` is unusable to the caller: it was the
+  root cause of a 42-attempt blind-probing loop in a live session. Regression-locked by
+  `packages/mcp-server/tests/tools.test.ts`.
+- **Advertise the real schema, not a free-form bag.** `create_or_update_scene` uses
+  `sceneShapeSchema` (the structural half of `sceneSpecSchema`, exported separately
+  because MCP tool schemas must be a `ZodObject` — a `.superRefine()` wrapper serializes
+  to empty properties). Hosts therefore see real field names, discriminated unions and
+  `additionalProperties: false`. Note: `normalizeObjectSchema()` in the MCP SDK detects
+  raw shapes by duck-typing, so a schema must never be `as`-cast into a shape object —
+  that silently advertises `{properties:{}}`. The test asserts the schema contains real
+  markers (`meshGradient`, `xPct`, `sizePx`, …).
+- **Capabilities must carry STRUCTURE, not only vocabularies.** Registry lists teach
+  which names are legal; they do not teach shapes. `get_motion_capabilities` therefore
+  also returns `layerFieldGuide`, `nestedShapeNotes`, `minimalValidScene` and
+  `fullShowcaseSketch` (see `scene-spec/src/field-guide.ts`).
+- **The authoring guide ships as a resource, not a sixth tool.** `motionforge://scenespec/v1`
+  is served from `@motionforge/scene-spec` directly, so it works with the engine down.
