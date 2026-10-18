@@ -157,3 +157,63 @@
 - **Unit Tests Status:** `329 / 329 passed across 17 test files` (`npm test`)
 - **UI E2E Tests Status:** `22 / 22 passed` (`scripts/test-phase2.cjs`)
 - **Baseline Screenshot:** `screenshots/desktop-baseline-01.png`
+
+---
+
+## 1. Phase 1: Electron Foundation & Native Menus
+
+- **Package Creation:** Created `@motionforge/desktop` using Electron 31 (`electron-vite`).
+- **Security Architecture:** `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, typed IPC preload exposing safe `window.motionforge` API bridge.
+- **Dynamic Port Management:** Core-engine child process spawned dynamically by Electron main process on an OS-assigned free port, passed to renderer via `window.motionforge.engineUrl`.
+- **Native OS Menus & File Format:** Implemented native File, Edit, View, Window, Help menus and `.mfproj` JSON project schema with dirty window title tracking (`*`).
+- **Evidence:** `scripts/test-desktop-launch.cjs` (PASS), screenshot `screenshots/desktop-verify-01.png`.
+
+---
+
+## 2. Phase 2: Solid.js UI Migration & Parity
+
+- **Package Creation:** Created `@motionforge/studio` with Solid.js 1.8+, Vite 5, Tailwind CSS 3.4, Kobalte primitives.
+- **Fine-Grained Reactivity:** Centralized `solid-js/store` with 50-step undo/redo stack, eliminating DOM re-renders during high-frequency timeline scrubbing.
+- **Full Feature Parity:** 100% reproduction of Cinematic Amber theme, layer operations, grouped inspector, asset vault, render queue, command palette, shortcuts dialog, and multi-scene tabs.
+- **Legacy Deprecation:** Deleted legacy vanilla frontend files from repository; Solid UI established as the single canonical desktop interface.
+- **Evidence:** `scripts/test-phase2.cjs` (22/22 PASS), `scripts/test-ui.cjs` (19/19 PASS), multi-viewport screenshots (1440x900, 1920x1080, 2560x1440).
+
+---
+
+## 3. Phase 3 (Phase A): Direct Canvas Manipulation Overlay
+
+- **Backend Bounds Endpoint:** Implemented `GET /api/scenes/:id/frame/:frameIndex/bounds` in `packages/core-engine/src/keyframes.ts` using headless Playwright sub-pixel `getBoundingClientRect()`.
+- **Rotation Schema & Renderers:** Added `rotation: z.number().min(-360).max(360).optional()` to `layerBaseSchema` and wired rotation transforms into all position-aware runtime layer renderers (`kineticText`, `card`, `imageLogo`, `lottie`).
+- **SVG Overlay (`CanvasOverlay.tsx`):**
+  - Interactive bounding box with 8 square resize handles and 1 lollipop rotation handle.
+  - Smart alignment snapping guides (`--snap-guide: #22d3ee`) with 5px distance threshold.
+  - Multi-layer marquee box selection.
+  - Viewport Zoom/Pan toolbar (`V` selection tool, `H` hand tool, Zoom dropdown, Fit button, Snap toggle).
+- **Evidence:** `scripts/test-phase-a-overlay.cjs` (PASS), screenshot `screenshots/phase-a-overlay.png`.
+
+---
+
+## 4. Phase 4 (Phase B): Multi-Track Timeline NLE & Keyframe Editor
+
+- **Keyframe Schema & Runtime Interpolator:** Added `keyframeSchema`, `keyframeTrackSchema`, and `tracks?: KeyframeTrack[]` to `layerBaseSchema`. Implemented `applyKeyframeTracks` runtime evaluator supporting linear and GSAP bezier easing curves.
+- **Multi-Track Canvas 2D Timeline (`Timeline.tsx`):**
+  - Left track headers (220px fixed width) with disclosure carets `▶`, color badges, layer names, and collapsible property sub-tracks (`xPct`, `yPct`, `opacity`, `scale`, `rotation`).
+  - Diamond keyframe markers (`◆`) rendered on property sub-tracks with hover/selection states.
+  - In and Out point bracket markers (`[ I ]`, `[ O ]`) with shaded exclusion regions.
+  - Professional NLE editing hotkeys: Razor split at playhead (`Ctrl+K`), ripple delete (`Shift+Delete`).
+  - JKL Transport engine: `L` (1x -> 2x -> 4x forward), `K` (pause), `J` (-1x -> -2x -> -4x reverse).
+- **Evidence:** `scripts/test-phase-b-timeline.cjs` (PASS), screenshot `screenshots/phase-b-timeline.png`.
+
+---
+
+## 5. Phase 5: Verification & Desktop Distributable Packaging
+
+- **Unit Test Regression Suite:** `npm test` executed across all workspaces. **329 / 329 passed** (0 failures, 0 regressions).
+- **End-to-End Regression Suite:**
+  - `scripts/test-phase2.cjs`: **22 / 22 passed** (Full draft 720p/30fps and production 1080p/60fps video renders verified via `ffprobe`).
+  - `scripts/test-ui.cjs`: **19 / 19 passed** across all responsive viewports.
+  - `scripts/test-desktop-launch.cjs`: **ALL PASS**.
+- **Packaging:** Built unpacked Windows x64 desktop distributable via `electron-builder --dir` into `packages/desktop/dist/win-unpacked/MotionForge.exe` (180MB standalone executable).
+- **Packaged Executable Test:** `scripts/test-packaged-exe.cjs` executed against `MotionForge.exe` directly in Electron. Verified clean window creation, typed IPC bridge, demo scene loading, and visual rendering.
+- **Evidence:** Screenshot `screenshots/packaged-exe-verify.png`.
+

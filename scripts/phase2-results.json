@@ -2,12 +2,12 @@
   "2.1": {
     "test": "Load Demo Scene",
     "status": "PASS",
-    "evidence": "Layers: 4 (bgbackground👁🔓⎘×, titlekineticText👁🔓⎘×, subtitlekineticText👁🔓⎘×, cardcard👁🔓⎘×). SceneId: demo-mve9d3fi. Saved to engine: true. Screenshot: screenshots/diagnostic-02-demo.png"
+    "evidence": "Layers: 4 (bgbackground👁🔓⎘×, titlekineticText👁🔓⎘×, subtitlekineticText👁🔓⎘×, cardcard👁🔓⎘×). SceneId: demo-mveb0y3p. Saved to engine: true. Screenshot: screenshots/diagnostic-02-demo.png"
   },
   "2.2": {
     "test": "Load Scene by ID",
     "status": "PASS",
-    "evidence": "Active scene tab: \"demo-mve9d3fi\". Expected: \"demo-mve9d3fi\"."
+    "evidence": "Active scene tab: \"demo-mveb0y3p\". Expected: \"demo-mveb0y3p\"."
   },
   "2.3": {
     "test": "Layer Selection & Inspector",
@@ -67,7 +67,7 @@
   "2.14": {
     "test": "Multi-Scene Tabs",
     "status": "PASS",
-    "evidence": "Tabs count: 2 (demo-mve9d3fi, scene-mve9egtp)"
+    "evidence": "Tabs count: 2 (demo-mveb0y3p, scene-mveb29hn)"
   },
   "2.15": {
     "test": "Asset Vault",
@@ -82,12 +82,12 @@
   "2.17": {
     "test": "Persistence",
     "status": "PASS",
-    "evidence": "Pre-reload id: scene-mve9egtp, Post-reload id: scene-mve9egtp"
+    "evidence": "Pre-reload id: scene-mveb29hn, Post-reload id: scene-mveb29hn"
   },
   "2.18": {
     "test": "SSE Live Updates",
     "status": "PASS",
-    "evidence": "EventSource connected to /api/scenes/scene-mve9egtp/events: true"
+    "evidence": "EventSource connected to /api/scenes/scene-mveb29hn/events: true"
   },
   "2.19": {
     "test": "Error Handling",

@@ -31,7 +31,7 @@
 - [x] 4.5 Motion Presets: Dropdown/drag-and-drop to apply preset envelopes to layer segments
 
 ## Phase 5: Verification & Desktop Packaging
-- [ ] 5.1 Run 329 backend unit tests (`vitest`) and assert all pass
-- [ ] 5.2 Run automated desktop test suite covering Phase A & B features
-- [ ] 5.3 Build desktop distributable via `electron-builder`
-- [ ] 5.4 Capture verification screenshots and finalize `docs/07_DESKTOP_MIGRATION_LOG.md`
+- [x] 5.1 Run 329 backend unit tests (`vitest`) and assert all pass
+- [x] 5.2 Run automated desktop test suite covering Phase A & B features
+- [x] 5.3 Build desktop distributable via `electron-builder`
+- [x] 5.4 Capture verification screenshots and finalize `docs/07_DESKTOP_MIGRATION_LOG.md`

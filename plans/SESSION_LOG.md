@@ -118,3 +118,41 @@ All systems fully functional and verified end-to-end. Engine running on :4000, S
 ### State at end of session
 - Working tree clean, branch up to date with `origin/main`.
 ---
+
+## Session: 2026-10-19 00:08
+### What was done
+- Completed Phase 5 Desktop Verification & Packaging:
+  - Re-verified all 329 backend unit tests passing cleanly across 17 test suites (`vitest`).
+  - Diagnosed and resolved Vite preview asset MIME type issue by configuring `wildcard: true` for Fastify static preview routes, enabling headless Playwright Chromium worker execution.
+  - Re-verified all 22 / 22 end-to-end tests passing in `scripts/test-phase2.cjs` including keyframe inspection and full draft & production MP4 rendering with `ffprobe` video stream verification.
+  - Re-verified all 19 / 19 responsive viewport tests passing in `scripts/test-ui.cjs`.
+  - Configured `electron-builder.yml` and desktop metadata for Electron 31.7.7 packaging.
+  - Packaged standalone Windows x64 distributable (`packages/desktop/dist/win-unpacked/MotionForge.exe`, 180MB) via `electron-builder --dir`.
+  - Authored and executed `scripts/test-packaged-exe.cjs`, confirming successful launch, IPC bridge initialization, demo scene loading, and visual rendering inside `MotionForge.exe`.
+  - Finalized `docs/07_DESKTOP_MIGRATION_LOG.md`, `plans/desktop-app/review.md`, and `plans/context.md`.
+
+### Decisions made
+- Configured `@fastify/static` with `wildcard: true` on preview route to serve dynamically hashed assets properly.
+- Pinned exact electron version `31.7.7` in desktop `package.json` and `electron-builder.yml` to satisfy electron-builder monorepo resolution requirements.
+
+### Files changed
+- `packages/core-engine/src/server.ts` — Set `wildcard: true` for static preview routes
+- `packages/desktop/package.json` — Pinned Electron 31.7.7, added author and description
+- `packages/desktop/electron-builder.yml` — Added electronVersion: 31.7.7
+- `scripts/test-phase2.cjs` — Improved keyframe inspection locator wait
+- `scripts/test-packaged-exe.cjs` — Automated verification script for packaged executable
+- `docs/07_DESKTOP_MIGRATION_LOG.md` — Appended completion records for Phases 1 through 5
+- `plans/desktop-app/tasks.md` — All tasks marked done
+- `plans/desktop-app/review.md` — Comprehensive post-implementation feature review
+- `plans/context.md` — Updated status to complete
+
+### State at end of session
+- Active feature: desktop-app (Complete)
+- Last completed task: Phase 5 Verification, Desktop Packaging & Documentation
+- Next task: None (Mission fully accomplished)
+- Blockers: None
+
+### Resume instructions
+The desktop NLE application is fully packaged and verified. Standalone executable is available at `packages/desktop/dist/win-unpacked/MotionForge.exe`.
+---
+

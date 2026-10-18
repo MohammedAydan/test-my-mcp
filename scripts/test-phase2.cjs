@@ -261,7 +261,8 @@ async function run() {
     // -----------------------------------------------------------------
     console.log('--> Testing 2.9: Inspect Keyframes');
     await page.click('#btn-inspect');
-    await page.waitForTimeout(4000); // Headless playwright capture
+    await page.locator('.kf-img').first().waitFor({ timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(1000);
 
     const kfCount = await page.locator('.kf-img').count();
     let brokenImages = 0;

@@ -263,7 +263,7 @@ export async function registerPreviewRoutes(app: FastifyInstance, runtimeDistDir
   await app.register(staticFiles, {
     root: runtimeDistDir,
     prefix: "/preview/",
-    wildcard: false,
+    wildcard: true,
   });
   // the built bundle uses relative asset URLs — requires the trailing slash;
   // keep the original query string intact
