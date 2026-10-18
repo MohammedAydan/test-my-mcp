@@ -14,7 +14,7 @@
 - [x] 2.1 Commit 3: Solid.js skeleton with read-only parity against demo scene
 - [x] 2.2 Commit 4: Solid.js full feature parity (mutations, inspector, undo/redo, render queue, dialogs)
 - [x] 2.3 Verify all 22 UI tests (`scripts/test-phase2.cjs`) pass against Solid.js UI
-- [~] 2.4 Commit 5: Remove vanilla UI, point desktop renderer to `packages/studio`
+- [x] 2.4 Commit 5: Remove vanilla UI, point desktop renderer to `packages/studio`
 
 ## Phase 3: Direct Canvas Manipulation (Phase A)
 - [ ] 3.1 Backend: Add `GET /api/scenes/:id/frame/:frameIndex/bounds` in `core-engine`
