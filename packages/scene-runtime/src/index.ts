@@ -92,11 +92,38 @@ async function boot(): Promise<void> {
   try {
     await mountScene(scene, sceneId, fps, renderMode);
     readyResolve();
+    // Notify parent window that runtime is mounted and ready for sync
+    window.parent?.postMessage(
+      { type: "motionforge:ready", fps, durationMs: scene.durationMs },
+      "*"
+    );
   } catch (error) {
     showError(error instanceof Error ? error.message : String(error));
     readyResolve();
     return;
   }
+
+  // Handle postMessage communication from MotionForge Studio UI
+  window.addEventListener("message", async (event) => {
+    const data = event.data;
+    if (!data || typeof data !== "object") return;
+
+    if (data.type === "motionforge:seek" && typeof data.atMs === "number") {
+      const activeFps = window.renderConfig?.fps ?? fps;
+      const targetFrame = Math.round((data.atMs / 1000) * activeFps);
+      if (window.seekToFrame) {
+        await window.seekToFrame(targetFrame);
+      }
+    } else if (data.type === "motionforge:play") {
+      if (mounted) {
+        mounted.tl.play();
+      }
+    } else if (data.type === "motionforge:pause") {
+      if (mounted) {
+        mounted.tl.pause();
+      }
+    }
+  });
 
   if (!renderMode) {
     // Live preview: rebuild in place when the engine pushes an update. A full
