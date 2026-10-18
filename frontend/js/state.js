@@ -137,10 +137,17 @@ class Store {
     this.state.selectedLayerId = prev.selectedLayerId;
     this.state.dirty = true;
     this.state.saveStatus = 'unsaved';
+    this.syncDesktopDirty();
 
     this.notify('scene:mutated', { source: 'undo', description: prev.description });
     this.notify('history:changed', { canUndo: this.canUndo(), canRedo: this.canRedo() });
     return prev.description;
+  }
+
+  syncDesktopDirty() {
+    if (window.motionforge?.setDirty) {
+      window.motionforge.setDirty(Boolean(this.state.dirty));
+    }
   }
 
   redo() {
@@ -157,6 +164,7 @@ class Store {
     this.state.selectedLayerId = next.selectedLayerId;
     this.state.dirty = true;
     this.state.saveStatus = 'unsaved';
+    this.syncDesktopDirty();
 
     this.notify('scene:mutated', { source: 'redo', description: next.description });
     this.notify('history:changed', { canUndo: this.canUndo(), canRedo: this.canRedo() });
@@ -170,6 +178,7 @@ class Store {
     mutatorFn(this.state.scene);
     this.state.dirty = true;
     this.state.saveStatus = 'unsaved';
+    this.syncDesktopDirty();
     this.notify('scene:mutated', { description });
   }
 
@@ -182,6 +191,7 @@ class Store {
     this.state.dirty = false;
     this.state.saveStatus = 'saved';
     this.state.lastSaved = new Date();
+    this.syncDesktopDirty();
     this.undoStack = [];
     this.redoStack = [];
 
@@ -239,6 +249,7 @@ class Store {
       this.state.dirty = false;
       this.state.lastSaved = new Date();
     }
+    this.syncDesktopDirty();
     this.notify('status:save', status);
   }
 }
