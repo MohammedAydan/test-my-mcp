@@ -4,6 +4,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { EngineConfig, EnginePaths } from "./config.js";
+import type { SceneSpec } from "@motionforge/scene-spec";
 import {
   buildAudioGraph,
   FfmpegError,
@@ -62,7 +63,8 @@ async function concatParts(parts: string[], jobDir: string): Promise<string> {
 async function muxAudio(
   videoPath: string,
   graph: ReturnType<typeof buildAudioGraph>,
-  outPath: string
+  outPath: string,
+  scene?: SceneSpec
 ): Promise<void> {
   // audio inputs occupy indices 0..N-1 so filtergraph labels stay stable;
   // the (silent) video always lands right after them
@@ -70,17 +72,34 @@ async function muxAudio(
   const mapArgs = graph.outLabel
     ? ["-map", `${videoIndex}:v`, "-map", `[${graph.outLabel}]`, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
     : ["-map", "0:v", "-an", "-c:v", "copy"];
-  await runFfmpeg(
-    [
-      ...graph.inputArgs,
-      "-i", videoPath,
-      ...(graph.outLabel ? ["-filter_complex", graph.filterComplex] : []),
-      ...mapArgs,
-      "-movflags", "+faststart",
-      outPath,
-    ],
-    "mux audio"
-  );
+  try {
+    await runFfmpeg(
+      [
+        ...graph.inputArgs,
+        "-i", videoPath,
+        ...(graph.outLabel ? ["-filter_complex", graph.filterComplex] : []),
+        ...mapArgs,
+        "-movflags", "+faststart",
+        outPath,
+      ],
+      "mux audio"
+    );
+  } catch (error) {
+    // "ffmpeg failed (mux audio): …" is unactionable. Name the scene, its cues
+    // and the exact filtergraph so the operator knows which line to fix.
+    const cues = scene?.audio.cues ?? [];
+    const cueSummary =
+      cues.length > 0
+        ? `scene "${scene?.name}" cues: ` +
+          cues.map((c, i) => `[${i}] ${c.sfx}@${c.at}ms gain=${c.gain} pan=${c.pan}`).join(", ")
+        : "scene has no audio cues";
+    throw new FfmpegError(
+      `audio mix failed for ${cueSummary}\n` +
+        `filtergraph: ${graph.filterComplex || "(none)"}\n` +
+        `underlying error: ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof FfmpegError ? error.stderrTail : ""
+    );
+  }
 }
 
 export class RenderRunner {
@@ -190,7 +209,7 @@ export class RenderRunner {
       const slug =
         scene.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "scene";
       const mp4Path = path.join(this.paths.rendersDir, `${job.quality}-${slug}-${job.id}.mp4`);
-      await muxAudio(concatPath, graph, mp4Path);
+      await muxAudio(concatPath, graph, mp4Path, scene);
 
       const wallMs = Date.now() - started;
       job.result = {

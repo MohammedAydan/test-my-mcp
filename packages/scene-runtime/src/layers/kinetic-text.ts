@@ -118,22 +118,32 @@ export function renderKineticText(
           "white-space:pre",
           "unicode-bidi:isolate",
         ].join(";");
+        const span = document.createElement("span");
+        span.className = "mf-unit";
+        // `position:relative` makes the unit the containing block for its own
+        // highlight pill — see below.
+        span.style.cssText = ["position:relative", TEXT_UNIT_GUARD_CSS].join(";");
+        applyTextPaint(span, layer.fill, layer.stroke);
+        span.textContent = token;
+        // The highlight pill lives INSIDE the animated `.mf-unit`, not beside
+        // it. As a sibling it was painted by the *container* while the glyphs
+        // were still staggered in, so the box showed up before the word did.
+        // Nested, it inherits the unit's opacity/filter/transform and is
+        // revealed in exact lockstep with its glyphs.
         if (granularity === "word" && layer.highlight) {
           const hl = document.createElement("span");
+          hl.className = "mf-highlight";
+          hl.dataset.mfHighlight = "true";
           hl.style.cssText = [
             "position:absolute",
             `inset:${-layer.highlight.paddingPx}px`,
             `border-radius:${layer.highlight.radiusPx}px`,
             `background:${layer.highlight.color}`,
             "z-index:-1",
+            "pointer-events:none",
           ].join(";");
-          wrap.appendChild(hl);
+          span.appendChild(hl);
         }
-        const span = document.createElement("span");
-        span.className = "mf-unit";
-        span.style.cssText = TEXT_UNIT_GUARD_CSS;
-        applyTextPaint(span, layer.fill, layer.stroke);
-        span.textContent = token;
         wrap.appendChild(span);
         lineEl.appendChild(wrap);
         units.push(span);

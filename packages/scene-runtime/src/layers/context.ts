@@ -22,4 +22,11 @@ export interface LayerContext {
   lottieData(assetId: string): unknown;
   /** register a per-frame media sync (e.g. video currentTime) used by seekToFrame */
   registerSeekable(seekable: Seekable): void;
+  /**
+   * Natural pixel size of an image asset, when it is known.
+   *
+   * Used to size a logo that declares no `heightPx`: without the aspect ratio
+   * the host box collapses to zero height and the mark is invisible.
+   */
+  assetIntrinsicSize(assetId: string): { width: number; height: number } | undefined;
 }

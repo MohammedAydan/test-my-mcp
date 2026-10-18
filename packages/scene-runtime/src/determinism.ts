@@ -163,19 +163,25 @@ export const CRISP_TEXT_CSS = [
 ].join(";");
 
 /**
- * Vertical breathing room for animated text units.
+ * Transparent breathing room for animated text units.
  *
- * Mask-reveal presets clip with `clip-path: inset(...)`, which cuts glyphs off
- * at the element box. Arabic ascenders/descenders and diacritics (ب، ت، ي، ق، ن، أ)
- * routinely exceed the nominal line box, so units get padding *and* the
- * compensating negative margins, which keeps the layout box unchanged while the
- * painted box grows.
+ * Two independent defects are fixed by this padding/margin pair:
+ *
+ * 1. **Mask reveals.** `maskRevealWipe` / `collapseMask` clip with
+ *    `clip-path: inset(...)`, which cuts glyphs off at the element box. Arabic
+ *    ascenders/descenders and diacritics routinely exceed the nominal line box,
+ *    so units get padding *and* the compensating negative margins, which keeps
+ *    the layout box unchanged while the painted box grows.
+ * 2. **Blur kernels.** `blurFadeIn` blurs each unit; Chromium samples the blur
+ *    kernel from the element's *paint* box, so a word with zero padding gets a
+ *    hard-clipped kernel on all four sides and pops at the end of the fade.
+ *
+ * The negative margins are what keep this from changing layout — the padding is
+ * purely a painted-box extension.
  */
 export const TEXT_UNIT_GUARD_CSS = [
-  "padding-top:0.15em",
-  "padding-bottom:0.2em",
-  "margin-top:-0.15em",
-  "margin-bottom:-0.2em",
+  "padding:0.12em 0.08em",
+  "margin:-0.12em -0.08em",
   "line-height:1.35",
   "white-space:pre",
   "unicode-bidi:isolate",

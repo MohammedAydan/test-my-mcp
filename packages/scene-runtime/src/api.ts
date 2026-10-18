@@ -18,6 +18,14 @@ export async function fetchScene(id: string): Promise<SceneSpec> {
 
 export interface AssetPreload {
   lottieJson: Map<string, unknown>;
+  /**
+   * Natural pixel size of every image asset, read while it was preloaded.
+   *
+   * The runtime needs it to size a logo that declares no `heightPx`: without
+   * the aspect ratio the host box collapses to zero height and the mark is
+   * invisible — a silent, total loss of the layer.
+   */
+  imageSizes: Map<string, { width: number; height: number }>;
 }
 
 /**
@@ -27,6 +35,7 @@ export interface AssetPreload {
  */
 export async function preloadAssets(scene: SceneSpec): Promise<AssetPreload> {
   const lottieJson = new Map<string, unknown>();
+  const imageSizes = new Map<string, { width: number; height: number }>();
 
   await Promise.all(
     scene.assets.map(async (asset) => {
@@ -34,7 +43,12 @@ export async function preloadAssets(scene: SceneSpec): Promise<AssetPreload> {
       if (asset.kind === "image") {
         await new Promise<void>((resolve, reject) => {
           const img = new Image();
-          img.onload = () => resolve();
+          img.onload = () => {
+            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+              imageSizes.set(asset.id, { width: img.naturalWidth, height: img.naturalHeight });
+            }
+            resolve();
+          };
           img.onerror = () => reject(new Error(`failed to load image asset "${asset.id}" (${url})`));
           img.src = url;
         });
@@ -57,7 +71,7 @@ export async function preloadAssets(scene: SceneSpec): Promise<AssetPreload> {
     })
   );
 
-  return { lottieJson };
+  return { lottieJson, imageSizes };
 }
 
 export function assetKindOf(scene: SceneSpec): (assetId: string) => AssetKind | undefined {

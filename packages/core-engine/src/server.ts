@@ -1,12 +1,14 @@
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import staticFiles from "@fastify/static";
 import { createReadStream, existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 
 import { capabilities } from "./capabilities.js";
-import type { EngineConfig } from "./config.js";
+import type { EngineConfig, EnginePaths } from "./config.js";
 import { RenderRunner, type RenderQuality } from "./render-runner.js";
-import { validateScene, type SceneValidation } from "@motionforge/scene-spec";
+import { validateScene, type ProjectQuality, type SceneSpec } from "@motionforge/scene-spec";
+import type { ResolvedAsset } from "./project-assets.js";
 import {
   ensureDirs,
   mimeFor,
@@ -19,9 +21,16 @@ import { inspectKeyframes } from "./keyframes.js";
 import {
   initCreativeProject,
   ProjectWorkspaceError,
+  saveRenderToDisk,
+  saveStillsToDisk,
   syncSceneToDisk,
   type InitCreativeProjectOptions,
 } from "./project-workspace.js";
+import {
+  resolveProjectAssets,
+  unresolvedAssetIssues,
+} from "./project-assets.js";
+import { analyzeScene, summarizeWarnings, type SceneWarning } from "./scene-analysis.js";
 import { SceneStore } from "./scene-store.js";
 import { ensureSfxBank } from "./sfx-bank.js";
 
@@ -31,6 +40,143 @@ export interface Engine {
   runner: RenderRunner;
 }
 
+export interface ProjectRoutesDeps {
+  store: SceneStore;
+  port: number;
+  paths: EnginePaths;
+}
+
+/** The body a scene-store response carries. Shared by both scene routes. */
+export interface SceneStoreResponse {
+  id: string;
+  status: "created" | "updated";
+  revision: number;
+  hash: string;
+  warnings: SceneWarning[];
+  previewUrl: string;
+  scene: SceneSpec;
+  savedSceneFilePath?: string;
+  assetsResolved?: ResolvedAsset[];
+}
+
+/**
+ * Validate, asset-resolve and store a scene.
+ *
+ * Shared by `POST /api/scenes` and `POST /projects/sync` so the MCP tool and the
+ * CLI can never diverge on what "storing a scene" means — including the
+ * non-blocking warnings and the project asset resolution.
+ */
+export async function storeScene(opts: {
+  body: unknown;
+  store: SceneStore;
+  paths: EnginePaths;
+  port: number;
+  projectPath?: string;
+}): Promise<{ status: number; body: SceneStoreResponse | { error: string; issues: string[] } }> {
+  const validation = validateScene(opts.body);
+  if (!validation.ok) {
+    return { status: 400, body: { error: "invalid scene", issues: validation.issues } };
+  }
+  const scene = validation.scene;
+  const projectPath = opts.projectPath;
+
+  // Pull any project-local artwork into the vault before the existence check, so
+  // `vault:logo.png` resolves from `<project>/assets/images/logo.png`.
+  let assetsResolved: ResolvedAsset[] | undefined;
+  if (projectPath) {
+    const outcome = await resolveProjectAssets(scene, { projectPath, enginePaths: opts.paths });
+    assetsResolved = outcome.resolved;
+    if (outcome.unresolved.length > 0) {
+      return {
+        status: 400,
+        body: { error: "invalid scene", issues: unresolvedAssetIssues(outcome.unresolved) },
+      };
+    }
+  }
+
+  for (const asset of scene.assets) {
+    if (!asset.src.startsWith("vault:")) continue;
+    const name = sanitizeVaultName(asset.src.slice("vault:".length));
+    if (!name || !vaultFileExists(opts.paths, name)) {
+      return {
+        status: 400,
+        body: {
+          error: "invalid scene",
+          issues: [`asset "${asset.id}" references missing vault file: ${asset.src}`],
+        },
+      };
+    }
+  }
+
+  const upserted = await opts.store.upsert(scene, projectPath ? { projectPath } : {});
+  const warnings: SceneWarning[] = analyzeScene(scene);
+  const response: SceneStoreResponse = {
+    id: upserted.id,
+    status: upserted.status,
+    revision: upserted.revision,
+    hash: upserted.hash,
+    warnings,
+    previewUrl: `http://127.0.0.1:${opts.port}/preview/?scene=${encodeURIComponent(upserted.id)}`,
+    scene,
+    ...(assetsResolved && assetsResolved.length > 0 ? { assetsResolved } : {}),
+  };
+
+  if (projectPath) {
+    const sync = await syncSceneToDisk(projectPath, scene);
+    response.savedSceneFilePath = `${projectPath.replace(/\/+$/, "")}/${sync.file}`;
+    if (sync.manifestError) {
+      // the scene file was written; only the manifest is missing
+      warnings.push({
+        code: "PROJECT_MANIFEST_MISSING",
+        path: "projectPath",
+        message:
+          `scene written to ${sync.file}, but the project manifest could not be updated: ${sync.manifestError} ` +
+          `Run init_creative_project (or \`npm run init-project\`) in that directory first.`,
+      });
+    }
+  }
+
+  return { status: upserted.status === "created" ? 201 : 200, body: response };
+}
+
+/**
+ * The scene route — the single write path for a SceneSpec.
+ *
+ * Extracted from `startEngine` so it can be unit-tested with `app.inject()`
+ * without booting the whole engine (a listening socket, a browser pool, a
+ * render queue).
+ */
+export async function registerSceneRoutes(
+  app: FastifyInstance,
+  opts: { store: SceneStore; paths: EnginePaths; port: number }
+): Promise<void> {
+  const { store, paths, port } = opts;
+  const sceneRoute = async (
+    req: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
+    // `projectPath` may ride along in the body (the MCP tool's auto-sync) or as
+    // a header; both enable project asset resolution + disk sync.
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const headerPath = req.headers["x-motionforge-project"];
+    const rawProjectPath = body.projectPath ?? headerPath;
+    const projectPath =
+      typeof rawProjectPath === "string" && rawProjectPath.length > 0 ? rawProjectPath : undefined;
+    // `projectPath` is an envelope field, not part of SceneSpec — strip it so
+    // the strict schema does not reject it as an unknown key
+    const { projectPath: _ignored, ...scene } = body;
+    const result = await storeScene({
+      body: scene,
+      store,
+      paths,
+      port,
+      ...(projectPath ? { projectPath } : {}),
+    });
+    return reply.code(result.status).send(result.body);
+  };
+  app.post("/api/scenes", sceneRoute);
+}
+
 /**
  * Creative-project routes — HTTP parity for the `init_creative_project` MCP
  * tool and the project-kit CLI. All workspace logic lives in
@@ -38,10 +184,11 @@ export interface Engine {
  */
 export async function registerProjectRoutes(
   app: FastifyInstance,
-  opts: { store: SceneStore; port: number }
+  opts: ProjectRoutesDeps
 ): Promise<void> {
-  const { store } = opts;
-  const seedScene = (scene: Parameters<typeof store.upsert>[0]) => Promise.resolve(store.upsert(scene).id);
+  const { store, paths, port } = opts;
+  const seedScene = async (scene: Parameters<typeof store.upsert>[0]): Promise<string> =>
+    (await store.upsert(scene)).id;
 
   app.post("/projects/init", async (req, reply) => {
     try {
@@ -65,15 +212,67 @@ export async function registerProjectRoutes(
 
   app.post("/projects/sync", async (req, reply) => {
     const { scene, projectPath } = (req.body ?? {}) as { scene?: unknown; projectPath?: string };
-    const validation: SceneValidation = validateScene(scene);
-    if (!validation.ok) {
-      return reply.code(400).send({ error: "invalid scene", issues: validation.issues });
+    // identical path to the MCP tool's disk auto-sync, including warnings
+    const result = await storeScene({ body: scene, store, paths, port, projectPath });
+    return reply.code(result.status).send(result.body);
+  });
+
+  // file a finished render into the project and update the manifest status
+  app.post("/projects/renders", async (req, reply) => {
+    const { sceneId, quality, mp4Base64 } = (req.body ?? {}) as {
+      sceneId?: string;
+      quality?: ProjectQuality;
+      mp4Base64?: string;
+    };
+    const stored = sceneId ? store.get(sceneId) : undefined;
+    const projectPath = req.headers["x-motionforge-project"] ?? stored?.projectPath;
+    if (!stored) return reply.code(404).send({ error: `unknown scene "${sceneId ?? ""}"` });
+    if (typeof projectPath !== "string" || projectPath.length === 0) {
+      return reply.code(400).send({ error: "no projectPath: store the scene with one, or pass X-MotionForge-Project" });
     }
-    const { id } = store.upsert(validation.scene);
-    if (!projectPath) return reply.code(201).send({ id, scene: validation.scene });
-    // same code path as the MCP tool's disk auto-sync
-    const sync = await syncSceneToDisk(projectPath, validation.scene);
-    return reply.code(201).send({ id, scene: validation.scene, disk: sync });
+    if (quality !== "draft" && quality !== "production") {
+      return reply.code(400).send({ error: 'quality must be "draft" | "production"' });
+    }
+    if (!mp4Base64) return reply.code(400).send({ error: "mp4Base64 required" });
+    try {
+      const saved = await saveRenderToDisk(projectPath, sceneId as string, quality, Buffer.from(mp4Base64, "base64"));
+      return reply.code(201).send({
+        file: saved.file,
+        latest: saved.latest,
+        status: saved.status,
+        projectRenderFilePath: `${projectPath.replace(/\/+$/, "")}/${saved.latest}`,
+      });
+    } catch (error) {
+      if (error instanceof ProjectWorkspaceError) return reply.code(400).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  // write captured stills into the project's renders/stills/
+  app.post("/projects/stills", async (req, reply) => {
+    const { sceneId, frames } = (req.body ?? {}) as {
+      sceneId?: string;
+      frames?: Array<{ atMs: number; image: string }>;
+    };
+    const stored = sceneId ? store.get(sceneId) : undefined;
+    const projectPath = req.headers["x-motionforge-project"] ?? stored?.projectPath;
+    if (!stored) return reply.code(404).send({ error: `unknown scene "${sceneId ?? ""}"` });
+    if (typeof projectPath !== "string" || projectPath.length === 0) {
+      return reply.code(400).send({ error: "no projectPath: store the scene with one, or pass X-MotionForge-Project" });
+    }
+    if (!Array.isArray(frames) || frames.length === 0) {
+      return reply.code(400).send({ error: "frames[] required" });
+    }
+    try {
+      const files = await saveStillsToDisk(projectPath, sceneId as string, frames);
+      return reply.code(201).send({
+        files,
+        savedStillsFilePaths: files.map((f) => `${projectPath.replace(/\/+$/, "")}/${f}`),
+      });
+    } catch (error) {
+      if (error instanceof ProjectWorkspaceError) return reply.code(400).send({ error: error.message });
+      throw error;
+    }
   });
 }
 
@@ -96,7 +295,14 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
   await ensureDirs(config.paths);
   await ensureSfxBank(config.paths, log);
 
-  const store = new SceneStore();
+  // Disk-backed store: scenes survive an engine restart. A scene that was
+  // hand-edited into an illegal state is skipped and reported, never loaded.
+  const store = new SceneStore(config.paths.dataDir);
+  const hydrated = await store.load();
+  if (hydrated.loaded > 0) log(`scene store: hydrated ${hydrated.loaded} scene(s) from data/scenes`);
+  for (const issue of hydrated.issues) {
+    log(`scene store: skipped ${issue.file} — ${issue.error}`);
+  }
   const runner = new RenderRunner(config, config.paths, store, log);
 
   // -------------------------------------------------------------------------
@@ -130,27 +336,9 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
   // -------------------------------------------------------------------------
   // scenes
   // -------------------------------------------------------------------------
-  app.post("/api/scenes", async (req, reply) => {
-    const validation: SceneValidation = validateScene(req.body);
-    if (!validation.ok) {
-      return reply.code(400).send({ error: "invalid scene", issues: validation.issues });
-    }
-    const scene = validation.scene;
-    // vault: sources must exist in the vault (the LLM may reference assets it uploaded)
-    for (const asset of scene.assets) {
-      if (asset.src.startsWith("vault:")) {
-        const name = sanitizeVaultName(asset.src.slice("vault:".length));
-        if (!name || !vaultFileExists(config.paths, name)) {
-          return reply.code(400).send({
-            error: "invalid scene",
-            issues: [`asset "${asset.id}" references missing vault file: ${asset.src}`],
-          });
-        }
-      }
-    }
-    const { id } = store.upsert(scene);
-    return reply.code(201).send({ id, scene });
-  });
+  // the shared write path — registered through the same helper the tests use,
+  // so the behaviour is identical in tests and in the running engine
+  await registerSceneRoutes(app, { store, paths: config.paths, port: config.port });
 
   app.get("/api/scenes/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -163,7 +351,7 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
   // creative projects — HTTP parity for the init_creative_project MCP tool and
   // the project-kit CLI. The shared logic lives in project-workspace.ts.
   // -------------------------------------------------------------------------
-  await registerProjectRoutes(app, { store, port: config.port });
+  await registerProjectRoutes(app, { store, port: config.port, paths: config.paths });
 
   app.get("/api/scenes/:id/events", async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -185,14 +373,15 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
     const { at } = (req.body ?? {}) as { at?: number[] };
     const stamps = at?.filter((n) => Number.isFinite(n) && n >= 0) ?? [0];
     const { scene } = store.require(id);
-    const { inspectKeyframes } = await import("./keyframes.js");
     const frames = await inspectKeyframes({
       scene,
       sceneId: id,
       baseUrl: `http://127.0.0.1:${config.port}`,
       at: stamps,
     });
-    return { frames };
+    // `frames[].meta` is the numeric sidecar (camera / transitions / per-layer
+    // lifecycle + overflow) — the MCP tool renders it as `framesMeta`
+    return { frames, framesMeta: frames.map((f) => f.meta ?? { atMs: f.atMs }) };
   });
 
   // -------------------------------------------------------------------------
@@ -261,6 +450,31 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
     return reply
       .header("content-type", "video/mp4")
       .send(createReadStream(job.result.mp4Path));
+  });
+
+  /**
+   * A finished render, base64-encoded.
+   *
+   * The MCP adapter has no filesystem access, so filing a render into a creative
+   * project (and bumping the manifest status) needs the bytes over the wire.
+   * Streaming back would be nicer, but a filtergraph/mux error discovered at this
+   * point has to be attributable to the exact scene and quality, so the payload
+   * is self-describing.
+   */
+  app.get("/api/renders/:jobId/file/base64", async (req, reply) => {
+    const { jobId } = req.params as { jobId: string };
+    const job = runner.jobId(jobId);
+    if (!job || job.status !== "succeeded" || !job.result) {
+      return reply.code(404).send({ error: "render not finished" });
+    }
+    const bytes = await readFile(job.result.mp4Path);
+    return {
+      jobId,
+      sceneId: job.sceneId,
+      quality: job.quality,
+      bytes: bytes.byteLength,
+      mp4Base64: bytes.toString("base64"),
+    };
   });
 
   // -------------------------------------------------------------------------

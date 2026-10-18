@@ -34,16 +34,20 @@ If any of these is missing, say so and stop — do not improvise a structure.
    target folder. It scaffolds the workspace, validates everything, and optionally
    seeds the starter scene into the engine.
 3. **Author `./scenes/scene-01.json` on disk**, then push it with
-   `create_or_update_scene`. Disk JSON and engine state must stay 100% in sync —
-   after every successful tool call with `projectPath`, the files are written
-   automatically (`scenes/scene-XX.json`, `motionforge.project.json` updated,
-   renders filed).
+   `create_or_update_scene` (pass `projectPath` — the project root). Disk JSON and
+   engine state must stay 100% in sync; with `projectPath` the files are written
+   automatically (`scenes/scene-XX.json`, `motionforge.project.json` updated, renders
+   filed, stills saved).
    (Or use `npm run sync-scene -- --project . --file scenes/scene-01.json`, which
    validates locally with the same schema before POSTing.)
 4. **Call `inspect_scene_keyframes`** across at least four timestamps — entrance,
    mid-action, transition, outro. Verify: no clipped text, correct Arabic shaping,
    no overlap, adequate contrast, nothing off-canvas. Pass `projectPath` and
    `saveStills: true` to auto-file the PNGs.
+   **Read the `framesMeta` sidecar** that comes back with the images: it reports the
+   camera pose, the live transition phase and each layer's lifecycle phase, opacity,
+   bounding box and `textOverflow` flag. A frame that looks empty is often just a
+   layer mid-entrance — the metadata says so, so you do not have to guess.
 5. **Open `open_live_timeline_preview`** for the operator, then **render draft**:
    `render_video(quality: "draft")`. Pass `projectPath` to auto-file the MP4 into
    `renders/draft/`.
@@ -52,6 +56,22 @@ If any of these is missing, say so and stop — do not improvise a structure.
    in `motionforge.project.json`.
 7. **Update the manifest**: add each new scene to `scenes[]` with its file path
    and status, so the job stays self-describing.
+
+## Assets resolve themselves
+
+Drop a file into the project and reference it — no upload step:
+
+| File goes to | Reference as |
+| --- | --- |
+| `assets/images/logo.png` | `"src": "vault:logo.png"` |
+| `assets/lottie/anim.json` | `"src": "vault:anim.json"` |
+| `assets/video/clip.mp4` | `"src": "vault:clip.mp4"` |
+| `assets/audio/music/bed.mp3` | `"src": "vault:bed.mp3"` |
+| `brand/logo/wordmark.png` | `"src": "vault:wordmark.png"` |
+
+When a scene is stored with a `projectPath`, every `vault:` reference is looked up in
+those folders and copied into the engine vault on first use. A file that cannot be
+found is reported with the exact directories that were searched.
 
 ## Tool map (exactly six — there is no seventh)
 
@@ -90,6 +110,17 @@ A rejected scene comes back with **every field-level issue**
 (`layers.2.variant: Expected object, received string`). Fix exactly those paths
 and re-post. Never resend an unchanged scene, and never guess a fix by trial and
 error across more than one iteration.
+
+A scene that was *accepted* may still carry **warnings** — non-blocking problems
+the runtime corrected for you, but which you should fix in the source:
+
+- `CAMERA_VIEWPORT_EXCEEDS_CANVAS` — the camera pans or zooms past the canvas
+  edge, which would show black void. At `scale: s` the safe range for `xPct`/`yPct`
+  is `[50/s, 100 − 50/s]`. Bring the value inside the range.
+- `CAMERA_MOVE_OVERRUNS_SCENE` — a camera move ends after the scene does and will
+  be cut off.
+- `PROJECT_MANIFEST_MISSING` — the scene file was written, but the project has no
+  `motionforge.project.json`. Run `init_creative_project` in that directory.
 
 ## Definition of done
 

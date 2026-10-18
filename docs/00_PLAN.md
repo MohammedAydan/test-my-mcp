@@ -174,6 +174,109 @@ on disk without manual CLI commands.
   *Acceptance:* ✅ all docs consistent with the 6-tool contract and autonomous
   project workflow.
 
+## Milestone 6 — Field-Run Hardening (Visual Defects + Engine/MCP Findings)
+**Goal:** close the defects found in two production field runs (`brand-launch-ar`,
+`fintech-launch-ar`) plus the human review of the rendered MP4s: three visual /
+animation defect classes, one P0 audio crash, one P0 persistence gap, and the
+engine/MCP gaps that made them expensive to diagnose.
+
+- ✅ **Step 17 — Universal In/Out effect envelope** (`scene-runtime/src/envelope.ts`).
+  Every bounded effect now starts at exact identity and returns to exact identity:
+  a dedicated ramp-in (first 20%), symmetric yoyo cycles (even `repeat` ⇒ an odd
+  number of traversals, so the block ends on the peak), and a dedicated ramp-out
+  (last 20%). `pulseGlow` and `floatIdle` gained a real glow/displacement that
+  unwinds; `lightSweep` became an isolated `mix-blend-mode: screen` overlay with
+  pure light stops (the blocky dark band over a `progressBar` is gone);
+  `cameraShakeImpact` uses a `sin(p·π·n)·(1−p)²` decay; every camera move gets a
+  ramp-in / hold / ramp-out envelope, so `focusTarget` no longer leaves the camera
+  parked at 1.45×.
+  *Acceptance:* ✅ `packages/scene-runtime/tests/effect-envelopes.test.ts` asserts
+  on the **live GSAP timeline** that each emphasis preset is at identity at both
+  ends of its window and demonstrably moved in between.
+- ✅ **Step 18 — Bell-curve transitions** (`scene-runtime/src/transitions.ts`).
+  All four transitions rebuilt as a strict 2-phase bell: `0 → peak at 50% → 0 at
+  100%`, with the seam swap hidden under a fully-opaque midpoint. `wipe` covers the
+  frame (48–52% hold) with a glowing leading edge; `whipPan` slams to ±45% and
+  wraps at the midpoint under peak motion blur; `glitch` steps RGB split and
+  slice bars with a flash at the cut; `morph` expands a radial iris with frosted
+  blur and contracts cleanly. Every overlay leaves zero residual transforms or
+  filters.
+  *Acceptance:* ✅ the same test file asserts the bell shape per kind, the live
+  overlay visibility, and that the rig transform is clean after the window.
+- ✅ **Step 19 — Text reflow lock** (`presets.ts`, `kinetic-text.ts`, `card.ts`).
+  Masks animate `clip-path` only — never `width`/`height` — and the runtime
+  *asserts* it, so a regression is a thrown error, not a sliced word. `blurFadeIn`
+  drops the filter (`filter: none`) the instant the entrance completes, and the
+  `.mf-unit` guard gained horizontal padding for the blur kernel. The `highlight`
+  pill now lives **inside** the animated word unit, so it cannot appear before its
+  glyph. The `progressBar` percentage moved into the card's header row, where a
+  camera zoom can no longer clip it.
+  *Acceptance:* ✅ unit tests lock the clip-path-only contract, the `filter: none`
+  reset, the nested highlight pill and the header-row layout.
+- ✅ **Step 20 — Graceful layer auto-exit guard.** A bounded layer that ends well
+  before the scene and declares no `exit` now fades out over the last 220 ms of its
+  own window instead of being force-hidden in one frame.
+  *Acceptance:* ✅ `needsAutoExit` / `autoExitWindow` are unit-tested, including the
+  50 ms guard band.
+- ✅ **Step 21 — FFmpeg `pan` crash fixed** (P0, report 2 C1/F1). The mixer emitted
+  `pan=stereo:c0=…:c1=…`, which FFmpeg parses as AVOptions and rejects
+  (`Option not found`), aborting every render with a non-zero `pan`. It now emits
+  the filter-graph form `aformat=channel_layouts=stereo,pan=stereo|c0=…|c1=…` with
+  constant-power gains, and audio failures name the offending cue.
+  *Acceptance:* ✅ a real FFmpeg run renders an MP4 with `pan: -0.6` and
+  `pan: +0.75`, and `ffprobe` confirms a stereo AAC stream.
+- ✅ **Step 22 — Camera safety, inheritance and framing warnings** (P0, report 1
+  4.1/4.2, P0-2/P0-3). Camera keyframes now **explicitly** inherit every omitted
+  field from the previous keyframe (baseline `{scale:1, xPct:50, yPct:50, roll:0,
+  yaw:0, pitch:0}`), the runtime clamps the pan to the canvas at `scale >= 1`, and
+  the engine emits a non-blocking `CAMERA_VIEWPORT_EXCEEDS_CANVAS` warning with the
+  exact timestamp, axis and safe range.
+  *Acceptance:* ✅ unit tests cover the inheritance chain, the clamp, the warning
+  and the safe-range arithmetic.
+- ✅ **Step 23 — Disk-backed `SceneStore`** (P0, report 2 C3/F2). Every scene is
+  persisted to `data/scenes/<sceneId>.json` (atomic temp-file + rename) with its
+  `revision`, `hash`, `updatedAt` and `projectPath`, and the store hydrates from
+  disk on boot. `create_or_update_scene` now returns
+  `{id, status, revision, hash, warnings, previewUrl, savedSceneFilePath?}`.
+  *Acceptance:* ✅ a test stores a scene, builds a **new** store over the same
+  directory (a simulated restart) and asserts the scene, revision, hash and
+  projectPath all survive.
+- ✅ **Step 24 — `framesMeta` inspection sidecar** (P0, report 1 P0-5 / 4.4-4.5).
+  `inspect_scene_keyframes` returns a deterministic per-timestamp description:
+  the camera pose (+ `clampedVoid`), the active transition with its phase, and
+  every visible layer's lifecycle phase, progress, opacity, bounding box and
+  `textOverflow` flag. A frame that looks empty can now be *read* as "still
+  entering" instead of guessed at.
+  *Acceptance:* ✅ MCP tests assert the sidecar is rendered next to the images, and
+  a live run against a real engine reports the right phase at every timestamp.
+- ✅ **Step 25 — Project asset resolution** (P1, report 1 4.7 / report 2 5.4). A
+  scene stored with a `projectPath` gets its `vault:` references resolved out of
+  `assets/{images,lottie,video,audio/**}/` and `brand/logo/` automatically; the
+  files are copied into the engine vault on first use and never overwrite an
+  existing (possibly higher-quality) vault file.
+  *Acceptance:* ✅ tests cover resolution, caching, the traversal guard and the
+  actionable "searched these directories" message.
+- ✅ **Step 26 — Capabilities completeness** (P0, report 1 P0-3, I-2/I-4/I-5/I-6,
+  I-12). `get_motion_capabilities` now publishes the engine `version` and
+  `buildTimestamp`, the full camera keyframe field table (defaults + safe pan
+  range), how each camera move composes with keyframes, the complete parameter
+  shape of all four transitions, and the nested `box.chip` / `highlight` /
+  `callout` / `progressBar` shapes.
+  *Acceptance:* ✅ tests assert every documented field exists and that no
+  transition advertises a field its schema would reject.
+- ✅ **Step 27 — Logo sizing fix.** An `imageLogo` with no `heightPx` collapsed to
+  a **zero-height** box — the absolutely-positioned frame inside it had nothing to
+  fill, so the mark was completely invisible. The height is now derived from the
+  image's own aspect ratio, measured while the runtime preloads it (deterministic,
+  never an `onload` race).
+  *Acceptance:* ✅ unit tests cover the derived height, an explicit height and the
+  no-intrinsic-size fallback; a live render confirms the logo is visible.
+- ✅ **Step 28 — CLI delegation.** `sync-scene` and `pull-render` now call the
+  shared `project-workspace` helpers instead of re-implementing the file layout
+  and manifest updates, so the CLI and the MCP tool can never diverge.
+  *Acceptance:* ✅ a live run of both scripts against a real engine files the
+  render, writes the `-latest.mp4` copy and reports the manifest status.
+
 ## Standing constraints (all milestones)
 - Zero MCP imports outside `mcp-server`; zero GSAP outside `scene-runtime`.
 - Frames stay in memory (no PNG-on-disk pipelines).

@@ -4,7 +4,7 @@ import { resolveCanvasSize, type SceneSpec } from "@motionforge/scene-spec";
 import { createStage, resetStage, type Stage } from "./stage.js";
 import { loadSceneFonts } from "./fonts.js";
 import { assetKindOf, fetchScene, preloadAssets, resolveAssetUrl } from "./api.js";
-import { buildScene } from "./scene-builder.js";
+import { buildScene, type FrameDescription } from "./scene-builder.js";
 import { mountTimelineUI, type TimelineUIHandle } from "./timeline-ui.js";
 import {
   clampFrame,
@@ -41,6 +41,7 @@ interface MountedScene {
   totalFrames: number;
   tl: gsap.core.Timeline;
   lifecycle: LayerLifecycle;
+  describeFrame: (timeMs: number) => FrameDescription;
   settle: FrameSettler;
   ui: TimelineUIHandle | null;
 }
@@ -122,13 +123,13 @@ async function mountScene(
   const { width, height } = resolveCanvasSize(scene.canvas);
   stage.setSize(width, height);
 
-  const { lottieJson } = await preloadAssets(scene);
+  const { lottieJson, imageSizes } = await preloadAssets(scene);
   const fonts = await loadSceneFonts(scene);
   // assetId → engine URL (the LLM references ids; the runtime needs srcs)
   const srcById = new Map(scene.assets.map((asset) => [asset.id, asset.src]));
 
   const seekables: Seekable[] = [];
-  const { tl, lifecycle } = buildScene(scene, stage, {
+  const { tl, lifecycle, describeFrame } = buildScene(scene, stage, {
     fonts,
     resolveAsset: (assetId) => {
       const src = srcById.get(assetId);
@@ -142,6 +143,7 @@ async function mountScene(
       return data;
     },
     registerSeekable: (seekable) => seekables.push(seekable),
+    assetIntrinsicSize: (assetId) => imageSizes.get(assetId),
   });
   // `focusTarget` camera moves measure element boxes, so the rig must be laid
   // out before the first keyframe tween is evaluated
@@ -182,12 +184,15 @@ async function mountScene(
     totalFrames,
     tl,
     lifecycle,
+    describeFrame,
     settle: async (timeSec: number) => {
       targetTimeSec = timeSec;
       await settle(timeSec);
     },
     ui: null,
   };
+  // numeric per-frame description for `inspect_scene_keyframes`
+  window.describeFrame = describeFrame;
 
   if (renderMode) {
     // headless render entry: settle on frame 0, then signal readiness
@@ -202,6 +207,7 @@ function unmountScene(): void {
   mounted.ui?.dispose();
   mounted.tl.kill();
   mounted.lifecycle.clear();
+  window.describeFrame = undefined;
   resetStage(stage);
   mounted = null;
 }

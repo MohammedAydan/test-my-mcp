@@ -19,8 +19,24 @@ export class EngineError extends Error {
   }
 }
 
+export interface SceneWarning {
+  code: string;
+  path: string;
+  message: string;
+  detail?: Record<string, unknown>;
+}
+
 export interface SceneUploadResult {
   id: string;
+  status: "created" | "updated";
+  revision: number;
+  hash: string;
+  /** non-blocking diagnostics — e.g. a camera that would expose black void */
+  warnings: SceneWarning[];
+  previewUrl?: string;
+  /** set when the scene was written back to a creative project */
+  savedSceneFilePath?: string;
+  scene: unknown;
 }
 
 export interface ProjectInitResult {
@@ -33,10 +49,35 @@ export interface ProjectInitResult {
   operationalChecklist: string[];
 }
 
+export interface KeyframeFrameMeta {
+  atMs: number;
+  camera?: {
+    scale: number;
+    xPct: number;
+    yPct: number;
+    roll: number;
+    yaw: number;
+    pitch: number;
+    clampedVoid: boolean;
+  };
+  activeTransitions?: Array<{ kind: string; progressPct: number; phase: "in" | "peak" | "out" }>;
+  layers?: Array<{
+    id: string;
+    type: string;
+    lifecyclePhase: "entrance" | "settled" | "emphasis" | "exit";
+    phaseProgressPct: number;
+    opacity: number;
+    bbox: { x: number; y: number; width: number; height: number };
+    textOverflow: boolean;
+  }>;
+}
+
 export interface KeyframeFrame {
   atMs: number;
-  /** data:image/jpeg;base64,… */
+  /** data:image/png;base64,… */
   image: string;
+  /** numeric sidecar: camera pose, live transition phase, per-layer lifecycle */
+  meta?: KeyframeFrameMeta;
 }
 
 export interface RenderJobView {
@@ -89,20 +130,59 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
   return body;
 }
 
+/** Header the engine reads to associate an out-of-band call with a project. */
+const PROJECT_HEADER = "x-motionforge-project";
+
 export const engineClient = {
   capabilities: (): Promise<unknown> => request("/api/capabilities"),
 
-  putScene: (scene: unknown): Promise<SceneUploadResult> =>
-    request("/api/scenes", { method: "POST", body: JSON.stringify(scene) }) as Promise<SceneUploadResult>,
+  putScene: (scene: unknown, projectPath?: string): Promise<SceneUploadResult> =>
+    request("/api/scenes", {
+      method: "POST",
+      // `projectPath` rides in the body for /api/scenes and in a header for the
+      // project routes, so both are accepted here
+      body: JSON.stringify(projectPath ? { ...(scene as object), projectPath } : scene),
+      headers: projectPath ? { [PROJECT_HEADER]: projectPath } : undefined,
+    }) as Promise<SceneUploadResult>,
 
   initProject: (options: unknown): Promise<ProjectInitResult> =>
     request("/projects/init", { method: "POST", body: JSON.stringify(options) }) as Promise<ProjectInitResult>,
 
-  keyframes: (sceneId: string, at: number[]): Promise<{ frames: KeyframeFrame[] }> =>
+  syncScene: (scene: unknown, projectPath: string): Promise<SceneUploadResult> =>
+    request("/projects/sync", {
+      method: "POST",
+      body: JSON.stringify({ scene, projectPath }),
+      headers: { [PROJECT_HEADER]: projectPath },
+    }) as Promise<SceneUploadResult>,
+
+  saveRender: (
+    sceneId: string,
+    quality: "draft" | "production",
+    mp4Base64: string,
+    projectPath: string
+  ): Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }> =>
+    request("/projects/renders", {
+      method: "POST",
+      body: JSON.stringify({ sceneId, quality, mp4Base64 }),
+      headers: { [PROJECT_HEADER]: projectPath },
+    }) as Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }>,
+
+  saveStills: (
+    sceneId: string,
+    frames: Array<{ atMs: number; image: string }>,
+    projectPath: string
+  ): Promise<{ files: string[]; savedStillsFilePaths: string[] }> =>
+    request("/projects/stills", {
+      method: "POST",
+      body: JSON.stringify({ sceneId, frames }),
+      headers: { [PROJECT_HEADER]: projectPath },
+    }) as Promise<{ files: string[]; savedStillsFilePaths: string[] }>,
+
+  keyframes: (sceneId: string, at: number[]): Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }> =>
     request(`/api/scenes/${encodeURIComponent(sceneId)}/keyframes`, {
       method: "POST",
       body: JSON.stringify({ at }),
-    }) as Promise<{ frames: KeyframeFrame[] }>,
+    }) as Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }>,
 
   previewUrl: (sceneId: string): string =>
     `${ENGINE_URL}/preview/?scene=${encodeURIComponent(sceneId)}`,
@@ -115,4 +195,11 @@ export const engineClient = {
 
   renderJob: (jobId: string): Promise<RenderJobView> =>
     request(`/api/renders/${encodeURIComponent(jobId)}`) as Promise<RenderJobView>,
+
+  renderFileBase64: (jobId: string): Promise<{ mp4Base64: string; sceneId: string; quality: string }> =>
+    request(`/api/renders/${encodeURIComponent(jobId)}/file/base64`) as Promise<{
+      mp4Base64: string;
+      sceneId: string;
+      quality: string;
+    }>,
 };

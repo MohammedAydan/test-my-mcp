@@ -245,6 +245,93 @@ The Fastify routes in `core-engine/src/server.ts`:
 Both MCP tools and CLI scripts call the same functions via `createHttpSeeder`
 when running outside the engine process.
 
+## 10. The effect envelope contract
+
+Every bounded effect in the runtime — an emphasis preset, a camera move, a
+transition — is a **window**, and the window has an **envelope**. The contract
+is one sentence long:
+
+> A temporary effect starts at exact identity, does its work, and returns to
+> exact identity.
+
+`packages/scene-runtime/src/envelope.ts` owns that contract:
+
+| Effect | Envelope |
+| --- | --- |
+| `pulseGlow`, `floatIdle` | ramp-in (20%, `sine.inOut`) → symmetric yoyo cycles → ramp-out (20%, `sine.inOut`) |
+| `lightSweep` | opacity 0→1 (0–20%), `translateX(-110%) → 110%` (0–100%, `power2.inOut`), opacity 1→0 (80–100%) |
+| `cameraShakeImpact` | `sin(p·π·n)·(1−p)²` — a snap-in with a quadratic decay to exactly 0 |
+| camera moves | ramp-in 28% (`expo.out`) → hold → ramp-out 28% (`expo.inOut`) |
+| transitions | 2-phase bell: `0 → peak at 50% → 0 at 100%` |
+
+The yoyo block uses an **even** `repeat` count, which means an *odd* number of
+half-cycle traversals — so the block finishes on the peak and the dedicated
+ramp-out can close the window symmetrically. The regions always tile the window
+exactly (`rampIn + cycles + hold + rampOut === windowSec`), so an effect can never
+overrun its own end time. That overrun was the original cause of the visible cut.
+
+Two structural rules follow from the same investigation:
+
+- **Masks never animate layout.** `width`/`height` on a text or card element
+  forces the browser to re-wrap the text on every frame, which is how
+  `"Render pipeline"` became `"ender pipeline"`. Mask presets animate
+  `clip-path` only, and `assertNoLayoutTweening()` throws if one ever does.
+- **Filters are dropped, not zeroed.** `blur(0px)` leaves the element on a
+  filtered compositor layer; `filter: none` removes it. `blurFadeIn` sets
+  `filter: none` the instant the entrance completes.
+
+## 11. Camera safety
+
+The camera is the one system where a legal scene can still look broken, so it
+has three independent layers of defence:
+
+1. **Explicit inheritance.** `resolveCameraKeyframes()` expands the keyframe
+   chain into fully-resolved poses, each inheriting every omitted field from the
+   previous one, starting from the neutral baseline
+   `{scale: 1, xPct: 50, yPct: 50, roll: 0, yaw: 0, pitch: 0}`. The runtime
+   writes *every* field on *every* tween, so the pose is a pure function of the
+   timeline position — not of playback order.
+2. **Viewport clamping.** At `scale = s` the visible slice of the canvas is
+   `100/s` percent wide, so a look-at point outside `[50/s, 100 − 50/s]` exposes
+   black void. `clampCameraPan()` holds the pan inside that range, and the rig
+   carries a `mfCameraClamped` flag while it is pressed against the edge.
+3. **A warning, not an error.** `core-engine` evaluates the camera across every
+   keyframe and move and returns a non-blocking
+   `CAMERA_VIEWPORT_EXCEEDS_CANVAS` warning with the exact timestamp, the axis,
+   the offending value and the safe range. The scene is still stored — the
+   runtime corrects it — but the author learns about it.
+
+## 12. Scene persistence
+
+`SceneStore` is disk-backed. Every upsert writes
+`data/scenes/<sceneId>.json` — a self-describing envelope of
+`{schemaVersion, scene, revision, hash, updatedAt, projectPath?}` — through a
+temp file and a `rename`, which is atomic on POSIX: a reader can never observe a
+half-written scene. On boot the store hydrates from that directory, re-validating
+every file with the real schema; a file that no longer validates is skipped and
+reported, never loaded.
+
+The `hash` is a SHA-256 over a key-sorted rendering of the scene, so two
+structurally equal scenes hash identically and a redundant re-post is detected
+without a version bump.
+
+## 13. Diagnostics as data
+
+Two responses carry structured diagnostics, because "the render looked wrong" is
+not an actionable error message:
+
+- `create_or_update_scene` → `warnings[]` — a stable `code`, the exact `path`
+  and a message that says what to change.
+- `inspect_scene_keyframes` → `framesMeta[]` — per timestamp: the camera pose
+  (with `clampedVoid`), the active transition with its `progressPct` and `phase`
+  (`in` / `peak` / `out`), and every visible layer's `lifecyclePhase`
+  (`entrance` / `settled` / `emphasis` / `exit`), `phaseProgressPct`, `opacity`,
+  bounding box and `textOverflow` flag.
+
+Together they answer the two questions an agent used to have to answer by
+eyeballing pixels: *is this frame supposed to look like this?* and *is this
+element clipped?*
+
 ## 8. Deterministic frame settlement (Milestone 4)
 
 A screenshot taken immediately after `timeline.seek(t)` is **not** frame `t`:

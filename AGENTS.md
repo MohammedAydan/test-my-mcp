@@ -30,11 +30,19 @@ packages/
    frame is considered capturable. No `Date.now()`/`performance.now()`-driven animation paths.
 4. **Frames never touch the disk.** Playwright captures JPEG/PNG buffers in memory and
    pipes them into FFmpeg stdin (`-f image2pipe`). SFX are mixed with millisecond `adelay`.
+   (Keyframe *inspection* stills are written to disk — they are client deliverables, not
+   render frames.)
 5. **No placeholders.** No `TODO`, no stubbed return values, no mock data committed as
    if functional. If a feature isn't built yet, it doesn't ship in that commit.
 6. **The LLM surface is exactly 6 tools** (`get_motion_capabilities`,
    `init_creative_project`, `create_or_update_scene`, `inspect_scene_keyframes`,
    `open_live_timeline_preview`, `render_video`). Do not add more without updating `docs/`.
+7. **Every temporary effect has an In/Out envelope.** Anything that runs over a bounded
+   window (emphasis presets, camera moves, transitions) must start at exact identity and
+   return to exact identity — see `packages/scene-runtime/src/envelope.ts`. A tween that
+   ends on a peak leaves the element stranded and the next frame cuts it.
+8. **Never animate layout on text.** `width`/`height` on a text or card element forces a
+   re-wrap every frame. Masks animate `clip-path` only.
 
 ## Commands
 
@@ -86,6 +94,21 @@ get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
 disk automatically: `scenes/<id>.json`, `renders/stills/*.png`,
 `renders/draft|production/*.mp4`, and `motionforge.project.json` all stay in sync
 without manual CLI commands.
+
+**Project assets resolve themselves.** A scene stored with a `projectPath` gets its
+`vault:` references resolved out of `<projectPath>/assets/{images,lottie,video,audio,…}/`
+and `<projectPath>/brand/logo/` automatically — the files are copied into the engine
+vault on first use. No manual upload step.
+
+**Scenes survive an engine restart.** `core-engine` persists every scene to
+`data/scenes/<sceneId>.json` (atomic temp-file + rename) and hydrates the store on
+boot. `create_or_update_scene` returns `{id, status, revision, hash, warnings, previewUrl}`.
+
+**Diagnostics, not guesswork.** `create_or_update_scene` returns non-blocking
+`warnings[]` (e.g. `CAMERA_VIEWPORT_EXCEEDS_CANVAS` — a camera that would expose black
+void), and `inspect_scene_keyframes` returns a `framesMeta[]` sidecar per timestamp
+(camera pose, active transition phase, per-layer lifecycle/opacity/bbox/textOverflow).
+Read them before judging a frame.
 
 FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 `npm run doctor -w @motionforge/core-engine` verifies the toolchain once implemented.

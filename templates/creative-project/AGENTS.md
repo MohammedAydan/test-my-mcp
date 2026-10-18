@@ -78,6 +78,21 @@ or `render_video`, the corresponding files are written to disk automatically:
 `scenes/<id>.json`, `renders/stills/*.png`, `renders/draft|production/*.mp4`,
 and `motionforge.project.json` all stay in sync without manual CLI commands.
 
+**Assets resolve themselves.** A scene stored with `projectPath` gets its `vault:`
+references resolved out of `assets/images/`, `assets/lottie/`, `assets/video/`,
+`assets/audio/**/` and `brand/logo/` automatically — the files are copied into the
+engine vault on first use. Just drop the file in the right folder and reference
+`"src": "vault:<filename>"`.
+
+**Read the diagnostics, do not guess.**
+- `create_or_update_scene` returns `warnings[]` — non-blocking problems such as
+  `CAMERA_VIEWPORT_EXCEEDS_CANVAS` (a camera that would show black void). The runtime
+  clamps it automatically; fix the authored value to remove the warning.
+- `inspect_scene_keyframes` returns `framesMeta[]` next to the images: the camera pose,
+  the live transition phase, and each layer's lifecycle phase (`entrance` / `settled` /
+  `emphasis` / `exit`), opacity, bounding box and `textOverflow` flag. A frame that
+  looks empty is often just a layer mid-entrance — the metadata says so.
+
 For manual CLI workflow:
 ```bash
 # after the MCP tool call succeeds
@@ -87,7 +102,8 @@ npm run pull-render -- --project . --jobId <id> --quality production
 ```
 
 `sync-scene` validates the file locally first, so a typo never reaches the
-engine. `pull-render` files the MP4 under `renders/<quality>/`.
+engine. `pull-render` files the MP4 under `renders/<quality>/` and bumps the
+manifest status.
 
 ## 4. Arabic / RTL and visual quality
 

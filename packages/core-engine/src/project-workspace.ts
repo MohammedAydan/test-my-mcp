@@ -375,29 +375,41 @@ export async function initCreativeProject(
 export interface SceneSyncResult {
   /** Project-relative path of the written scene file, e.g. `scenes/scene-01.json`. */
   file: string;
-  manifest: ProjectManifest;
+  /** the updated manifest, or `null` when the project has no manifest yet */
+  manifest: ProjectManifest | null;
   created: boolean;
+  /**
+   * Set when the project directory has no (valid) `motionforge.project.json`.
+   * The scene file is still written — the manifest is the only thing skipped,
+   * because creating one would mean inventing a project name the caller did
+   * not give us.
+   */
+  manifestError?: string;
 }
 
 /**
- * Write the validated SceneSpec a scene JSON next to the project's other
- * scenes and register it in the manifest. This is what keeps
- * `scenes/<id>.json` and the engine store identical without a manual
- * `sync-scene` round trip.
+ * Write the validated SceneSpec as a scene JSON next to the project's other
+ * scenes and register it in the manifest. This is what keeps `scenes/<id>.json`
+ * and the engine store identical without a manual `sync-scene` round trip.
+ *
+ * A project without a manifest is NOT an error: the scene file is written and
+ * the caller is told to run `init_creative_project` (or `npm run init-project`)
+ * to get one.
  */
 export async function syncSceneToDisk(
   projectPath: string,
   scene: SceneSpec
 ): Promise<SceneSyncResult> {
   const dir = path.resolve(process.cwd(), projectPath);
-  const check = await readProjectManifest(dir);
-  if (!check.ok) {
-    throw new ProjectWorkspaceError(check.issues.join("\n"));
-  }
   const id = scene.id ?? sceneIdFromName(scene.name);
   const file = `scenes/${id}.json`;
   await mkdir(path.join(dir, "scenes"), { recursive: true });
   await writeFile(path.join(dir, file), `${JSON.stringify(scene, null, 2)}\n`, "utf8");
+
+  const check = await readProjectManifest(dir);
+  if (!check.ok) {
+    return { file, manifest: null, created: true, manifestError: check.issues.join("\n") };
+  }
   const { created } = upsertSceneEntry(check.manifest, { id, file, status: "draft" });
   await writeProjectManifest(dir, check.manifest);
   return { file, manifest: check.manifest, created };

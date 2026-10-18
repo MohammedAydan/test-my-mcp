@@ -1,7 +1,8 @@
 import { gsap } from "gsap";
 import type { AssetKind, FontRole, SceneSpec } from "@motionforge/scene-spec";
 import type { Stage } from "./stage.js";
-import { applyCamera } from "./camera.js";
+import { applyCamera, cameraStateFromRig, type ResolvedCameraState } from "./camera.js";
+import { autoExitWindow, needsAutoExit, AUTO_EXIT_FADE_MS } from "./envelope.js";
 import { PRESET_DEFAULTS, applyEmphasis, applyEntrance, applyExit, type PresetTarget } from "./presets.js";
 import { renderLayer, type BuiltLayer } from "./layers/index.js";
 import type { LayerContext } from "./layers/context.js";
@@ -9,8 +10,15 @@ import {
   createMotionWrappers,
   LayerLifecycle,
   planMotionSlots,
+  type MotionSlotPlan,
   type SceneLayer,
 } from "./motion-slots.js";
+import {
+  activeTransitionsAt,
+  applyTransitions,
+  type ActiveTransition,
+  type TransitionOverlay,
+} from "./transitions.js";
 import type { Seekable } from "./types.js";
 
 export interface SceneBuildOptions {
@@ -19,13 +27,72 @@ export interface SceneBuildOptions {
   assetKind: (assetId: string) => AssetKind | undefined;
   lottieData: (assetId: string) => unknown;
   registerSeekable: (seekable: Seekable) => void;
+  /** natural pixel size of an image asset, when known */
+  assetIntrinsicSize: (assetId: string) => { width: number; height: number } | undefined;
 }
 
 export interface BuiltScene {
   tl: gsap.core.Timeline;
   layerFocus: Map<string, HTMLElement>;
   lifecycle: LayerLifecycle;
+  overlays: TransitionOverlay[];
+  describeFrame: FrameDescriber;
 }
+
+// ---------------------------------------------------------------------------
+// Frame description (feeds `inspect_scene_keyframes` framesMeta)
+// ---------------------------------------------------------------------------
+
+export type LifecyclePhase = "entrance" | "settled" | "emphasis" | "exit";
+
+export interface LayerFrameInfo {
+  id: string;
+  type: string;
+  lifecyclePhase: LifecyclePhase;
+  phaseProgressPct: number;
+  opacity: number;
+  bbox: { x: number; y: number; width: number; height: number };
+  textOverflow: boolean;
+}
+
+export interface FrameDescription {
+  atMs: number;
+  camera: ReturnType<typeof cameraStateFromRig>;
+  activeTransitions: ActiveTransition[];
+  layers: LayerFrameInfo[];
+}
+
+export type FrameDescriber = (timeMs: number) => FrameDescription;
+
+/** The motion phase a layer is in at `timeMs`, and how far through it is. */
+export function lifecyclePhaseAt(
+  plan: MotionSlotPlan,
+  timeMs: number
+): { phase: LifecyclePhase; progressPct: number } {
+  const within = (start: number, end: number): number =>
+    end <= start ? 0 : Math.min(100, Math.max(0, ((timeMs - start) / (end - start)) * 100));
+  if (plan.entrance && timeMs >= plan.entrance.startMs && timeMs < plan.entrance.endMs) {
+    return { phase: "entrance", progressPct: within(plan.entrance.startMs, plan.entrance.endMs) };
+  }
+  if (plan.exit && timeMs >= plan.exit.startMs && timeMs < plan.exit.endMs) {
+    return { phase: "exit", progressPct: within(plan.exit.startMs, plan.exit.endMs) };
+  }
+  if (plan.emphasis && timeMs >= plan.emphasis.startMs && timeMs < plan.emphasis.endMs) {
+    return { phase: "emphasis", progressPct: within(plan.emphasis.startMs, plan.emphasis.endMs) };
+  }
+  return { phase: "settled", progressPct: 0 };
+}
+
+/** Sub-pixel tolerance before a scroll/size mismatch counts as overflow. */
+export const TEXT_OVERFLOW_TOLERANCE_PX = 2;
+
+export function isTextOverflow(el: HTMLElement, tolerance = TEXT_OVERFLOW_TOLERANCE_PX): boolean {
+  return el.scrollWidth > el.clientWidth + tolerance || el.scrollHeight > el.clientHeight + tolerance;
+}
+
+// ---------------------------------------------------------------------------
+// buildScene
+// ---------------------------------------------------------------------------
 
 /**
  * Builds the full DOM scene graph and one deterministic GSAP master timeline
@@ -41,6 +108,7 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
 
   const layerFocus = new Map<string, HTMLElement>();
   const lifecycle = new LayerLifecycle();
+  const descriptors: LayerDescriptor[] = [];
 
   const sorted = scene.layers
     .map((layer, index) => ({ layer, index }))
@@ -70,19 +138,28 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
       assetKind: opts.assetKind,
       lottieData: opts.lottieData,
       registerSeekable: opts.registerSeekable,
+      assetIntrinsicSize: opts.assetIntrinsicSize,
     };
 
     const built = renderLayer(layer, ctx);
-    applyLayerTiming(tl, scene, layer, built, wrappers, stage.rig, layerFocus, lifecycle);
+    const plan = applyLayerTiming(tl, scene, layer, built, wrappers, stage.rig, layerFocus, lifecycle);
+    descriptors.push({ layer, built, wrappers, plan });
   });
 
   applyCamera(tl, scene, stage.rig, layerFocus);
-  applyTransitions(tl, scene, stage.rig);
+  const overlays = applyTransitions(tl, scene, stage.rig);
 
   lifecycle.applyInitial();
 
   window.masterTimeline = tl;
-  return { tl, layerFocus, lifecycle };
+  return { tl, layerFocus, lifecycle, overlays, describeFrame: makeFrameDescriber(scene, stage, overlays, descriptors) };
+}
+
+interface LayerDescriptor {
+  layer: SceneLayer;
+  built: BuiltLayer;
+  wrappers: ReturnType<typeof createMotionWrappers>;
+  plan: MotionSlotPlan;
 }
 
 function applyLayerTiming(
@@ -94,11 +171,12 @@ function applyLayerTiming(
   rig: HTMLElement,
   layerFocus: Map<string, HTMLElement>,
   lifecycle: LayerLifecycle
-): void {
+): MotionSlotPlan {
   const plan = planMotionSlots(layer, scene.durationMs);
   const staggerMs =
     layer.entrance?.staggerMs ??
     (layer.type === "kineticText" ? (layer.animateBy === "char" ? 30 : 80) : 60);
+  const direction = layer.type === "kineticText" ? layer.direction : undefined;
 
   lifecycle.register({
     id: layer.id,
@@ -120,6 +198,7 @@ function applyLayerTiming(
     startMs: window.startMs,
     endMs: window.endMs,
     rig,
+    direction,
   });
 
   if (plan.entrance && layer.entrance) {
@@ -134,99 +213,127 @@ function applyLayerTiming(
 
   if (plan.exit && layer.exit) {
     applyExit(tl, layer.exit, slotTarget(wrappers.exit, plan.exit));
+  } else if (needsAutoExit(layer, scene.durationMs)) {
+    // Graceful layer auto-exit guard: a bounded layer that declares no exit
+    // used to be force-hidden by the lifecycle registry at its end time, which
+    // is a one-frame pop. Fade it out over the tail of its own window instead.
+    const { startMs, endMs } = autoExitWindow(layer, scene.durationMs);
+    if (endMs > startMs) {
+      tl.fromTo(
+        wrappers.exit,
+        { autoAlpha: 1 },
+        { autoAlpha: 0, duration: (endMs - startMs) / 1000, ease: "power2.in" },
+        startMs / 1000
+      );
+    }
   }
 
   // camera `focusTarget` centers on the painted content, not the full-bleed wrapper
   layerFocus.set(layer.id, built.content);
+  return plan;
+}
+
+// ---------------------------------------------------------------------------
+// frame description
+// ---------------------------------------------------------------------------
+
+function makeFrameDescriber(
+  scene: SceneSpec,
+  stage: Stage,
+  overlays: TransitionOverlay[],
+  descriptors: readonly LayerDescriptor[]
+): FrameDescriber {
+  return (timeMs: number): FrameDescription => {
+    const layers: LayerFrameInfo[] = [];
+    for (const { layer, built, wrappers, plan } of descriptors) {
+      const visible = timeMs >= plan.visibleStartMs && timeMs < plan.visibleEndMs;
+      const { phase, progressPct } = lifecyclePhaseAt(plan, timeMs);
+      const opacity = visible
+        ? alphaOf(wrappers.root) * alphaOf(wrappers.entrance) * alphaOf(wrappers.emphasis) * alphaOf(wrappers.exit)
+        : 0;
+      const painted = built.content.firstElementChild as HTMLElement | null;
+      const box = paintedBox(painted ?? wrappers.exit);
+      layers.push({
+        id: layer.id,
+        type: layer.type,
+        lifecyclePhase: phase,
+        phaseProgressPct: Math.round(progressPct * 10) / 10,
+        opacity: Math.round(opacity * 1000) / 1000,
+        bbox: {
+          x: Math.round(box.x * 10) / 10,
+          y: Math.round(box.y * 10) / 10,
+          width: Math.round(box.width * 10) / 10,
+          height: Math.round(box.height * 10) / 10,
+        },
+        textOverflow: anyTextOverflow(wrappers.exit),
+      });
+    }
+    return {
+      atMs: timeMs,
+      camera: cameraStateFromRig(stage.rig),
+      activeTransitions: activeTransitionsAt(overlays, timeMs),
+      layers,
+    };
+  };
+}
+
+function alphaOf(el: HTMLElement): number {
+  const style = window.getComputedStyle(el);
+  const opacity = Number.parseFloat(style.opacity);
+  return Number.isFinite(opacity) ? opacity : 1;
 }
 
 /**
- * Scene-level transition overlays (they sit above every layer, below the UI).
- * All are timeline tweens → frame-deterministic.
+ * The painted bounding box of a layer.
  *
- * Every overlay starts `display: none` and is switched on with an explicit
- * `tl.set` at its `at` time, instead of relying on `fromTo`'s implicit
- * `immediateRender`. That keeps overlays hidden at every time before `at`
- * under arbitrary (non-linear) seeking — otherwise a solid wipe cover can be
- * painted over the opening frames.
+ * A layer's content host is often a zero-size positioning box (e.g. an
+ * `imageLogo` host is `position:absolute` with only `left/top` set, and its
+ * visible child is absolutely positioned inside it). Reporting the host's box
+ * would then be `250x0` — a number that tells an agent nothing. The union of
+ * the painted descendants is the box that actually matters.
  */
-function applyTransitions(tl: gsap.core.Timeline, scene: SceneSpec, rig: HTMLElement): void {
-  const prepare = (el: HTMLElement, at: number, dur: number): void => {
-    el.style.display = "none";
-    tl.set(el, { display: "block" }, at);
-    tl.set(el, { display: "none" }, at + dur + 0.001);
-  };
-
-  for (const tr of scene.transitions) {
-    const at = tr.at / 1000;
-    const dur = tr.durationMs / 1000;
-
-    if (tr.kind === "wipe") {
-      const cover = document.createElement("div");
-      cover.style.cssText = `position:absolute;inset:0;background:${tr.color};z-index:900;`;
-      if (tr.featherPx > 0) {
-        const softness = (tr.featherPx / Math.max(scene.canvas.scale, 1)) * 12;
-        cover.style.webkitMaskImage =
-          tr.direction === "left" || tr.direction === "right"
-            ? `linear-gradient(90deg, #000 ${(50 - softness / 2).toFixed(1)}%, transparent ${(50 + softness / 2).toFixed(1)}%)`
-            : `linear-gradient(0deg, #000 ${(50 - softness / 2).toFixed(1)}%, transparent ${(50 + softness / 2).toFixed(1)}%)`;
-        cover.style.maskImage = cover.style.webkitMaskImage ?? "";
-      }
-      rig.appendChild(cover);
-      prepare(cover, at, dur);
-
-      const from = { xPercent: 0, yPercent: 0 };
-      const to = { xPercent: 0, yPercent: 0 };
-      if (tr.direction === "left") { from.xPercent = -130; to.xPercent = 130; }
-      if (tr.direction === "right") { from.xPercent = 130; to.xPercent = -130; }
-      if (tr.direction === "up") { from.yPercent = -130; to.yPercent = 130; }
-      if (tr.direction === "down") { from.yPercent = 130; to.yPercent = -130; }
-      tl.fromTo(cover, from, { ...to, duration: dur, ease: "power4.inOut", immediateRender: false }, at);
-    } else if (tr.kind === "glitch") {
-      // stepped RGB-fringe flicker + rig jitter, fully stepped (deterministic)
-      const fringe = document.createElement("div");
-      fringe.style.cssText = [
-        "position:absolute;inset:0;z-index:900;pointer-events:none;mix-blend-mode:screen;opacity:0;",
-        "background:repeating-linear-gradient(0deg, rgba(255,0,60,0.16) 0 3px, transparent 3px 7px, rgba(0,255,255,0.14) 7px 9px, transparent 9px 14px);",
-      ].join(";");
-      rig.appendChild(fringe);
-      prepare(fringe, at, dur);
-
-      const steps = 8;
-      const jitters = [-1, 1, -0.6, 0.8, -0.3, 0.5, -0.2, 0].map((k) => k * 16 * tr.intensity);
-      jitters.forEach((j, i) => {
-        tl.set(rig, { x: j }, at + (dur * i) / steps);
-        tl.set(fringe, { opacity: i % 2 === 0 ? 0.9 : 0.3 }, at + (dur * i) / steps);
-      });
-      tl.set(rig, { x: 0 }, at + dur);
-    } else if (tr.kind === "whipPan") {
-      const band = document.createElement("div");
-      band.style.cssText = [
-        "position:absolute;inset:0;z-index:900;pointer-events:none;opacity:0;",
-        "background:repeating-linear-gradient(90deg, rgba(255,255,255,0.08) 0 40px, transparent 40px 120px);",
-        "backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);",
-      ].join(";");
-      rig.appendChild(band);
-      prepare(band, at, dur);
-
-      const dir = tr.direction === "left" ? -1 : 1;
-      tl.to(rig, { xPercent: `+=${dir * 24}`, duration: dur / 2, ease: "power2.in" }, at);
-      tl.to(rig, { xPercent: `-=${dir * 24}`, duration: dur / 2, ease: "power2.out" }, at + dur / 2);
-      tl.fromTo(band, { opacity: 0 }, { opacity: 1, duration: dur * 0.3, ease: "none", immediateRender: false }, at);
-      tl.to(band, { opacity: 0, duration: dur * 0.7, ease: "none" }, at + dur * 0.3);
-    } else {
-      // morph: blur-dissolve veil
-      const veil = document.createElement("div");
-      veil.style.cssText = [
-        "position:absolute;inset:0;z-index:900;pointer-events:none;opacity:0;",
-        "background:rgba(0,0,0,0.25);",
-        "backdrop-filter:blur(50px);-webkit-backdrop-filter:blur(50px);",
-      ].join(";");
-      rig.appendChild(veil);
-      prepare(veil, at, dur);
-
-      tl.to(veil, { opacity: 1, duration: dur / 2, ease: "sine.in" }, at);
-      tl.to(veil, { opacity: 0, duration: dur / 2, ease: "sine.out" }, at + dur / 2);
-    }
+function paintedBox(root: HTMLElement): DOMRect {
+  const own = root.getBoundingClientRect();
+  if (own.width > 0 && own.height > 0) return own;
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+  for (const child of Array.from(root.querySelectorAll<HTMLElement>("*"))) {
+    const rect = child.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    left = Math.min(left, rect.left);
+    top = Math.min(top, rect.top);
+    right = Math.max(right, rect.right);
+    bottom = Math.max(bottom, rect.bottom);
   }
+  if (!Number.isFinite(left)) return own;
+  return {
+    x: left,
+    y: top,
+    width: right - left,
+    height: bottom - top,
+    top,
+    bottom,
+    left,
+    right,
+    toJSON: () => ({}),
+  } as DOMRect;
 }
+
+function anyTextOverflow(root: HTMLElement): boolean {
+  if (root.scrollWidth > root.clientWidth + TEXT_OVERFLOW_TOLERANCE_PX) return true;
+  for (const child of Array.from(root.querySelectorAll<HTMLElement>(".mf-unit, [data-mf-text]"))) {
+    if (isTextOverflow(child)) return true;
+  }
+  return false;
+}
+
+/** Layers whose own window closes early, i.e. the ones the auto-exit guard touches. */
+export function autoExitedLayerIds(scene: SceneSpec): string[] {
+  return scene.layers.filter((layer) => needsAutoExit(layer, scene.durationMs)).map((layer) => layer.id);
+}
+
+export { AUTO_EXIT_FADE_MS };
+export type { ResolvedCameraState };
+export { PRESET_DEFAULTS };

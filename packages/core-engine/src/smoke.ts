@@ -133,7 +133,15 @@ async function main(): Promise<void> {
     url: "/api/scenes",
     payload: scene,
   });
-  if (stored.statusCode !== 201) throw new Error(`scene rejected: ${stored.body}`);
+  // 201 = created, 200 = updated (the scene store is disk-backed, so a repeated
+  // smoke run finds the scene already there)
+  if (stored.statusCode !== 201 && stored.statusCode !== 200) {
+    throw new Error(`scene rejected: ${stored.body}`);
+  }
+  const storedBody = stored.json() as { id: string; warnings: Array<{ code: string }> };
+  if (storedBody.warnings.length > 0) {
+    console.log(`smoke: ${storedBody.warnings.length} warning(s) — ${storedBody.warnings.map((w) => w.code).join(", ")}`);
+  }
 
   // 3. inspect keyframes (UI verification path)
   const kfs = await engine.app.inject({

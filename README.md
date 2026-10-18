@@ -70,6 +70,16 @@ or `render_video`, the corresponding files are written to disk automatically:
 `scenes/<id>.json`, `renders/stills/*.png`, `renders/draft|production/*.mp4`,
 and `motionforge.project.json` all stay in sync without manual CLI commands.
 
+A scene stored with a `projectPath` also resolves its own assets: `vault:`-prefixed
+references are looked up in `<projectPath>/assets/{images,lottie,video,audio}/` and
+`<projectPath>/brand/logo/`, and copied into the engine vault on first use.
+
+Scenes are persisted to `data/scenes/<sceneId>.json` and reloaded when the engine
+restarts. `create_or_update_scene` returns
+`{id, status, revision, hash, warnings[], previewUrl}` and `inspect_scene_keyframes`
+returns a `framesMeta[]` sidecar (camera pose, live transition phase, per-layer
+lifecycle / opacity / bbox / text-overflow) next to the images.
+
 ## Documentation
 
 - [`AGENTS.md`](AGENTS.md) — operating manual for coding agents
@@ -81,5 +91,5 @@ and `motionforge.project.json` all stay in sync without manual CLI commands.
 
 ## Status
 
-Milestones 0–5 are complete — see [`docs/00_PLAN.md`](docs/00_PLAN.md) for live
+Milestones 0–6 are complete — see [`docs/00_PLAN.md`](docs/00_PLAN.md) for live
 milestone status and measured acceptance results.

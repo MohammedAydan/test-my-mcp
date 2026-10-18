@@ -81,13 +81,24 @@ export const SAFE_IMG_CSS = [
 
 export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { content: HTMLElement } {
   const host = document.createElement("div");
+  // A logo with no explicit `heightPx` must still have a box: without one the
+  // host collapses to zero height, the absolutely-positioned frame inside it
+  // has nothing to fill, and the mark is completely invisible. The height is
+  // derived from the image's own aspect ratio, which the runtime measured while
+  // preloading — so the result is deterministic, never a "wait for onload" race.
+  const intrinsic = ctx.assetIntrinsicSize(layer.assetId);
+  const resolvedHeightPx =
+    layer.heightPx ??
+    (intrinsic && intrinsic.width > 0
+      ? Math.round((layer.widthPx * intrinsic.height) / intrinsic.width)
+      : layer.widthPx);
   host.style.cssText = [
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
     "transform:translate(-50%,-50%)",
     `width:${layer.widthPx}px`,
-    layer.heightPx ? `height:${layer.heightPx}px` : "",
+    `height:${resolvedHeightPx}px`,
     "max-width:100%",
     "max-height:100%",
   ].join(";");

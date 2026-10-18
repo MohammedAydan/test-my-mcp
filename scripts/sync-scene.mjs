@@ -13,6 +13,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { validateScene, validateProjectManifest } from "@motionforge/scene-spec";
+// the shared implementation — the CLI and the MCP tool must never diverge on
+// what "the scene is on disk" means
+import { syncSceneToDisk } from "@motionforge/core-engine/project-workspace";
 
 import { fail, heading, parseArgs, readManifest } from "./_project-kit.mjs";
 
@@ -112,4 +115,15 @@ heading(`synced ${fileArg}`);
 console.log(`  scene id    ${body.id}`);
 console.log(`  layers      ${scene.layers.length}   duration ${(scene.durationMs / 1000).toFixed(2)}s`);
 console.log(`  preview     ${baseUrl}/preview/?scene=${encodeURIComponent(body.id)}`);
+
+// keep the project in sync: the scene file and the manifest entry are written
+// by the SAME helper the MCP tool uses
+const sync = await syncSceneToDisk(projectDir, { ...scene, id: body.id });
+console.log(`  on disk     ${sync.file}${sync.created ? "  (new)" : "  (updated)"}`);
+if (sync.manifestError) {
+  console.log(`  ⚠ manifest  ${sync.manifestError}`);
+}
+for (const warning of body.warnings ?? []) {
+  console.log(`  ⚠ ${warning.code}  ${warning.path}: ${warning.message}`);
+}
 console.log(`\n  Next: inspect_scene_keyframes (quality gate), then render_video draft.\n`);

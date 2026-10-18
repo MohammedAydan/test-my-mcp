@@ -11,6 +11,8 @@ export {
   handleInspectSceneKeyframes,
   handleOpenLiveTimelinePreview,
   handleRenderVideo,
+  formatFrameMeta,
+  formatWarnings,
   type ToolTextResult,
 } from "./tools.js";
 export { engineClient, ENGINE_URL, EngineError } from "./engine-client.js";

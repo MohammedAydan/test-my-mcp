@@ -21,6 +21,7 @@ import {
   flushLayout,
   nextPaintFrame,
   SETTLE_STEPS,
+  TEXT_UNIT_GUARD_CSS,
   type SettleDeps,
 } from "../src/determinism.js";
 import { createMotionWrappers, LayerLifecycle, planMotionSlots } from "../src/motion-slots.js";
@@ -109,6 +110,7 @@ function makeCtx(overrides: Partial<LayerContext> = {}): LayerContext {
     assetKind: () => "image",
     lottieData: () => ({}),
     registerSeekable: () => undefined,
+    assetIntrinsicSize: () => undefined,
     ...overrides,
   };
 }
@@ -330,12 +332,42 @@ describe("text splitting", () => {
     expect(CRISP_TEXT_CSS).toContain("font-kerning:normal");
 
     const unit = (built.units ?? [])[0] as HTMLElement;
-    // padding grows the painted box, negative margins keep the layout box equal
-    expect(unit.style.paddingTop).toBe("0.15em");
-    expect(unit.style.paddingBottom).toBe("0.2em");
-    expect(unit.style.marginTop).toBe("-0.15em");
-    expect(unit.style.marginBottom).toBe("-0.2em");
+    // padding grows the painted box (mask clip + blur kernel headroom),
+    // negative margins keep the layout box exactly equal
+    expect(unit.style.padding).toBe("0.12em 0.08em");
+    expect(unit.style.margin).toBe("-0.12em -0.08em");
+    expect(unit.style.paddingTop).toBe("0.12em");
+    expect(unit.style.marginTop).toBe("-0.12em");
     expect(unit.style.lineHeight).toBe("1.35");
+    expect(TEXT_UNIT_GUARD_CSS).toContain("padding:0.12em 0.08em");
+    expect(TEXT_UNIT_GUARD_CSS).toContain("margin:-0.12em -0.08em");
+  });
+
+  it("nests the highlight pill INSIDE the animated word unit, never beside it", () => {
+    const ctx = makeCtx();
+    const built = renderKineticText(
+      parsedLayer({
+        id: "title",
+        type: "kineticText",
+        text: "Render pipeline",
+        sizePx: 96,
+        animateBy: "word",
+        highlight: { color: "#38bdf8", radiusPx: 10, paddingPx: 8 },
+      } as SceneSpecInput["layers"][number]) as unknown as KineticTextLayer,
+      ctx
+    );
+    const units = built.units ?? [];
+    expect(units.length).toBe(2);
+    for (const unit of units) {
+      const pill = unit.querySelector(".mf-highlight");
+      // the pill must be a DESCENDANT of the unit the entrance preset tweens,
+      // so opacity/blur/transform animate it in lockstep with the glyphs
+      expect(pill).not.toBeNull();
+      expect(unit.parentElement?.querySelector(".mf-highlight")).toBe(pill);
+      // …and it is the only child, behind the glyph, so it never paints over it
+      expect(unit.firstElementChild).toBe(pill);
+      expect((pill as HTMLElement).style.zIndex).toBe("-1");
+    }
   });
 });
 
@@ -548,6 +580,46 @@ describe("logo frosted plate geometry", () => {
     } as SceneSpecInput["layers"][number]) as unknown as ImageLogoLayer;
     renderImageLogo(layer, ctx);
     expect(ctx.content.querySelector(".mf-logo-plate")).toBeNull();
+  });
+});
+
+describe("logo sizing", () => {
+  function logoLayer(heightPx?: number): ImageLogoLayer {
+    return {
+      id: "logo",
+      type: "imageLogo",
+      at: 0,
+      assetId: "logo",
+      widthPx: 200,
+      ...(heightPx ? { heightPx } : {}),
+      position: { xPct: 50, yPct: 30 },
+      mask: "rect",
+    } as ImageLogoLayer;
+  }
+
+  it("derives the height from the image's aspect ratio when none is declared", () => {
+    // A logo with no `heightPx` used to collapse to a ZERO-height box: the
+    // absolutely-positioned frame inside it had nothing to fill, so the mark
+    // was completely invisible.
+    const ctx = makeCtx({ assetIntrinsicSize: () => ({ width: 400, height: 200 }) });
+    renderImageLogo(logoLayer(), ctx);
+    const host = ctx.content.firstElementChild as HTMLElement;
+    expect(host.style.width).toBe("200px");
+    expect(host.style.height).toBe("100px");
+  });
+
+  it("keeps an explicitly declared height", () => {
+    const ctx = makeCtx({ assetIntrinsicSize: () => ({ width: 400, height: 200 }) });
+    renderImageLogo(logoLayer(320), ctx);
+    const host = ctx.content.firstElementChild as HTMLElement;
+    expect(host.style.height).toBe("320px");
+  });
+
+  it("never collapses to zero height, even without a known intrinsic size", () => {
+    const ctx = makeCtx();
+    renderImageLogo(logoLayer(), ctx);
+    const host = ctx.content.firstElementChild as HTMLElement;
+    expect(host.style.height).toBe("200px");
   });
 });
 

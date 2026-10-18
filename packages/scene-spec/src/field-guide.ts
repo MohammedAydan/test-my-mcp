@@ -201,6 +201,9 @@ export const NESTED_SHAPE_NOTES: string[] = [
   'Assets must be declared in `scene.assets` ({id, kind, src}) before a layer can reference them by id. `src` starts with https://, data: or vault:.',
   'Fonts are declared per role in `scene.fonts` ({role, family, provider, weights}); a kineticText layer picks the role (and optionally googleFamily).',
   'Camera keyframes inherit unset fields from the previous keyframe and MUST be sorted by `at`. Camera moves use `{ "move": "<name>", "at": ms, ... }`.',
+  'Camera framing: at `scale: s` the visible slice of the canvas is `100/s` percent wide, so `xPct`/`yPct` must stay inside `[50/s, 100 - 50/s]`. Outside that range the frame shows black void — the engine warns with `CAMERA_VIEWPORT_EXCEEDS_CANVAS` and the runtime clamps it automatically.',
+  'Camera moves are TEMPORARY: each one ramps in, holds, and ramps back out. A `focusTarget` returns the camera to its previous pose; it never leaves the rig parked at the zoom.',
+  'Effects are TEMPORARY: `pulseGlow`/`floatIdle` start at the baseline and return to it. `lightSweep` is a soft white overlay that can only ADD light — it never darkens the pixels beneath it.',
   'SFX come in two equivalent forms: `layer.sfx[]` (fires at `layer.at + offsetMs`) and `scene.audio.cues[]` (absolute `at`). Both use the same fixed bank names.',
   'Scene timing must fit: a layer may not start at/after durationMs, and `at + duration` must not exceed it. The same bound applies to transitions, cues and camera keyframes/moves.',
   'Unknown keys are REJECTED everywhere (strict schemas) — a typo like `preset` or `positionX` fails with an "Unrecognized key" issue naming the exact path.',
@@ -401,11 +404,14 @@ export function authoringDigest(): Record<string, unknown> {
     },
     notes: {
       howToStart:
-        "Copy minimalValidScene, change name/text, then call create_or_update_scene. Post fullShowcaseSketch to exercise every feature. On a rejected scene the response lists every field-level issue — fix exactly those paths.",
+        "Copy minimalValidScene, change name/text, then call create_or_update_scene. Post fullShowcaseSketch to exercise every feature. On a rejected scene the response lists every field-level issue — fix exactly those paths. An ACCEPTED scene may still carry warnings[] (e.g. a camera that would show black void) — read them too.",
       rtl: 'set direction:"rtl" on kineticText; Arabic char-stagger degrades to word (shaping)',
       sfx: "cues fire relative to layer `at` (layer.sfx[].offsetMs) or absolute (audio.cues[].at)",
       timing: "all times are milliseconds; canvas positions are percent of canvas; sizes are design px",
       strictness: "unknown keys are rejected everywhere — do not invent field names",
+      camera: "keyframes inherit unset fields from the previous keyframe; at scale s the safe pan range is [50/s, 100-50/s]",
+      effects: "emphasis presets and camera moves are temporary — they return to the baseline when their window ends",
+      inspection: "inspect_scene_keyframes returns framesMeta[] (camera pose, transition phase, per-layer lifecycle/opacity/bbox/textOverflow) — read it before judging a frame",
     },
   };
 }

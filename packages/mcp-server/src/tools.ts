@@ -8,7 +8,13 @@ import {
   type InitCreativeProjectOptions,
 } from "@motionforge/scene-spec";
 
-import { engineClient, EngineError, type RenderJobView } from "./engine-client.js";
+import {
+  engineClient,
+  EngineError,
+  type KeyframeFrameMeta,
+  type RenderJobView,
+  type SceneWarning,
+} from "./engine-client.js";
 
 /**
  * The LLM surface is EXACTLY these 5 tools (see AGENTS.md — changing this list
@@ -124,6 +130,14 @@ export async function handleGetMotionCapabilities(): Promise<ToolTextResult> {
       "3. Motion is `{ name: <preset> }` objects in entrance/emphasis/exit — there is no `preset` field.",
       "4. Positions are `{ xPct, yPct }`; sizes use *Px keys; all times are milliseconds.",
       "5. Unknown keys are rejected. If create_or_update_scene returns issues, fix exactly those paths.",
+      "6. Camera: see `cameraKeyframeFields` (defaults + safe pan range) and `cameraMoveShapes`.",
+      "   A keyframe inherits every field it omits; at scale s the safe xPct/yPct range is [50/s, 100-50/s].",
+      "7. Transitions: see `transitionShapes` for the full parameter list of each kind.",
+      "8. `nestedFieldShapes` documents box/chip, highlight, callout and progressBar.",
+      "9. create_or_update_scene returns `warnings[]` for non-blocking problems (e.g. a camera",
+      "   that would expose black void) — the runtime auto-corrects them, but fix the authored value.",
+      "10. inspect_scene_keyframes returns `framesMeta` per timestamp: camera pose, active transition",
+      "    phase and each layer's lifecycle/opacity/bbox/textOverflow. Read it before judging a frame.",
       "",
       "=== FULL PAYLOAD ===",
     ].join("\n");
@@ -131,17 +145,80 @@ export async function handleGetMotionCapabilities(): Promise<ToolTextResult> {
   });
 }
 
+/**
+ * Render engine warnings for an LLM. These are non-blocking: the scene WAS
+ * stored, and the runtime clamps the offending camera automatically. Reporting
+ * them keeps the "the render looked wrong" class of bug diagnosable without a
+ * frame-by-frame diff.
+ */
+export function formatWarnings(warnings: readonly SceneWarning[] | undefined): string {
+  if (!warnings || warnings.length === 0) return "";
+  return [
+    "",
+    `${warnings.length} warning(s) — the scene was stored; the runtime corrected these automatically:`,
+    ...warnings.map((w) => `- [${w.code}] ${w.path}: ${w.message}`),
+  ].join("\n");
+}
+
 export async function handleCreateOrUpdateScene(args: SceneSpecInput & { projectPath?: string }): Promise<ToolTextResult> {
   return withEngineErrors(async () => {
     const { projectPath, ...scene } = args;
-    const result = await engineClient.putScene(scene);
-    let text = `scene stored with id "${result.id}"\npreview: ${engineClient.previewUrl(result.id)}\n` +
-      `next: inspect_scene_keyframes to verify visually, then render_video.`;
-    if (projectPath) {
-      text += `\n\n[auto-sync] scene JSON and manifest updated on disk at ${projectPath}`;
-    }
+    // with a projectPath the engine also resolves `<project>/assets/**` into the
+    // vault and writes the scene JSON + manifest back to disk
+    const result = projectPath
+      ? await engineClient.syncScene(scene, projectPath)
+      : await engineClient.putScene(scene);
+    const text =
+      `scene ${result.status ?? "stored"} with id "${result.id}" (revision ${result.revision}, hash ${result.hash})\n` +
+      `preview: ${result.previewUrl ?? engineClient.previewUrl(result.id)}\n` +
+      `next: inspect_scene_keyframes to verify visually, then render_video.` +
+      formatWarnings(result.warnings) +
+      (result.savedSceneFilePath ? `\n[auto-sync] scene JSON + manifest updated: ${result.savedSceneFilePath}` : "");
     return ok(text);
   });
+}
+
+/**
+ * The numeric sidecar `inspect_scene_keyframes` attaches to every frame. It
+ * answers the questions a screenshot cannot: is this layer mid-entrance (so the
+ * frame looks "empty" for a legitimate reason), is the camera showing void, is a
+ * word clipped.
+ */
+export function formatFrameMeta(meta: KeyframeFrameMeta[] | undefined): string {
+  if (!meta || meta.length === 0) return "";
+  const lines: string[] = ["", "framesMeta (numeric, deterministic — read this before blaming the pixels):"];
+  for (const m of meta) {
+    lines.push(`- @${m.atMs}ms`);
+    if (m.camera) {
+      lines.push(
+        `    camera: scale ${round(m.camera.scale)} xPct ${round(m.camera.xPct)} yPct ${round(m.camera.yPct)} ` +
+          `roll ${round(m.camera.roll)} yaw ${round(m.camera.yaw)} pitch ${round(m.camera.pitch)}` +
+          (m.camera.clampedVoid ? " [clampedVoid: the authored pose panned outside the canvas]" : "")
+      );
+    }
+    for (const tr of m.activeTransitions ?? []) {
+      lines.push(`    transition: ${tr.kind} ${tr.progressPct}% (phase "${tr.phase}") — content beneath is mid-swap`);
+    }
+    for (const layer of m.layers ?? []) {
+      const visible = layer.opacity > 0.01;
+      if (!visible) continue;
+      const flags: string[] = [];
+      if (layer.textOverflow) flags.push("TEXT OVERFLOW (clipped content)");
+      if (layer.lifecyclePhase !== "settled") {
+        flags.push(`mid-${layer.lifecyclePhase} ${layer.phaseProgressPct}%`);
+      }
+      lines.push(
+        `    layer ${layer.id} (${layer.type}) opacity ${layer.opacity} ` +
+          `bbox ${round(layer.bbox.width)}x${round(layer.bbox.height)}@${round(layer.bbox.x)},${round(layer.bbox.y)}` +
+          (flags.length > 0 ? ` — ${flags.join("; ")}` : "")
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
+function round(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 export async function handleInspectSceneKeyframes(args: {
@@ -152,7 +229,7 @@ export async function handleInspectSceneKeyframes(args: {
 }): Promise<ToolTextResult> {
   return withEngineErrors(async () => {
     const stamps = args.at && args.at.length > 0 ? args.at : [];
-    const { frames } = await engineClient.keyframes(args.sceneId, stamps);
+    const { frames, framesMeta } = await engineClient.keyframes(args.sceneId, stamps);
     if (frames.length === 0) {
       return failed(
         `no frames were returned for scene "${args.sceneId}" — does the scene exist? ` +
@@ -167,16 +244,34 @@ export async function handleInspectSceneKeyframes(args: {
     const summary: ToolTextResult = {
       content: [
         ...images,
-        { type: "text", text: `inspected ${frames.length} frames at [${frames.map((f) => f.atMs).join(", ")}] ms` },
+        {
+          type: "text",
+          text:
+            `inspected ${frames.length} frames at [${frames.map((f) => f.atMs).join(", ")}] ms` +
+            formatFrameMeta(framesMeta),
+        },
       ],
     };
-    if (args.projectPath && (args.saveStills ?? true)) {
-      // The stills would be saved via the engine's /projects/sync-stills endpoint or similar
-      // For now, we note it in the response; a full implementation would call the engine
-      summary.content.push({
-        type: "text",
-        text: `[auto-sync] ${frames.length} stills written to ${args.projectPath}/renders/stills/`,
-      });
+    // stills are deliverable client assets: written whenever a project is known
+    const shouldSave = Boolean(args.projectPath) && (args.saveStills ?? true);
+    if (shouldSave && args.projectPath) {
+      try {
+        const saved = await engineClient.saveStills(
+          args.sceneId,
+          frames.map((f) => ({ atMs: f.atMs, image: f.image })),
+          args.projectPath
+        );
+        summary.content.push({
+          type: "text",
+          text: `[auto-sync] ${saved.files.length} still(s) written:\n  ${saved.files.join("\n  ")}`,
+        });
+      } catch (error) {
+        // never fail an inspection over a disk write
+        summary.content.push({
+          type: "text",
+          text: `[auto-sync] could not write stills to ${args.projectPath}: ${engineMessage(error)}`,
+        });
+      }
     }
     return summary;
   });
@@ -234,10 +329,24 @@ export async function handleRenderVideo(args: {
       job = await engineClient.renderJob(jobId);
     }
     const text = formatRenderSummary(job);
-    if (args.projectPath && job.status === "succeeded" && job.result) {
-      return ok(`${text}\n\n[auto-sync] render filed to ${args.projectPath}/renders/${args.quality}/${args.sceneId}-<timestamp>.mp4`);
+    if (job.status !== "succeeded") return failed(text);
+
+    if (!args.projectPath) return ok(text);
+
+    // File the render into the project. A disk failure here is reported but does
+    // not invalidate a render that already succeeded — the MP4 path above is
+    // still the deliverable.
+    try {
+      const bytes = await engineClient.renderFileBase64(jobId);
+      const saved = await engineClient.saveRender(args.sceneId, args.quality, bytes.mp4Base64, args.projectPath);
+      return ok(
+        `${text}\n\n[auto-sync] filed ${saved.file}\n` +
+          `[auto-sync] latest: ${saved.latest}\n` +
+          `[auto-sync] manifest status for "${args.sceneId}" is now "${saved.status}"`
+      );
+    } catch (error) {
+      return ok(`${text}\n\n[auto-sync] FAILED to file into ${args.projectPath}: ${engineMessage(error)}`);
     }
-    return job.status === "succeeded" ? ok(text) : failed(text);
   });
 }
 

@@ -77,14 +77,27 @@ body {
  * camera zooms.
  */
 .mf-unit {
+  position: relative;
   display: inline-block;
-  padding-top: 0.15em;
-  padding-bottom: 0.2em;
-  margin-top: -0.15em;
-  margin-bottom: -0.2em;
+  padding: 0.12em 0.08em;
+  margin: -0.12em -0.08em;
   line-height: 1.35;
   white-space: pre;
   unicode-bidi: isolate;
+}
+
+/*
+ * Specular sweep band.
+ * `mix-blend-mode: screen` can only ADD light, so the band can never darken the
+ * pixels beneath it — which is what produced the blocky dark rectangle over a
+ * progressBar track when the sweep used the default blend mode.
+ */
+.mf-sweep-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
 }
 
 .mf-sweep {

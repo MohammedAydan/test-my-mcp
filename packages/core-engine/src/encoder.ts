@@ -169,6 +169,44 @@ export interface AudioGraph {
   outLabel: string | null;
 }
 
+/**
+ * Constant-power stereo balance gains for a `pan ∈ [-1, 1]`.
+ *
+ * `pan = -1` hard left, `+1` hard right, `0` centre. Constant power (rather than
+ * linear) keeps the perceived loudness flat across the pan, which is what a
+ * sound designer hears when they ride an fader.
+ */
+export function panGains(pan: number): { left: number; right: number } {
+  const clamped = Math.min(1, Math.max(-1, pan));
+  const angle = ((clamped + 1) / 2) * (Math.PI / 2);
+  return { left: Math.cos(angle), right: Math.sin(angle) };
+}
+
+/**
+ * FFmpeg `pan` filter expression for a stereo balance.
+ *
+ * THE BUG THIS FIXES: the mixer used to emit `pan=stereo:c0=c0*X:c1=c1*Y`.
+ * FFmpeg's `pan` filter has no AVOptions, so its argument list must be parsed by
+ * the *filter-graph* parser, which uses `|` (not `:`) to separate terms. Passing
+ * the colon form makes FFmpeg fall back to AVOption parsing and fail with
+ * `[fc#0] Error applying option 'c0' to filter 'pan': Option not found` — which
+ * aborted every render that had a single non-zero `pan` (field report C1/F1).
+ *
+ * `aformat=channel_layouts=stereo` runs first so the expression is valid for
+ * mono bank entries (which have no `c1`) as well as stereo sources.
+ */
+export function panFilterExpr(pan: number): string {
+  const { left, right } = panGains(pan);
+  const l = left.toFixed(4);
+  const r = right.toFixed(4);
+  return `aformat=channel_layouts=stereo,pan=stereo|c0=${l}*c0|c1=${r}*c1`;
+}
+
+/** The pan filter for a cue, or `null` when the cue is centred (no filter needed). */
+export function panFilterFor(pan: number): string | null {
+  return Math.abs(pan) > 0.01 ? panFilterExpr(pan) : null;
+}
+
 export function buildAudioGraph(
   scene: SceneSpec,
   paths: EnginePaths,
@@ -221,13 +259,24 @@ export function buildAudioGraph(
     const delayMs = cue.at;
     const file = resolveAssetSource(paths, `vault:_sfx/${cue.sfx}.ogg`);
     inputArgs.push("-i", file);
-    chains.push(
-      `[${inputIndex}:a]volume=${cue.gain},` +
-        `adelay=${delayMs}:all=1` +
-        (Math.abs(cue.pan) > 0.01 ? `,pan=stereo:c0=c0*${1 - Math.max(0, cue.pan) * 0.7}:c1=c1*${1 - Math.max(0, -cue.pan) * 0.7}` : "") +
-        `,apad=whole_dur=${durationSec.toFixed(3)},atrim=end=${durationSec.toFixed(3)}` +
-        `[s${i}]`
-    );
+    // A filter failure is attributed to the exact cue, because "ffmpeg failed
+    // (mux audio)" tells an operator nothing about which of 12 cues is wrong.
+    const pan = panFilterFor(cue.pan);
+    try {
+      chains.push(
+        `[${inputIndex}:a]volume=${cue.gain},` +
+          `adelay=${delayMs}:all=1` +
+          (pan ? `,${pan}` : "") +
+          `,apad=whole_dur=${durationSec.toFixed(3)},atrim=end=${durationSec.toFixed(3)}` +
+          `[s${i}]`
+      );
+    } catch (error) {
+      throw new FfmpegError(
+        `audio cue ${i} (sfx "${cue.sfx}" at ${cue.at}ms, pan ${cue.pan}) failed to build: ` +
+          (error instanceof Error ? error.message : String(error)),
+        ""
+      );
+    }
     inputIndex++;
   }
 

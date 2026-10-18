@@ -76,12 +76,29 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     col.style.cssText = `width:${v.widthPx ? `${v.widthPx}px` : "520px"};position:relative;`;
     host.appendChild(col);
 
+    // Header row: the label and the live percentage share one flex line pinned
+    // to the card width. Previously the percentage was a separate block below
+    // the track with `text-align:right`, which pushed it past the right edge of
+    // the bar — and any camera zoom cropped it off-screen mid-count.
+    const header = document.createElement("div");
+    header.style.cssText = [
+      "display:flex",
+      "align-items:baseline",
+      "justify-content:space-between",
+      "gap:16px",
+      "width:100%",
+      "margin-bottom:12px",
+      "overflow:hidden",
+    ].join(";");
+    col.appendChild(header);
+
     if (v.label) {
       const label = document.createElement("div");
       label.textContent = v.label;
-      label.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:600;font-size:24px;color:#fff;margin-bottom:12px;${CRISP_TEXT_CSS};`;
-      col.appendChild(label);
+      label.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:600;font-size:24px;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${CRISP_TEXT_CSS};`;
+      header.appendChild(label);
     }
+
     const track = document.createElement("div");
     track.style.cssText = `position:relative;height:${v.heightPx}px;border-radius:${Math.min(v.radiusPx, v.heightPx / 2)}px;background:${v.trackColor};overflow:hidden;`;
     col.appendChild(track);
@@ -98,9 +115,19 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     }, ctx.layerAtSec + 0.15);
 
     if (v.showPercentage) {
+      // inside the header row, opposite the title, so it can never escape the card box
       const pctText = document.createElement("div");
-      pctText.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "metric")};font-weight:800;font-size:26px;color:#fff;margin-top:10px;text-align:right;${CRISP_TEXT_CSS};`;
-      col.appendChild(pctText);
+      pctText.style.cssText = [
+        `font-family:${fontFamilyFor(ctx.fonts, "metric")}`,
+        "font-weight:800",
+        "font-size:26px",
+        "color:#fff",
+        "flex:none",
+        "font-variant-numeric:tabular-nums",
+        "direction:ltr",
+        CRISP_TEXT_CSS,
+      ].join(";");
+      header.appendChild(pctText);
       const proxy = { n: 0 };
       ctx.tl.to(proxy, {
         n: v.value,

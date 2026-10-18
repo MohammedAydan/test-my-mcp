@@ -40,9 +40,13 @@ import {
   timestampStamp,
 } from "../src/project-workspace.js";
 import { SceneStore } from "../src/scene-store.js";
+import { enginePaths } from "../src/config.js";
 import { registerProjectRoutes } from "../src/server.js";
 
 let workdir: string;
+
+/** A throwaway engine paths object: no test may write into the real data dir. */
+const testPaths = { ...enginePaths(), dataDir: path.join(tmpdir(), "mf-test-engine") };
 
 beforeAll(async () => {
   workdir = await mkdtemp(path.join(tmpdir(), "mf-workspace-"));
@@ -258,13 +262,19 @@ describe("syncSceneToDisk", () => {
     ).toBe(true);
   });
 
-  it("fails loudly when the project has no manifest", async () => {
+  it("still writes the scene file when the project has no manifest, and says so", async () => {
     const dir = path.join(workdir, "sync-c");
     await scaffold("sync-c");
     await rm(path.join(dir, "motionforge.project.json"));
-    await expect(syncSceneToDisk(dir, { ...validatedScene, id: "scene-01" })).rejects.toThrow(
-      ProjectWorkspaceError
-    );
+    const result = await syncSceneToDisk(dir, { ...validatedScene, id: "scene-01" });
+    // the scene file is the important artefact — it is always written
+    expect(result.file).toBe("scenes/scene-01.json");
+    expect(result.manifest).toBeNull();
+    expect(result.manifestError).toContain("run init_creative_project");
+    const written = JSON.parse(
+      await readFile(path.join(dir, "scenes", "scene-01.json"), "utf8")
+    ) as { id?: string };
+    expect(written.id).toBe("scene-01");
   });
 });
 
@@ -430,7 +440,7 @@ describe("readProjectManifest", () => {
 describe("POST /projects/init + /projects/sync (HTTP parity)", () => {
   it("initializes a project over HTTP with the in-process store as seeder", async () => {
     const app = Fastify();
-    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000 });
+    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000, paths: testPaths });
     try {
       const target = path.join(workdir, "http-init");
       const res = await app.inject({
@@ -454,7 +464,7 @@ describe("POST /projects/init + /projects/sync (HTTP parity)", () => {
 
   it("returns 409 when the target is not empty and force is not set", async () => {
     const app = Fastify();
-    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000 });
+    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000, paths: testPaths });
     try {
       const target = path.join(workdir, "http-guard");
       await scaffold("http-guard");
@@ -472,7 +482,7 @@ describe("POST /projects/init + /projects/sync (HTTP parity)", () => {
 
   it("rejects invalid options with 400 + issues", async () => {
     const app = Fastify();
-    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000 });
+    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000, paths: testPaths });
     try {
       const res = await app.inject({
         method: "POST",
@@ -490,7 +500,7 @@ describe("POST /projects/init + /projects/sync (HTTP parity)", () => {
   it("syncs a stored scene to the project disk", async () => {
     const app = Fastify();
     const store = new SceneStore();
-    await registerProjectRoutes(app, { store, port: 4000 });
+    await registerProjectRoutes(app, { store, port: 4000, paths: testPaths });
     try {
       const dir = path.join(workdir, "http-sync");
       await scaffold("http-sync");
@@ -502,9 +512,20 @@ describe("POST /projects/init + /projects/sync (HTTP parity)", () => {
         payload: { projectPath: dir, scene: { ...validatedScene, id: "scene-01" } },
       });
       expect(res.statusCode).toBe(201);
-      const body = res.json() as { id: string; disk: { file: string } };
+      const body = res.json() as {
+        id: string;
+        status: string;
+        revision: number;
+        hash: string;
+        warnings: unknown[];
+        savedSceneFilePath: string;
+      };
       expect(body.id).toBe("scene-01");
-      expect(body.disk.file).toBe("scenes/scene-01.json");
+      expect(body.status).toBe("created"); // fresh store, first time this id is stored
+      expect(body.revision).toBeGreaterThan(0);
+      expect(body.hash).toMatch(/^[0-9a-f]{16}$/);
+      expect(body.warnings).toEqual([]);
+      expect(body.savedSceneFilePath).toBe(`${dir}/scenes/scene-01.json`);
       const scene = JSON.parse(await readFile(path.join(dir, "scenes/scene-01.json"), "utf8")) as { id?: string };
       expect(scene.id).toBe("scene-01");
     } finally {

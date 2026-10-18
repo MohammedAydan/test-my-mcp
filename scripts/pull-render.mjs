@@ -9,10 +9,12 @@
  * sits next to the scene that produced it. `--quality` decides the destination
  * folder and must match the job's quality (it defaults to the job's own).
  */
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { validateProjectManifest } from "@motionforge/scene-spec";
+// the shared implementation — the CLI and the MCP tool must never diverge on
+// where a render is filed or what the manifest says afterwards
+import { saveRenderToDisk } from "@motionforge/core-engine/project-workspace";
 
 import { fail, heading, parseArgs, readManifest } from "./_project-kit.mjs";
 
@@ -82,14 +84,6 @@ if (quality !== job.quality) {
 // ---------------------------------------------------------------------------
 // download + file
 // ---------------------------------------------------------------------------
-const outDir = path.join(projectDir, "renders", quality);
-await mkdir(outDir, { recursive: true });
-
-// compact local timestamp: YYYYMMDD-HHmmss
-const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "").replace("T", "-");
-const filename = `${job.sceneId}-${stamp}.mp4`;
-const outPath = path.join(outDir, filename);
-
 let bytes;
 try {
   const res = await fetch(`${baseUrl}/api/renders/${encodeURIComponent(jobId)}/file`);
@@ -101,16 +95,21 @@ try {
 }
 
 if (bytes.length === 0) fail("core-engine returned an empty file — refusing to write a zero-byte MP4");
-await writeFile(outPath, bytes);
+
+// the shared helper writes the timestamped copy, the `-latest.mp4` copy and
+// bumps the manifest status in one atomic-ish step
+const saved = await saveRenderToDisk(projectDir, job.sceneId, quality, bytes);
 
 // ---------------------------------------------------------------------------
 // report
 // ---------------------------------------------------------------------------
 const result = job.result ?? {};
 heading(`render ${jobId} saved`);
-console.log(`  file        ${path.relative(projectDir, outPath)}`);
+console.log(`  file        ${saved.file}`);
+console.log(`  latest      ${saved.latest}`);
 console.log(`  size        ${(bytes.length / 1024 / 1024).toFixed(2)} MB`);
 console.log(`  scene       ${job.sceneId} (${quality})`);
+console.log(`  manifest    status "${saved.status}"`);
 if (result.profile) {
   console.log(`  profile     ${result.profile.outWidth}x${result.profile.outHeight} @ ${result.profile.fps}fps`);
 }
