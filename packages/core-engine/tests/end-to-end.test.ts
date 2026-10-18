@@ -18,6 +18,7 @@ import { execFile } from "node:child_process";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import Fastify from "fastify";
@@ -203,7 +204,7 @@ describe("end-to-end: the field-report scene renders", () => {
     // script covers that path. Here we assert the runtime bundle exists and the
     // engine can start, which is the minimum for a frame to be captured.
     const dist = path.resolve(
-      path.dirname(new URL(import.meta.url).pathname),
+      path.dirname(fileURLToPath(import.meta.url)),
       "../../scene-runtime/dist/index.html"
     );
     const stat = await fsp.stat(dist).catch(() => null);
