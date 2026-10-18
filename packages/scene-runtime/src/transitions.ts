@@ -22,6 +22,7 @@
  */
 import { gsap } from "gsap";
 import type { SceneSpec, Transition, TransitionKind } from "@motionforge/scene-spec";
+import { cameraStateAt, translationForLookAt } from "./camera.js";
 
 // ---------------------------------------------------------------------------
 // The bell curve
@@ -272,7 +273,7 @@ export function applyTransitions(
     if (tr.kind === "wipe") {
       buildWipe(rig, tl, tr, atSec, inSec, holdSec, outSec);
     } else if (tr.kind === "whipPan") {
-      buildWhipPan(rig, tl, tr, atSec, inSec, holdSec, outSec);
+      buildWhipPan(rig, tl, tr, scene, atSec, inSec, holdSec, outSec);
     } else if (tr.kind === "glitch") {
       buildGlitch(rig, tl, tr, atSec, inSec, outSec);
     } else {
@@ -342,6 +343,7 @@ function buildWhipPan(
   rig: HTMLElement,
   tl: gsap.core.Timeline,
   tr: Extract<Transition, { kind: "whipPan" }>,
+  scene: SceneSpec,
   at: number,
   inSec: number,
   holdSec: number,
@@ -357,20 +359,50 @@ function buildWhipPan(
 
   const amp = WHIP_PAN_AMPLITUDE_PCT;
   const sign = tr.direction === "left" ? -1 : 1;
+  const toAmp = sign * amp;
+
+  // The pose the whip composes with: the camera's analytic state at the moment
+  // the transition starts, resolved the same way `focusTarget` resolves its own
+  // base.
+  //
+  // It is computed rather than read. A `+=` tween resolves its start by reading
+  // the element at FIRST RENDER, and which value that read returns depends on
+  // the order GSAP happens to render children in for the seek that first
+  // reaches it — so a seek straight past the whole window captured the wrong
+  // base and stranded the rig at double amplitude. Explicit from/to values have
+  // no such ordering.
+  const base = cameraStateAt(scene.camera.keyframes, Math.round(at * 1000));
+  const baseX = translationForLookAt(base.scale, base.xPct);
+  const baseScale = base.scale;
+
+  // A whip pan slides the stage out of frame. For the frame to stay covered the
+  // rig must ALSO be zoomed far enough that the pan stays inside the headroom
+  // the zoom creates: |dX| <= w*(S - 1)/2  =>  S >= 1 + 2*amp/100.
+  const peakZoom = ((2 * Math.abs(amp)) / 100) * 1.02;
+  const peakScale = baseScale + peakZoom;
+  const peakX = baseX + toAmp;
+  const restX = baseX - toAmp;
+
   // phase in: slam the stage to +amp, streaks ramp in behind it
-  tl.fromTo(
-    rig,
-    { xPercent: 0, skewX: 0 },
-    { xPercent: sign * amp, skewX: sign * -2, duration: inSec, ease: "power3.in", immediateRender: false },
-    at
-  );
+  tl.fromTo(rig, { xPercent: baseX, scale: baseScale }, {
+    xPercent: peakX, scale: peakScale,
+    duration: inSec, ease: "power3.in", immediateRender: false,
+  }, at);
   tl.fromTo(band, { opacity: 1 }, { opacity: 1, duration: Math.max(0.01, inSec), ease: "none", immediateRender: false }, at);
-  // midpoint: wrap to -amp while the blur is at full strength
-  tl.to(rig, { xPercent: -sign * amp, skewX: 0, duration: Math.max(0.001, holdSec), ease: "none" }, at + inSec);
+  // midpoint: wrap through to -amp while the blur is at full strength
+  tl.fromTo(rig, { xPercent: peakX, scale: peakScale }, {
+    xPercent: restX, scale: peakScale,
+    duration: Math.max(0.001, holdSec), ease: "none", immediateRender: false,
+  }, at + inSec);
   // phase out: decelerate home and clear every inline transform
-  tl.to(rig, { xPercent: 0, skewX: 0, duration: outSec, ease: "power3.out" }, at + inSec + holdSec);
+  tl.fromTo(rig, { xPercent: restX, scale: peakScale }, {
+    xPercent: baseX, scale: baseScale,
+    duration: outSec, ease: "power3.out", immediateRender: false,
+  }, at + inSec + holdSec);
   tl.fromTo(band, { opacity: 1 }, { opacity: 0, duration: Math.max(0.01, outSec), ease: "none", immediateRender: false }, at + inSec + holdSec);
-  tl.set(rig, { xPercent: 0, skewX: 0 }, at + inSec + holdSec + outSec);
+  // the terminal set is the residue guarantee: whatever the window computed,
+  // the rig is handed back to the camera's own pose
+  tl.set(rig, { xPercent: baseX, scale: baseScale }, at + inSec + holdSec + outSec);
   tl.set(band, { opacity: 0, xPercent: 0 }, at + inSec + holdSec + outSec);
 }
 

@@ -74,54 +74,133 @@ export function voidPercent(scale: number, xPct: number, yPct: number): { x: num
   return { x: axis(xPct), y: axis(yPct) };
 }
 
+/** The highest zoom a `focusTarget` will take on its own (mirrors the runtime). */
+export const FOCUS_MAX_SCALE = 3;
+
+/**
+ * The zoom `focusTarget` needs to centre on a point `d` percent from the canvas
+ * centre: `|d| ≤ 50(1 − 1/S)`  ⟹  `S ≥ 1 / (1 − |d|/50)`. Capped, because a
+ * target on the very edge of the canvas is unreachable at any finite zoom.
+ */
+export function requiredFocusScale(offsetPct: number): number {
+  const d = Math.min(49.999, Math.abs(offsetPct));
+  return Math.min(FOCUS_MAX_SCALE, 1 / (1 - d / 50));
+}
+
+/**
+ * The keyframe pose in effect at `timeMs`, linearly interpolated.
+ *
+ * A move composes on top of whatever the keyframes left behind AT THAT MOMENT,
+ * not on top of the final keyframe — checking against the final pose reported
+ * phantom warnings for moves that play while the camera is still moving.
+ */
+export function cameraPoseAt(keyframes: readonly CameraKeyframe[], timeMs: number): {
+  scale: number;
+  xPct: number;
+  yPct: number;
+} {
+  const resolved = resolvePoses(keyframes);
+  let prev = { at: 0, scale: BASELINE.scale, xPct: BASELINE.xPct, yPct: BASELINE.yPct };
+  for (const pose of resolved) {
+    if (timeMs < prev.at) return prev;
+    if (timeMs <= pose.at) {
+      const span = pose.at - prev.at;
+      if (span <= 0) return pose;
+      const p = (timeMs - prev.at) / span;
+      return {
+        scale: prev.scale + (pose.scale - prev.scale) * p,
+        xPct: prev.xPct + (pose.xPct - prev.xPct) * p,
+        yPct: prev.yPct + (pose.yPct - prev.yPct) * p,
+      };
+    }
+    prev = pose;
+  }
+  return resolved.length > 0 ? resolved[resolved.length - 1]! : prev;
+}
+
+/** The authored anchor of a layer — the point `focusTarget` centres on. */
+function layerAnchor(scene: SceneSpec, layerId: string | undefined): { xPct: number; yPct: number } | null {
+  if (!layerId) return null;
+  const layer = scene.layers.find((l) => l.id === layerId);
+  if (!layer) return null;
+  const position = "position" in layer ? layer.position : undefined;
+  // full-bleed layers have no position; centring on one is a no-op
+  return position ? { xPct: position.xPct, yPct: position.yPct } : { xPct: 50, yPct: 50 };
+}
+
 /**
  * Poses contributed by `camera.moves`. Moves are *temporary*: they ramp in,
  * hold, and ramp back out, so the extreme pose they reach is what must be
  * checked (not a permanent rest state).
+ *
+ * `focusTarget` is evaluated here for the first time: its pose depends on WHERE
+ * the target sits, so a warning can only be raised once the move's own scale
+ * boost and pan limit are modelled the same way the runtime models them.
  */
 export function movePoses(scene: SceneSpec): CameraPose[] {
-  const { width, height } = resolveCanvasSize(scene.canvas);
-  const keyframeEnd = scene.camera.keyframes.length > 0
-    ? scene.camera.keyframes[scene.camera.keyframes.length - 1]?.at ?? 0
-    : 0;
-  // a move composes on top of whatever the keyframes left behind
-  let scale = BASELINE.scale;
-  let xPct = BASELINE.xPct;
-  let yPct = BASELINE.yPct;
-  for (const kf of scene.camera.keyframes) {
-    scale = kf.scale ?? scale;
-    xPct = kf.xPct ?? xPct;
-    yPct = kf.yPct ?? yPct;
-  }
-  void width;
-  void height;
-  void keyframeEnd;
-
   return scene.camera.moves.map((move, index) => {
     const strength = move.strength ?? 1;
+    const base = cameraPoseAt(scene.camera.keyframes, move.at);
     const pose = { at: move.at, source: "move", path: `camera.moves.${index}` as string };
     switch (move.move) {
       case "slowPushIn":
-        return { ...pose, scale: scale + 0.12 * strength, xPct, yPct };
+        return { ...pose, scale: base.scale + 0.12 * strength, xPct: base.xPct, yPct: base.yPct };
       case "focusTarget": {
-        // the rig is 1.45× at the peak of the move; the pan target depends on
-        // the layer's measured box, which the runtime resolves. Worst case for
-        // the *default* centre-based pan is handled by the clamp, so only the
-        // zoom is a real risk here.
-        return { ...pose, scale: 1.45 * strength, xPct, yPct };
+        const anchor = layerAnchor(scene, move.targetLayerId);
+        if (!anchor) return { ...pose, scale: 1.45 * strength, xPct: base.xPct, yPct: base.yPct };
+        const offset = Math.max(Math.abs(50 - anchor.xPct), Math.abs(50 - anchor.yPct));
+        const scale = Math.max(1.45 * strength, requiredFocusScale(offset));
+        const { min, max } = safePanRange(scale);
+        const limit = (v: number): number => Math.min(max, Math.max(min, v));
+        return { ...pose, scale, xPct: limit(anchor.xPct), yPct: limit(anchor.yPct) };
       }
       case "whipPanLeft":
       case "whipPanRight": {
         const dir = move.move === "whipPanLeft" ? -1 : 1;
         const offset = dir * 26 * strength;
-        return { ...pose, scale, xPct: xPct - offset, yPct };
+        return { ...pose, scale: base.scale, xPct: base.xPct - offset, yPct: base.yPct };
       }
       case "shakeImpact":
-        return { ...pose, scale: scale + 0.02 * strength, xPct, yPct };
+        return { ...pose, scale: base.scale + 0.02 * strength, xPct: base.xPct, yPct: base.yPct };
       default:
-        return { ...pose, scale, xPct, yPct };
+        return { ...pose, scale: base.scale, xPct: base.xPct, yPct: base.yPct };
     }
   });
+}
+
+/** A `focusTarget` whose target cannot be centred at any permitted zoom. */
+export interface FocusReframe {
+  moveIndex: number;
+  at: number;
+  requested: { xPct: number; yPct: number };
+  applied: { xPct: number; yPct: number };
+  scale: number;
+}
+
+/**
+ * `focusTarget` moves the runtime has to re-frame.
+ *
+ * The runtime keeps the frame covered by boosting the zoom, and — when even the
+ * boosted zoom cannot reach the target — by limiting the pan to the safe band.
+ * A silent re-frame is a departure from the brief, so it is reported rather
+ * than quietly rendered.
+ */
+export function focusReframes(scene: SceneSpec): FocusReframe[] {
+  const out: FocusReframe[] = [];
+  scene.camera.moves.forEach((move, moveIndex) => {
+    if (move.move !== "focusTarget") return;
+    const anchor = layerAnchor(scene, move.targetLayerId);
+    if (!anchor) return;
+    const strength = move.strength ?? 1;
+    const offset = Math.max(Math.abs(50 - anchor.xPct), Math.abs(50 - anchor.yPct));
+    const scale = Math.max(1.45 * strength, requiredFocusScale(offset));
+    const { min, max } = safePanRange(scale);
+    const limit = (v: number): number => Math.min(max, Math.max(min, v));
+    const applied = { xPct: limit(anchor.xPct), yPct: limit(anchor.yPct) };
+    if (applied.xPct === anchor.xPct && applied.yPct === anchor.yPct) return;
+    out.push({ moveIndex, at: move.at, requested: { ...anchor }, applied, scale });
+  });
+  return out;
 }
 
 /** Every pose the camera can reach, keyframes first then moves. */
@@ -165,6 +244,31 @@ export function analyzeScene(scene: SceneSpec): SceneWarning[] {
         yPct: round(pose.yPct),
         safeRangePct: [round(min), round(max)],
         voidPct: { x: round(voided.x), y: round(voided.y) },
+      },
+    });
+  }
+
+  for (const reframe of focusReframes(scene)) {
+    const path = `camera.moves.${reframe.moveIndex}.targetLayerId`;
+    warnings.push({
+      code: CAMERA_VIEWPORT_EXCEEDS_CANVAS,
+      path,
+      message:
+        `camera move "focusTarget" at ${reframe.at}ms targets a layer at ` +
+        `(${round(reframe.requested.xPct)}%, ${round(reframe.requested.yPct)}%), which no permitted zoom can centre on: ` +
+        `even at the ${FOCUS_MAX_SCALE}× cap the safe look-at range is ` +
+        `[${round(safePanRange(reframe.scale).min)}%, ${round(safePanRange(reframe.scale).max)}%]. ` +
+        `The frame stays covered by clamping the pan to (${round(reframe.applied.xPct)}%, ${round(reframe.applied.yPct)}%), ` +
+        `so the target will not be centred — move it further from the canvas edge, or raise the move's zoom, to remove this warning.`,
+      detail: {
+        at: reframe.at,
+        axis: [reframe.requested.xPct !== reframe.applied.xPct ? "x" : null, reframe.requested.yPct !== reframe.applied.yPct ? "y" : null]
+          .filter(Boolean) as string[],
+        source: "focusTarget",
+        scale: round(reframe.scale),
+        requestedLookAt: reframe.requested,
+        appliedLookAt: reframe.applied,
+        safeRangePct: [round(safePanRange(reframe.scale).min), round(safePanRange(reframe.scale).max)],
       },
     });
   }

@@ -1,7 +1,13 @@
 import { gsap } from "gsap";
 import type { AssetKind, FontRole, SceneSpec } from "@motionforge/scene-spec";
 import type { Stage } from "./stage.js";
-import { applyCamera, cameraStateFromRig, type ResolvedCameraState } from "./camera.js";
+import {
+  applyCamera,
+  applyViewportClamp,
+  cameraStateFromRig,
+  type LayerAnchor,
+  type ResolvedCameraState,
+} from "./camera.js";
 import { autoExitWindow, needsAutoExit, AUTO_EXIT_FADE_MS } from "./envelope.js";
 import { PRESET_DEFAULTS, applyEmphasis, applyEntrance, applyExit, type PresetTarget } from "./presets.js";
 import { renderLayer, type BuiltLayer } from "./layers/index.js";
@@ -146,8 +152,25 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
     descriptors.push({ layer, built, wrappers, plan });
   });
 
-  applyCamera(tl, scene, stage.rig, layerFocus);
+  // The authored anchor of every layer: the canvas point its content is
+  // centred on. `focusTarget` uses this instead of measuring the element,
+  // because a measurement taken while the layer's entrance tween is still at
+  // its "from" pose reports the WRONG position (a `springPop` at scale 0.4
+  // moves its content a third of the way to the canvas centre).
+  const layerAnchors = new Map<string, LayerAnchor>();
+  for (const layer of scene.layers) {
+    // `background` and `foregroundFX` are full-bleed and have no position
+    const position = "position" in layer ? layer.position : undefined;
+    if (position) {
+      layerAnchors.set(layer.id, { xPct: position.xPct, yPct: position.yPct });
+    }
+  }
+
+  const cameraInfo = applyCamera(tl, scene, stage.rig, layerAnchors);
   const overlays = applyTransitions(tl, scene, stage.rig);
+  // The viewport clamp runs on the timeline's own `onUpdate`, so it observes
+  // the pose that is actually rendered: keyframes + moves + drift + transitions.
+  applyViewportClamp(tl, stage.rig, scene, cameraInfo);
 
   lifecycle.applyInitial();
 

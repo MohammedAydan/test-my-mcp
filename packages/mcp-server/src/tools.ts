@@ -190,10 +190,16 @@ export function formatFrameMeta(meta: KeyframeFrameMeta[] | undefined): string {
   for (const m of meta) {
     lines.push(`- @${m.atMs}ms`);
     if (m.camera) {
+      const cam = m.camera;
       lines.push(
-        `    camera: scale ${round(m.camera.scale)} xPct ${round(m.camera.xPct)} yPct ${round(m.camera.yPct)} ` +
-          `roll ${round(m.camera.roll)} yaw ${round(m.camera.yaw)} pitch ${round(m.camera.pitch)}` +
-          (m.camera.clampedVoid ? " [clampedVoid: the authored pose panned outside the canvas]" : "")
+        `    camera: scale ${round(cam.scale)} xPct ${round(cam.xPct)} yPct ${round(cam.yPct)} ` +
+          `roll ${round(cam.roll)} yaw ${round(cam.yaw)} pitch ${round(cam.pitch)}` +
+          // when the pose is pinned, an agent needs BOTH numbers: what the
+          // scene asked for, and what the frame actually shows
+          (cam.clampedVoid
+            ? ` [clampedVoid: authored look-at was xPct ${round(cam.unclampedXPct) ?? "?"} ` +
+              `yPct ${round(cam.unclampedYPct) ?? "?"}, held inside the canvas at this zoom]`
+            : "")
       );
     }
     for (const tr of m.activeTransitions ?? []) {
@@ -217,8 +223,15 @@ export function formatFrameMeta(meta: KeyframeFrameMeta[] | undefined): string {
   return lines.join("\n");
 }
 
-function round(value: number): number {
-  return Math.round(value * 10) / 10;
+function round(value: number): number;
+function round(value: number | undefined): number | undefined;
+/**
+ * Tolerates a missing value, because the frame sidecar is a loose contract: an
+ * engine older than the runtime simply does not report the field, and an
+ * undefined must not become `NaN` in an agent-facing message.
+ */
+function round(value: number | undefined): number | undefined {
+  return typeof value === "number" ? Math.round(value * 10) / 10 : undefined;
 }
 
 export async function handleInspectSceneKeyframes(args: {
@@ -226,21 +239,41 @@ export async function handleInspectSceneKeyframes(args: {
   at?: number[];
   projectPath?: string;
   saveStills?: boolean;
+  /**
+   * Include the inline preview images in the tool result.
+   *
+   * Default true. The inline copies are small JPEGs (≤960px wide) — a 12-frame
+   * response is ~300 KB instead of ~15 MB, which is the difference between a
+   * working stdio session and an `EPIPE` crash.
+   */
+  includeInlineImages?: boolean;
 }): Promise<ToolTextResult> {
   return withEngineErrors(async () => {
     const stamps = args.at && args.at.length > 0 ? args.at : [];
-    const { frames, framesMeta } = await engineClient.keyframes(args.sceneId, stamps);
+    // full-resolution PNGs are only produced when they are about to be written
+    // to disk — they are far too large to put in an MCP response
+    const shouldSave = Boolean(args.projectPath) && (args.saveStills ?? true);
+    const { frames, framesMeta } = await engineClient.keyframes(
+      args.sceneId,
+      stamps,
+      shouldSave
+    );
     if (frames.length === 0) {
       return failed(
         `no frames were returned for scene "${args.sceneId}" — does the scene exist? ` +
           "List stored scenes or re-post it with create_or_update_scene."
       );
     }
-    const images: ToolContentItem[] = frames.map((frame) => ({
-      type: "image" as const,
-      data: frame.image.replace(/^data:image\/(?:png|jpeg);base64,/, ""),
-      mimeType: frame.image.startsWith("data:image/png") ? "image/png" : "image/jpeg",
-    }));
+    const includeInline = args.includeInlineImages ?? true;
+    const images: ToolContentItem[] = includeInline
+      ? frames
+          .filter((frame) => frame.preview)
+          .map((frame) => ({
+            type: "image" as const,
+            data: frame.preview.replace(/^data:image\/(?:png|jpeg);base64,/, ""),
+            mimeType: "image/jpeg",
+          }))
+      : [];
     const summary: ToolTextResult = {
       content: [
         ...images,
@@ -248,22 +281,25 @@ export async function handleInspectSceneKeyframes(args: {
           type: "text",
           text:
             `inspected ${frames.length} frames at [${frames.map((f) => f.atMs).join(", ")}] ms` +
+            (includeInline ? "" : " (inline images omitted — set includeInlineImages: true to see them)") +
             formatFrameMeta(framesMeta),
         },
       ],
     };
     // stills are deliverable client assets: written whenever a project is known
-    const shouldSave = Boolean(args.projectPath) && (args.saveStills ?? true);
     if (shouldSave && args.projectPath) {
       try {
         const saved = await engineClient.saveStills(
           args.sceneId,
-          frames.map((f) => ({ atMs: f.atMs, image: f.image })),
-          args.projectPath
+          frames.filter((f) => f.image).map((f) => ({ atMs: f.atMs, image: f.image })),
+          args.projectPath,
+          framesMeta
         );
         summary.content.push({
           type: "text",
-          text: `[auto-sync] ${saved.files.length} still(s) written:\n  ${saved.files.join("\n  ")}`,
+          text:
+            `[auto-sync] ${saved.files.length} still(s) written:\n  ${saved.files.join("\n  ")}` +
+            (saved.metaFile ? `\n[auto-sync] frame metadata sidecar: ${saved.metaFile}` : ""),
         });
       } catch (error) {
         // never fail an inspection over a disk write
@@ -395,16 +431,17 @@ export function registerTools(server: McpServer): void {
     {
       title: "Inspect scene keyframes",
       description:
-        "Render exact frames of a stored scene and return them as images for visual verification. Call BEFORE a production render to catch layout/contrast/timing problems. Optional: pass projectPath to auto-sync stills to disk.",
+        "Render exact frames of a stored scene and return them as images for visual verification. Call BEFORE a production render to catch layout/contrast/timing problems. The inline images are lightweight JPEG previews (≤960px) so a multi-frame inspection stays small over the stdio pipe; pass projectPath to write the FULL-RESOLUTION PNGs to renders/stills/ together with a frames-meta.json sidecar. The result also carries framesMeta: the camera pose, the live transition phase and each layer's lifecycle/opacity/bbox/textOverflow.",
       inputSchema: {
         sceneId: z.string().describe("Scene id from create_or_update_scene"),
         at: z.array(z.number()).optional().describe("Timestamps in ms to screenshot"),
         projectPath: z.string().optional().describe("Project root containing motionforge.project.json; enables automatic stills sync to renders/stills/"),
-        saveStills: z.boolean().optional().describe("Save frames as PNG files to project (default: true when projectPath is provided)"),
+        saveStills: z.boolean().optional().describe("Save frames as full-resolution PNG files to the project (default: true when projectPath is provided)"),
+        includeInlineImages: z.boolean().optional().describe("Include the inline preview images in the result (default: true). Set false for a text-only inspection when you only need framesMeta."),
       },
     },
-    async ({ sceneId, at, projectPath, saveStills }) =>
-      handleInspectSceneKeyframes({ sceneId, at, projectPath, saveStills })
+    async ({ sceneId, at, projectPath, saveStills, includeInlineImages }) =>
+      handleInspectSceneKeyframes({ sceneId, at, projectPath, saveStills, includeInlineImages })
   );
 
   server.registerTool(

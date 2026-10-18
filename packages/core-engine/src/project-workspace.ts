@@ -496,6 +496,35 @@ export async function saveStillsToDisk(
   return written;
 }
 
+/**
+ * Persist the numeric inspection metadata next to the stills.
+ *
+ * The stills are the visual record; the sidecar is the *machine* record. It
+ * lives beside them so the metadata survives an offline inspection of the
+ * project — and so a frame can be re-checked (was that layer mid-entrance? was
+ * the camera clamped?) without re-rendering the scene.
+ */
+export async function saveFramesMetaToDisk(
+  projectPath: string,
+  sceneId: string,
+  framesMeta: unknown[]
+): Promise<string> {
+  const dir = path.resolve(process.cwd(), projectPath);
+  const check = await readProjectManifest(dir);
+  if (!check.ok) {
+    throw new ProjectWorkspaceError(check.issues.join("\n"));
+  }
+  const outDir = path.join(dir, "renders", "stills");
+  await mkdir(outDir, { recursive: true });
+  const name = `${sceneId}-frames-meta.json`;
+  await writeFile(
+    path.join(outDir, name),
+    `${JSON.stringify({ sceneId, generatedAt: new Date().toISOString(), frames: framesMeta }, null, 2)}\n`,
+    "utf8"
+  );
+  return `renders/stills/${name}`;
+}
+
 // ---------------------------------------------------------------------------
 // Seeding transport for out-of-process callers (CLI scripts, MCP tool)
 // ---------------------------------------------------------------------------

@@ -244,16 +244,33 @@ async function main(): Promise<void> {
   if (!stored.ok) throw new Error(`scene rejected: ${stored.status} ${await stored.text()}`);
   console.log("demo: scene stored as 'showcase'");
 
-  // 3. visual inspection pass (what the MCP tool returns to the LLM)
+  // 3. visual inspection pass — the transport contract, end to end.
+  //    `includeFullResolution` is what separates the two halves of the
+  //    `inspect_scene_keyframes` payload: the inline JPEGs an agent (or this
+  //    script) reads, and the full-resolution PNGs a client deliverable needs.
+  //    Asking for neither used to print "0 KiB" without failing.
   const kf = await fetch(`${base}/api/scenes/showcase/keyframes`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ at: [700, 1800, 3400, 6300, 9200, 10800] }),  });
+    body: JSON.stringify({ at: [700, 1800, 3400, 6300, 9200, 10800], includeFullResolution: true }),
+  });
   if (!kf.ok) throw new Error(`keyframes failed: ${kf.status}`);
-  const inspected = (await kf.json()) as { frames: Array<{ atMs: number; image: string }> };
+  const inspected = (await kf.json()) as {
+    frames: Array<{ atMs: number; image: string; preview: string }>;
+  };
   for (const f of inspected.frames) {
-    const bytes = Buffer.from(f.image.replace(/^data:image\/(?:jpeg|png);base64,/, ""), "base64").length;
-    console.log(`demo: keyframe ${f.atMs}ms → ${(bytes / 1024).toFixed(0)} KiB ${f.image.includes("png") ? "png" : "jpeg"}`);
+    const size = (dataUrl: string): number =>
+      Buffer.from(dataUrl.replace(/^data:image\/(?:jpeg|png);base64,/, ""), "base64").length;
+    const previewKiB = size(f.preview);
+    const fullKiB = size(f.image);
+    // a frame that captured nothing is a broken pipeline, not a quiet success
+    if (previewKiB === 0 || fullKiB === 0) {
+      throw new Error(`keyframe ${f.atMs}ms captured nothing (preview ${previewKiB}B, full ${fullKiB}B)`);
+    }
+    console.log(
+      `demo: keyframe ${f.atMs}ms → inline ${(previewKiB / 1024).toFixed(0)} KiB jpeg · ` +
+        `full-res ${(fullKiB / 1024).toFixed(0)} KiB png`
+    );
   }
 
   // 4. draft render through the full pipeline

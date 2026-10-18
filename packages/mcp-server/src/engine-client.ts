@@ -58,7 +58,11 @@ export interface KeyframeFrameMeta {
     roll: number;
     yaw: number;
     pitch: number;
+    /** the rendered pose was held inside the canvas bounds */
     clampedVoid: boolean;
+    /** the look-at the scene ASKED for, when the renderer could not honour it */
+    unclampedXPct?: number;
+    unclampedYPct?: number;
   };
   activeTransitions?: Array<{ kind: string; progressPct: number; phase: "in" | "peak" | "out" }>;
   layers?: Array<{
@@ -74,8 +78,18 @@ export interface KeyframeFrameMeta {
 
 export interface KeyframeFrame {
   atMs: number;
-  /** data:image/png;base64,… */
+  /** the FULL-RESOLUTION PNG (data:image/png;base64,…) — only when requested */
   image: string;
+  /**
+   * A lightweight JPEG preview (data:image/jpeg;base64,…) — the copy that is
+   * safe to put in an MCP response.
+   *
+   * MCP over stdio is a PIPE with a bounded buffer. Twelve full-resolution
+   * 1080p PNGs are ~15 MB of base64; that overflows the pipe, the client closes
+   * its end, and the server dies with an unhandled `write EPIPE`. The preview
+   * is the same frame at ~1/20th the size.
+   */
+  preview: string;
   /** numeric sidecar: camera pose, live transition phase, per-layer lifecycle */
   meta?: KeyframeFrameMeta;
 }
@@ -170,18 +184,23 @@ export const engineClient = {
   saveStills: (
     sceneId: string,
     frames: Array<{ atMs: number; image: string }>,
-    projectPath: string
-  ): Promise<{ files: string[]; savedStillsFilePaths: string[] }> =>
+    projectPath: string,
+    framesMeta: unknown[] = []
+  ): Promise<{ files: string[]; savedStillsFilePaths: string[]; metaFile?: string }> =>
     request("/projects/stills", {
       method: "POST",
-      body: JSON.stringify({ sceneId, frames }),
+      body: JSON.stringify({ sceneId, frames, framesMeta }),
       headers: { [PROJECT_HEADER]: projectPath },
-    }) as Promise<{ files: string[]; savedStillsFilePaths: string[] }>,
+    }) as Promise<{ files: string[]; savedStillsFilePaths: string[]; metaFile?: string }>,
 
-  keyframes: (sceneId: string, at: number[]): Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }> =>
+  keyframes: (
+    sceneId: string,
+    at: number[],
+    includeFullResolution = false
+  ): Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }> =>
     request(`/api/scenes/${encodeURIComponent(sceneId)}/keyframes`, {
       method: "POST",
-      body: JSON.stringify({ at }),
+      body: JSON.stringify({ at, includeFullResolution }),
     }) as Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }>,
 
   previewUrl: (sceneId: string): string =>

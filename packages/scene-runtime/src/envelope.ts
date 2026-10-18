@@ -264,23 +264,40 @@ export function shakeDecayAt(p: number, wobbles: number = SHAKE_WOBBLES): number
 export function applyDecayEnvelope(
   tl: gsap.core.Timeline,
   el: HTMLElement,
-  opts: { at: number; windowSec: number; amplitude: gsap.TweenVars; wobbles?: number; samples?: number }
+  opts: {
+    at: number;
+    windowSec: number;
+    amplitude: gsap.TweenVars;
+    /**
+     * The pose the decay rings AROUND, rather than replacing.
+     *
+     * Without it the final sample writes `identity` — which for a camera is
+     * `scale: 1`, so a `shakeImpact` on a camera already pushed in to 1.4 would
+     * snap the whole scene back to 1:1 when the shake ended.
+     */
+    bias?: Record<string, number>;
+    wobbles?: number;
+    samples?: number;
+  }
 ): void {
   const samples = Math.max(2, opts.samples ?? SHAKE_SAMPLES);
   const step = opts.windowSec / (samples - 1);
   const wobbles = opts.wobbles ?? SHAKE_WOBBLES;
+  const bias = opts.bias ?? {};
   const amplitudeOf = (key: string): number =>
     typeof opts.amplitude[key] === "number" ? (opts.amplitude[key] as number) : 0;
+  const biasOf = (key: string): number => (typeof bias[key] === "number" ? (bias[key] as number) : 0);
 
-  // tween 0 establishes exact identity, then each segment steps one sample
-  const identity = identityOf(opts.amplitude);
+  // sample 0 establishes the exact identity, then each segment steps one sample
+  const identity: Record<string, number> = {};
+  for (const key of Object.keys(opts.amplitude)) identity[key] = biasOf(key);
   tl.set(el, identity, opts.at);
 
   for (let i = 1; i < samples; i++) {
     const p = i / (samples - 1);
     const k = shakeDecayAt(p, wobbles);
     const vars: gsap.TweenVars = { duration: step, ease: "none" };
-    for (const key of Object.keys(opts.amplitude)) vars[key] = amplitudeOf(key) * k;
+    for (const key of Object.keys(opts.amplitude)) vars[key] = biasOf(key) + amplitudeOf(key) * k;
     tl.to(el, vars, opts.at + (i - 1) * step);
   }
 }

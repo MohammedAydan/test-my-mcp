@@ -106,9 +106,30 @@ boot. `create_or_update_scene` returns `{id, status, revision, hash, warnings, p
 
 **Diagnostics, not guesswork.** `create_or_update_scene` returns non-blocking
 `warnings[]` (e.g. `CAMERA_VIEWPORT_EXCEEDS_CANVAS` — a camera that would expose black
-void), and `inspect_scene_keyframes` returns a `framesMeta[]` sidecar per timestamp
+void, or a `focusTarget` whose zoom cannot reach its layer), and
+`inspect_scene_keyframes` returns a `framesMeta[]` sidecar per timestamp
 (camera pose, active transition phase, per-layer lifecycle/opacity/bbox/textOverflow).
 Read them before judging a frame.
+
+**Inspection responses must fit in a pipe.** MCP over stdio is a bounded pipe, not a
+socket: a twelve-frame inspection at full resolution is ~15 MB of base64, which
+overflows the buffer, closes the client end, and kills the server with an unhandled
+`write EPIPE`. So the *inline* copies are lightweight JPEG previews (≤960px wide, q75)
+and `includeInlineImages: false` drops them for a text-only pass — while the
+FULL-resolution PNGs and a `<sceneId>-frames-meta.json` sidecar are still written to
+`<projectPath>/renders/stills/`. Never put a full-resolution frame in a tool result.
+
+**The camera cannot show void.** The rig is `translate(xPercent%, yPercent%) scale(S)`,
+and because the scale is applied first, the canvas point at the viewport centre is
+`50 − xPercent/S`. Two invariants follow, and both are enforced:
+centring a point `c` needs `xPercent = (50 − c)·S`, and the frame stays covered only
+while `|xPercent| ≤ 50·(S − 1)` (equivalently, a look-at inside
+`[50 − 50(1−1/S), 50 + 50(1−1/S)]`). `focusTarget` therefore boosts its zoom until the
+target is reachable — or limits the pan when even the cap cannot reach it — and a final
+clamp runs on the timeline's own `onUpdate`, i.e. **after** every child tween, so it sees
+the pose that is actually rendered. When it has to intervene it sets
+`framesMeta.camera.clampedVoid` and reports the requested look-at as
+`unclampedXPct`/`unclampedYPct`.
 
 FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 `npm run doctor -w @motionforge/core-engine` verifies the toolchain once implemented.

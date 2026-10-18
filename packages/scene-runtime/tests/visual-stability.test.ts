@@ -364,9 +364,42 @@ describe("text splitting", () => {
       // so opacity/blur/transform animate it in lockstep with the glyphs
       expect(pill).not.toBeNull();
       expect(unit.parentElement?.querySelector(".mf-highlight")).toBe(pill);
-      // …and it is the only child, behind the glyph, so it never paints over it
+      // …and it is the first child, behind the glyphs
       expect(unit.firstElementChild).toBe(pill);
-      expect((pill as HTMLElement).style.zIndex).toBe("-1");
+    }
+  });
+
+  it("paints the highlight pill BEHIND the glyphs (never over the letterforms)", () => {
+    const ctx = makeCtx();
+    const built = renderKineticText(
+      parsedLayer({
+        id: "title",
+        type: "kineticText",
+        text: "موشن فورج",
+        sizePx: 96,
+        direction: "rtl",
+        animateBy: "word",
+        highlight: { color: "#38bdf8", radiusPx: 10, paddingPx: 8 },
+      } as SceneSpecInput["layers"][number]) as unknown as KineticTextLayer,
+      ctx
+    );
+    for (const unit of built.units ?? []) {
+      const pill = unit.querySelector<HTMLElement>(".mf-highlight");
+      const glyphs = unit.querySelector<HTMLElement>(".mf-unit-glyphs");
+      expect(pill).not.toBeNull();
+      expect(glyphs).not.toBeNull();
+      // the pill sits behind the glyphs…
+      expect(pill!.style.zIndex).toBe("1");
+      expect(glyphs!.style.zIndex).toBe("2");
+      // …and the glyphs come AFTER the pill in the DOM
+      expect(unit.firstElementChild).toBe(pill);
+      expect(unit.lastElementChild).toBe(glyphs);
+      // the unit is its own stacking context, so the z-index is local
+      expect(unit.style.isolation).toBe("isolate");
+      expect(unit.style.position).toBe("relative");
+      // the glyph text is intact (the pill never eats it)
+      expect(glyphs!.textContent).toBe(glyphs!.textContent?.trim());
+      expect(glyphs!.textContent?.trim().length).toBeGreaterThan(0);
     }
   });
 });

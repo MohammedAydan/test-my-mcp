@@ -96,7 +96,9 @@ export function renderKineticText(
     const lineEl = document.createElement("div");
     if (granularity === "line") {
       lineEl.className = "mf-unit";
-      lineEl.style.cssText = TEXT_UNIT_GUARD_CSS;
+      // the same isolation as a word unit, so a line that carries a highlight
+      // resolves its z-index inside its own stacking context
+      lineEl.style.cssText = ["position:relative", "isolation:isolate", TEXT_UNIT_GUARD_CSS].join(";");
       applyTextPaint(lineEl, layer.fill, layer.stroke);
       // a non-breaking space keeps empty lines at full line height
       lineEl.textContent = line || "\u00a0";
@@ -120,16 +122,19 @@ export function renderKineticText(
         ].join(";");
         const span = document.createElement("span");
         span.className = "mf-unit";
-        // `position:relative` makes the unit the containing block for its own
-        // highlight pill — see below.
-        span.style.cssText = ["position:relative", TEXT_UNIT_GUARD_CSS].join(";");
-        applyTextPaint(span, layer.fill, layer.stroke);
-        span.textContent = token;
+        // `position:relative` + `isolation:isolate` makes the unit its own
+        // stacking context, so the highlight pill's z-index is resolved INSIDE
+        // the unit instead of escaping into the (3D-preserving) wrapper chain.
+        span.style.cssText = ["position:relative", "isolation:isolate", TEXT_UNIT_GUARD_CSS].join(";");
         // The highlight pill lives INSIDE the animated `.mf-unit`, not beside
         // it. As a sibling it was painted by the *container* while the glyphs
         // were still staggered in, so the box showed up before the word did.
-        // Nested, it inherits the unit's opacity/filter/transform and is
-        // revealed in exact lockstep with its glyphs.
+        //
+        // It must ALSO be behind the glyphs: an absolutely positioned sibling
+        // paints ABOVE the element's own inline content, so the pill used to
+        // cover the Arabic letterforms with a solid rectangle. The pill
+        // therefore gets `z-index: 1` and the glyphs `z-index: 2`, both
+        // resolved inside the unit's isolated stacking context.
         if (granularity === "word" && layer.highlight) {
           const hl = document.createElement("span");
           hl.className = "mf-highlight";
@@ -139,11 +144,18 @@ export function renderKineticText(
             `inset:${-layer.highlight.paddingPx}px`,
             `border-radius:${layer.highlight.radiusPx}px`,
             `background:${layer.highlight.color}`,
-            "z-index:-1",
+            "z-index:1",
             "pointer-events:none",
           ].join(";");
           span.appendChild(hl);
         }
+        // The glyphs live in their own span so they can sit ABOVE the pill.
+        const glyphs = document.createElement("span");
+        glyphs.className = "mf-unit-glyphs";
+        glyphs.style.cssText = ["position:relative", "z-index:2", "display:inline"].join(";");
+        glyphs.textContent = token;
+        applyTextPaint(glyphs, layer.fill, layer.stroke);
+        span.appendChild(glyphs);
         wrap.appendChild(span);
         lineEl.appendChild(wrap);
         units.push(span);

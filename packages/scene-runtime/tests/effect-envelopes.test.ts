@@ -18,11 +18,18 @@ import {
 } from "../src/envelope.js";
 import {
   applyCamera,
+  applyViewportClamp,
   CAMERA_BASELINE,
   cameraExceedsCanvas,
   cameraStateAt,
+  clampCameraTranslation,
+  FOCUS_MAX_SCALE,
+  lookAtPct,
+  requiredScaleForPan,
   resolveCameraKeyframes,
-  type ResolvedCameraState,
+  safeLookAtRange,
+  translationForLookAt,
+  type LayerAnchor,
 } from "../src/camera.js";
 import {
   activeTransitionsAt,
@@ -64,17 +71,18 @@ function sceneOf(input: SceneSpecInput): SceneSpec {
   return parseScene(input);
 }
 
-function rigAndMap(): { rig: HTMLElement; focus: Map<string, HTMLElement> } {
+function rigAndMap(): { rig: HTMLElement; focus: Map<string, LayerAnchor> } {
   const rig = document.createElement("div");
   document.body.appendChild(rig);
-  return { rig, focus: new Map<string, HTMLElement>() };
+  return { rig, focus: new Map<string, LayerAnchor>() };
 }
 
 /** Build the timeline for a scene with real keyframes/moves on a real rig. */
-function buildCamera(scene: SceneSpec, rig: HTMLElement, focus: Map<string, HTMLElement>): gsap.core.Timeline {
+function buildCamera(scene: SceneSpec, rig: HTMLElement, focus: Map<string, LayerAnchor>): gsap.core.Timeline {
   const tl = gsap.timeline({ paused: true });
   tl.to({}, { duration: scene.durationMs / 1000 }, 0);
   applyCamera(tl, scene, rig, focus);
+  applyViewportClamp(tl, rig, scene);
   return tl;
 }
 
@@ -350,10 +358,11 @@ describe("camera keyframe inheritance", () => {
     expect(CAMERA_BASELINE).toMatchObject({ scale: 1, xPct: 50, yPct: 50, roll: 0, pitch: 0, yaw: 0 });
   });
 
-  it("resolves the pose in effect at a timestamp", () => {
+  it("resolves the pose in effect at a timestamp, with the authored ease", () => {
     const kfs = [{ at: 0, scale: 1 }, { at: 2000, scale: 1.5 }];
     expect(cameraStateAt(kfs, 0).scale).toBe(1);
-    expect(cameraStateAt(kfs, 1000).scale).toBe(1);
+    // the default ease is power2.inOut, so the midpoint of the segment is 0.5
+    expect(cameraStateAt(kfs, 1000).scale).toBeCloseTo(1.25, 6);
     expect(cameraStateAt(kfs, 2000).scale).toBe(1.5);
     expect(cameraStateAt(kfs, 9999).scale).toBe(1.5);
   });
@@ -372,9 +381,12 @@ describe("camera keyframe inheritance", () => {
     tl.seek(2, false);
     // the second keyframe omits `scale`, so it must still be 1.2
     expect(Number(gsap.getProperty(rig, "scale"))).toBeCloseTo(1.2, 3);
-    // …and `xPct: 46` is inside the safe range at 1.2× (41.67 – 58.33), so the
+    // …and the rig really looks at `xPct: 46` (the translate is expressed in
+    // the SCALED frame, so it must be (50 − 46) · 1.2 = 4.8)
+    expect(Number(gsap.getProperty(rig, "xPercent"))).toBeCloseTo(4.8, 3);
+    expect(lookAtPct(1.2, Number(gsap.getProperty(rig, "xPercent")))).toBeCloseTo(46, 3);
+    // `xPct: 46` is inside the safe range at 1.2× (41.67 – 58.33), so the
     // viewport clamp must leave it alone
-    expect(50 - Number(gsap.getProperty(rig, "xPercent"))).toBeCloseTo(46, 3);
     expect(rig.dataset.mfCameraClamped).toBeUndefined();
   });
 });
@@ -419,9 +431,16 @@ describe("camera viewport safety", () => {
     const { rig, focus } = rigAndMap();
     const tl = buildCamera(scene, rig, focus);
     tl.seek(2, false);
-    const xPct = 50 - Number(gsap.getProperty(rig, "xPercent"));
-    expect(xPct).toBeGreaterThanOrEqual(50 / 1.4 - 1e-3);
+    // the RENDERED look-at must be inside the safe band
+    const lookAt = lookAtPct(1.4, Number(gsap.getProperty(rig, "xPercent")));
+    expect(lookAt).toBeGreaterThanOrEqual(50 / 1.4 - 1e-3);
+    // …and the pixel-space limit must hold exactly: |ΔX| ≤ w·(S−1)/2
+    const limit = 50 * (1.4 - 1);
+    expect(Math.abs(Number(gsap.getProperty(rig, "xPercent")))).toBeLessThanOrEqual(limit + 1e-6);
     expect(rig.dataset.mfCameraClamped).toBe("1");
+    // the authored (unclamped) pose is still reported, so the metadata can say
+    // what the author asked for next to what was rendered
+    expect(Number(rig.dataset.mfCameraUnclampedX)).toBeCloseTo(0, 2);
   });
 
   it("clears the clamp flag when the pose is back in bounds", () => {

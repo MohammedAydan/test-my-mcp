@@ -78,12 +78,38 @@ body {
  */
 .mf-unit {
   position: relative;
+  /*
+   * `isolation: isolate` makes the unit its OWN stacking context, so the
+   * highlight pill's z-index is resolved inside the unit instead of escaping
+   * into the wrapper chain (which is `transform-style: preserve-3d`).
+   */
+  isolation: isolate;
   display: inline-block;
   padding: 0.12em 0.08em;
   margin: -0.12em -0.08em;
   line-height: 1.35;
   white-space: pre;
   unicode-bidi: isolate;
+}
+
+/*
+ * The glyphs sit ABOVE the highlight pill.
+ *
+ * An absolutely positioned element paints above the in-flow inline content of
+ * its parent, so a pill that is a sibling of the text covers the letterforms
+ * (a solid rectangle over the Arabic). The pill is `z-index: 1` and the glyphs
+ * `z-index: 2`, both inside the unit's isolated stacking context.
+ */
+.mf-unit-glyphs {
+  position: relative;
+  z-index: 2;
+  display: inline;
+}
+
+.mf-highlight {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
 }
 
 /*

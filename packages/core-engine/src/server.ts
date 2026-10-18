@@ -21,6 +21,7 @@ import { inspectKeyframes } from "./keyframes.js";
 import {
   initCreativeProject,
   ProjectWorkspaceError,
+  saveFramesMetaToDisk,
   saveRenderToDisk,
   saveStillsToDisk,
   syncSceneToDisk,
@@ -175,6 +176,109 @@ export async function registerSceneRoutes(
     return reply.code(result.status).send(result.body);
   };
   app.post("/api/scenes", sceneRoute);
+
+  // the preview bundle fetches the scene it is about to render, so this route is
+  // part of the scene contract — not an incidental extra
+  app.get("/api/scenes/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const found = store.get(id);
+    if (!found) return reply.code(404).send({ error: `unknown scene "${id}"` });
+    return found.scene;
+  });
+
+  /**
+   * Exact-frame inspection.
+   *
+   * The renderer loads the preview page over HTTP, so the base URL is taken
+   * from the request itself rather than from the configured port: the test
+   * harness listens on an ephemeral port, and hard-coding one would make this
+   * route untestable for the very reason it matters (payload size).
+   */
+  app.post("/api/scenes/:id/keyframes", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { at, includeFullResolution } = (req.body ?? {}) as {
+      at?: number[];
+      includeFullResolution?: boolean;
+    };
+    const stamps = at?.filter((n) => Number.isFinite(n) && n >= 0) ?? [0];
+    const { scene } = store.require(id);
+    const frames = await inspectKeyframes({
+      scene,
+      sceneId: id,
+      baseUrl: selfBaseUrl(req, port),
+      at: stamps,
+      // the full-resolution PNG is only produced when the caller is going to
+      // write it to disk — an inline caller gets the lightweight preview
+      includeFullResolution: includeFullResolution === true,
+    });
+    // `frames[].meta` is the numeric sidecar (camera / transitions / per-layer
+    // lifecycle + overflow) — the MCP tool renders it as `framesMeta`
+    return { frames, framesMeta: frames.map((f) => f.meta ?? { atMs: f.atMs }) };
+  });
+}
+
+/**
+ * The engine's own base URL, for the frame renderer's page load.
+ *
+ * `inspectKeyframes` navigates Chromium to this URL, so it must resolve to the
+ * listener that is actually serving. Three cases matter:
+ *
+ *   - a real request carries the bound host and port (the unit tests listen on
+ *     an ephemeral port), which is authoritative;
+ *   - `app.inject` (smoke, unit tests) synthesises `Host: localhost:80` — a
+ *     placeholder, NOT the listener — so the configured port wins;
+ *   - `localhost` is rewritten to `127.0.0.1`: it can resolve to `::1` while the
+ *     listener is IPv4-only, and it is subject to `HTTP_PROXY`, either of which
+ *     turns a working page load into `ERR_SSL_PROTOCOL_ERROR` / `ECONNREFUSED`.
+ */
+function selfBaseUrl(req: FastifyRequest, port: number): string {
+  const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
+  const hostHeader = req.headers.host ?? "";
+  const bracketed = hostHeader.startsWith("[");
+  const close = bracketed ? hostHeader.indexOf("]") : -1;
+  const colon = bracketed ? hostHeader.indexOf("]:") : hostHeader.lastIndexOf(":");
+  const rawHostname = bracketed ? hostHeader.slice(0, close + 1) : hostHeader.split(":")[0]!;
+  const headerPort = colon > 0 ? Number(hostHeader.slice(colon + 1)) : Number.NaN;
+  // `app.inject` sends `Host: localhost:80` — a placeholder, not the listener
+  const synthetic = !Number.isInteger(headerPort) || (headerPort === 80 && rawHostname === "localhost");
+
+  const hostname =
+    !rawHostname || rawHostname === "localhost" || rawHostname === "[::1]" ? "127.0.0.1" : rawHostname;
+  return `${proto}://${hostname}:${synthetic ? port : headerPort}`;
+}
+
+/**
+ * Serve the built scene-runtime bundle at `/preview/`.
+ *
+ * The frame renderer navigates to this URL to capture a scene, so any harness
+ * that exercises `inspectKeyframes` needs it — extracted from `startEngine` so
+ * the inspection tests render the same page the engine does, instead of a
+ * stand-in.
+ *
+ * Returns false when the runtime bundle is not built, so the caller can report
+ * it instead of failing obscurely at capture time.
+ */
+export async function registerPreviewRoutes(app: FastifyInstance, runtimeDistDir: string): Promise<boolean> {
+  if (!existsSync(runtimeDistDir)) return false;
+  await app.register(staticFiles, {
+    root: runtimeDistDir,
+    prefix: "/preview/",
+    wildcard: false,
+  });
+  // the built bundle uses relative asset URLs — requires the trailing slash;
+  // keep the original query string intact
+  app.get("/preview", (req, reply) => {
+    const query = req.raw.url?.includes("?") ? `?${req.raw.url.split("?")[1]}` : "";
+    return reply.redirect(`/preview/${query}`, 302);
+  });
+  app.setNotFoundHandler((req, reply) => {
+    // SPA fallback for /preview deep links
+    if (req.raw.url?.startsWith("/preview")) {
+      return reply.sendFile("index.html", runtimeDistDir);
+    }
+    return reply.code(404).send({ error: "not found" });
+  });
+  return true;
 }
 
 /**
@@ -250,9 +354,10 @@ export async function registerProjectRoutes(
 
   // write captured stills into the project's renders/stills/
   app.post("/projects/stills", async (req, reply) => {
-    const { sceneId, frames } = (req.body ?? {}) as {
+    const { sceneId, frames, framesMeta } = (req.body ?? {}) as {
       sceneId?: string;
       frames?: Array<{ atMs: number; image: string }>;
+      framesMeta?: unknown[];
     };
     const stored = sceneId ? store.get(sceneId) : undefined;
     const projectPath = req.headers["x-motionforge-project"] ?? stored?.projectPath;
@@ -265,9 +370,18 @@ export async function registerProjectRoutes(
     }
     try {
       const files = await saveStillsToDisk(projectPath, sceneId as string, frames);
+      // The numeric sidecar is persisted NEXT TO the stills, so the metadata
+      // survives even when the agent inspects the project offline (and so the
+      // frames can be re-checked without re-rendering).
+      let metaFile: string | null = null;
+      if (Array.isArray(framesMeta) && framesMeta.length > 0) {
+        metaFile = await saveFramesMetaToDisk(projectPath, sceneId as string, framesMeta);
+      }
       return reply.code(201).send({
         files,
+        ...(metaFile ? { metaFile } : {}),
         savedStillsFilePaths: files.map((f) => `${projectPath.replace(/\/+$/, "")}/${f}`),
+        ...(metaFile ? { savedFramesMetaFilePath: `${projectPath.replace(/\/+$/, "")}/${metaFile}` } : {}),
       });
     } catch (error) {
       if (error instanceof ProjectWorkspaceError) return reply.code(400).send({ error: error.message });
@@ -310,26 +424,7 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
   // -------------------------------------------------------------------------
   app.get("/api/capabilities", () => capabilities());
 
-  if (existsSync(config.paths.runtimeDistDir)) {
-    await app.register(staticFiles, {
-      root: config.paths.runtimeDistDir,
-      prefix: "/preview/",
-      wildcard: false,
-    });
-    // the built bundle uses relative asset URLs — requires the trailing slash;
-    // keep the original query string intact
-    app.get("/preview", (req, reply) => {
-      const query = req.raw.url?.includes("?") ? `?${req.raw.url.split("?")[1]}` : "";
-      return reply.redirect(`/preview/${query}`, 302);
-    });
-    app.setNotFoundHandler((req, reply) => {
-      // SPA fallback for /preview deep links
-      if (req.raw.url?.startsWith("/preview")) {
-        return reply.sendFile("index.html", config.paths.runtimeDistDir);
-      }
-      return reply.code(404).send({ error: "not found" });
-    });
-  } else {
+  if (!(await registerPreviewRoutes(app, config.paths.runtimeDistDir))) {
     log("scene-runtime/dist not built — /preview disabled until `npm run build -w @motionforge/scene-runtime`");
   }
 
@@ -339,13 +434,6 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
   // the shared write path — registered through the same helper the tests use,
   // so the behaviour is identical in tests and in the running engine
   await registerSceneRoutes(app, { store, paths: config.paths, port: config.port });
-
-  app.get("/api/scenes/:id", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const found = store.get(id);
-    if (!found) return reply.code(404).send({ error: `unknown scene "${id}"` });
-    return found.scene;
-  });
 
   // -------------------------------------------------------------------------
   // creative projects — HTTP parity for the init_creative_project MCP tool and
@@ -366,22 +454,6 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
     };
     store.bus.on(`scene:${id}`, listener);
     req.raw.on("close", () => store.bus.off(`scene:${id}`, listener));
-  });
-
-  app.post("/api/scenes/:id/keyframes", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const { at } = (req.body ?? {}) as { at?: number[] };
-    const stamps = at?.filter((n) => Number.isFinite(n) && n >= 0) ?? [0];
-    const { scene } = store.require(id);
-    const frames = await inspectKeyframes({
-      scene,
-      sceneId: id,
-      baseUrl: `http://127.0.0.1:${config.port}`,
-      at: stamps,
-    });
-    // `frames[].meta` is the numeric sidecar (camera / transitions / per-layer
-    // lifecycle + overflow) — the MCP tool renders it as `framesMeta`
-    return { frames, framesMeta: frames.map((f) => f.meta ?? { atMs: f.atMs }) };
   });
 
   // -------------------------------------------------------------------------
