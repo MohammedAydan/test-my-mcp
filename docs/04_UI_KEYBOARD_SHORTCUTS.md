@@ -1,5 +1,8 @@
 # MotionForge Studio — Keyboard Shortcuts Reference
 
+> **⚠️ AUDIT REALITY CHECK (October 2026):**  
+> While basic transport keys (`Space`, arrow navigation) function, several shortcuts (such as `Ctrl+D` duplicate, `C` razor tool, and `J/K/L` shuttle) are being standardized in the upcoming Pro NLE shortcut matrix. See [`plans/UI_UX_PLAN.md`](plans/UI_UX_PLAN.md#6-comprehensive-pro-keyboard-shortcut-map).
+
 > **Desktop-class authoring efficiency.** MotionForge Studio is designed for keyboard-driven precision, mimicking professional non-linear editors (NLEs) and modern design tools like DaVinci Resolve, Linear, and Figma.
 
 ---

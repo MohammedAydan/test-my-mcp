@@ -1,7 +1,12 @@
 # MotionForge API Documentation
 
-**Version:** 1.0.0 (SceneSpec schemaVersion 1)
-**Date:** 2026-10-18
+**Version:** 1.0.0 (SceneSpec schemaVersion 1)  
+**Date:** 2026-10-18 (Updated with Audit Status: 2026-10-19)
+
+> **⚠️ AUDIT REALITY CHECK (October 2026):**  
+> All endpoints documented below have been verified against the live Fastify engine.  
+> Note: `GET /api/assets` (listing vault assets) and `DELETE /api/scenes/:id` are currently **NOT IMPLEMENTED** in `packages/core-engine` (returning 404), although referenced by the Studio frontend. See [`docs/plans/BACKEND_PLAN.md`](docs/plans/BACKEND_PLAN.md) and [`docs/11_CURRENT_STATE_AUDIT.md`](docs/11_CURRENT_STATE_AUDIT.md).
+
 
 ---
 

@@ -1,8 +1,12 @@
 # MotionForge Studio — UI Redesign Plan & Specification
 
+> **⚠️ SUPERSEDED / AUDIT REALITY CHECK (October 2026):**  
+> This prototype document outlined the initial browser-based redesign. An empirical audit revealed significant interaction shortcomings (disconnected canvas overlay, timeline clipping, missing splitters).  
+> **See the active, verified remediation plan in [`plans/UI_UX_PLAN.md`](plans/UI_UX_PLAN.md) and [`11_CURRENT_STATE_AUDIT.md`](11_CURRENT_STATE_AUDIT.md).**
+
 **Date:** 2026-10-18  
 **Author:** MotionForge Studio Senior Software Engineer  
-**Status:** In Progress (Phase 0 Complete)
+**Status:** Superseded by UI_UX_PLAN.md
 
 ---
 

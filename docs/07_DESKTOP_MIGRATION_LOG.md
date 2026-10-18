@@ -1,9 +1,13 @@
 # MotionForge Desktop Migration Log
 
+> **⚠️ AUDIT REALITY CHECK (October 2026):**  
+> While the Electron 31 + Solid.js packaging was verified functional, the previous report's claim that all interaction features worked as intended was contradicted by user reports. An exhaustive audit identified critical defects in canvas drag synchronization, timeline vertical scrolling, splitter adjustments, and drag-and-drop.  
+> **See [`11_CURRENT_STATE_AUDIT.md`](11_CURRENT_STATE_AUDIT.md) for the verified audit results and [`plans/DESKTOP_APP_PLAN.md`](plans/DESKTOP_APP_PLAN.md) for the remediation plan.**
+
 **Document Version:** 1.0.0  
 **Date:** 2026-10-18  
 **Author:** Senior Software Engineer (AI Pair Programmer)  
-**Status:** Phase 0 Complete — Discovery & Baseline Verified
+**Status:** Discovery & Baseline Re-Audited in October 2026
 
 ---
 
