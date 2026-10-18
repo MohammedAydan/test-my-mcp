@@ -1,5 +1,8 @@
 # MotionForge — Implementation Plan
 
+> **⚠️ AUDIT REALITY CHECK (October 2026):**  
+> While backend Milestones 0–4 (core engine, scene-spec, rendering, MCP adapter) are verified and passing, the authoring Studio UI and Desktop integration are undergoing major remediation. See [`11_CURRENT_STATE_AUDIT.md`](11_CURRENT_STATE_AUDIT.md), [`12_FEATURE_STATUS_MATRIX.md`](12_FEATURE_STATUS_MATRIX.md), and [`plans/`](plans/).
+
 Status legend: ☐ planned · ◐ in progress · ✅ done
 
 Milestones: **0** workspace + SceneSpec contract · **1** visual canvas ·

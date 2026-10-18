@@ -1,5 +1,8 @@
 # MotionForge Studio — UI/UX Design System Guide
 
+> **⚠️ AUDIT REALITY CHECK (October 2026):**  
+> This guide describes the prototype theme tokens. For the active desktop design system overhaul, pro NLE surface elevation tokens, and Kobalte component specifications, see [`plans/UI_UX_PLAN.md`](plans/UI_UX_PLAN.md).
+
 > **Design Direction: "Cinematic Amber"**  
 > A studio-grade aesthetic engineered for desktop-class motion design workflows, merging the warm visual ergonomics of DaVinci Resolve with the surgical micro-precision of Linear and Figma.
 

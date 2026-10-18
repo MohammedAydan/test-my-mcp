@@ -1,5 +1,8 @@
 # MotionForge Studio — Diagnostic & Repair Log
 
+> **⚠️ AUDIT REALITY CHECK (October 2026):**  
+> This log records historical diagnostics. For the definitive, zero-trust audit that verified and reproduced all 11 user complaints with screenshots, see [`11_CURRENT_STATE_AUDIT.md`](11_CURRENT_STATE_AUDIT.md).
+
 ## Phase 0.1 — File Inspection Notes
 
 ### 1. `AGENTS.md`

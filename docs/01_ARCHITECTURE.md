@@ -1,5 +1,8 @@
 # MotionForge — System Architecture
 
+> **⚠️ AUDIT REALITY CHECK (October 2026):**  
+> This architecture document details the core headless engine and scene runtime. For the desktop architecture (Electron + Solid.js Studio) and identified UX remediation targets, refer to [`11_CURRENT_STATE_AUDIT.md`](11_CURRENT_STATE_AUDIT.md) and [`plans/DESKTOP_APP_PLAN.md`](plans/DESKTOP_APP_PLAN.md).
+
 ## 1. Component overview
 
 ```

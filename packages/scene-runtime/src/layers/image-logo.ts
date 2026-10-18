@@ -96,7 +96,7 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
-    "transform:translate(-50%,-50%)",
+    `transform:translate(-50%,-50%)${layer.rotation ? ` rotate(${layer.rotation}deg)` : ""}`,
     `width:${layer.widthPx}px`,
     `height:${resolvedHeightPx}px`,
     "max-width:100%",

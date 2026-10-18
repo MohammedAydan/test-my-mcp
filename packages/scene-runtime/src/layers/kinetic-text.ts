@@ -63,7 +63,7 @@ export function renderKineticText(layer: KineticTextLayer, ctx: LayerContext): K
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
-    "transform:translate(-50%,-50%)",
+    `transform:translate(-50%,-50%)${layer.rotation ? ` rotate(${layer.rotation}deg)` : ""}`,
     `text-align:${layer.align}`,
     `direction:${layer.direction}`,
     `font-family:${family}`,

@@ -214,3 +214,20 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 Changing the `SceneSpec` schema is a **breaking contract change**: bump
 `schemaVersion`, keep the old version parsing (or migrate), and update the docs in the
 same commit.
+
+---
+
+## Current State & Audit Reality (October 2026)
+
+> **IMPORTANT:** Previous reports claimed full completion and passing tests, but an exhaustive zero-trust audit revealed severe interaction gaps in the desktop application layer (see [`docs/11_CURRENT_STATE_AUDIT.md`](docs/11_CURRENT_STATE_AUDIT.md) and [`docs/12_FEATURE_STATUS_MATRIX.md`](docs/12_FEATURE_STATUS_MATRIX.md)).
+
+Key points for agents working in this repo:
+1. **Engine & CLI Pipeline are Functional:** The core rendering engine, Playwright frame capture, FFmpeg export, and MCP tools function as specified.
+2. **Desktop UI/UX requires Remediation:**
+   - Canvas direct manipulation currently updates SVG wireframes only without transforming the live preview iframe or saving to the engine.
+   - Timeline canvas lacks vertical scrolling (`scrollY`), clipping scenes with >3 layers.
+   - Panels are currently rigid without drag-to-resize splitters.
+   - Layers are 1:1 mapped to rows; multi-clip track lane support (`trackIndex`) is pending.
+   - Asset drag-and-drop to canvas/timeline is not yet implemented.
+3. **Execution Roadmap:** Follow [`docs/13_NEXT_STEPS.md`](docs/13_NEXT_STEPS.md) for the prioritized 20-item remediation plan across backend and desktop packages.
+

@@ -8,7 +8,7 @@ import {
   type ActWindow,
   type DeadGap,
 } from "@motionforge/scene-spec";
-import type { AssetKind, FontRole, SceneSpec } from "@motionforge/scene-spec";
+import type { AssetKind, FontRole, SceneSpec, KeyframeTrack } from "@motionforge/scene-spec";
 import type { Stage } from "./stage.js";
 import {
   applyCamera,
@@ -260,6 +260,60 @@ interface LayerDescriptor {
   plan: MotionSlotPlan;
 }
 
+export function applyKeyframeTracks(
+  tl: gsap.core.Timeline,
+  tracks: KeyframeTrack[],
+  target: HTMLElement
+): void {
+  for (const track of tracks) {
+    if (!track.keyframes || track.keyframes.length === 0) continue;
+    const sorted = [...track.keyframes].sort((a, b) => a.at - b.at);
+    const prop = track.property;
+
+    const mapProp = (val: number | string) => {
+      switch (prop) {
+        case "opacity":
+          return { opacity: Number(val) };
+        case "scale":
+          return { scale: Number(val) };
+        case "rotation":
+          return { rotation: Number(val) };
+        case "position.xPct":
+          return { left: `${val}%` };
+        case "position.yPct":
+          return { top: `${val}%` };
+        case "widthPx":
+          return { width: `${val}px` };
+        case "heightPx":
+          return { height: `${val}px` };
+        default:
+          return { [prop]: val };
+      }
+    };
+
+    const first = sorted[0];
+    gsap.set(target, mapProp(first.value));
+
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const durationSec = Math.max(0.001, (curr.at - prev.at) / 1000);
+      const startSec = prev.at / 1000;
+      const ease = curr.ease || "power2.inOut";
+
+      tl.to(
+        target,
+        {
+          ...mapProp(curr.value),
+          duration: durationSec,
+          ease,
+        },
+        startSec
+      );
+    }
+  }
+}
+
 function applyLayerTiming(
   tl: gsap.core.Timeline,
   scene: SceneSpec,
@@ -333,6 +387,10 @@ function applyLayerTiming(
         startMs / 1000
       );
     }
+  }
+
+  if (layer.tracks && layer.tracks.length > 0) {
+    applyKeyframeTracks(tl, layer.tracks, built.content);
   }
 
   // camera `focusTarget` centers on the painted content, not the full-bleed wrapper

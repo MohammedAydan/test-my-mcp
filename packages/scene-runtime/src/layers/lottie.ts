@@ -13,7 +13,7 @@ export function renderLottie(layer: LottieLayer, ctx: LayerContext): { content: 
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
-    "transform:translate(-50%,-50%)",
+    `transform:translate(-50%,-50%)${layer.rotation ? ` rotate(${layer.rotation}deg)` : ""}`,
     layer.widthPx ? `width:${layer.widthPx}px` : "width:25%",
     "max-width:100%",
   ].join(";");

@@ -16,6 +16,8 @@ and three CLI tools that turn any folder into a self-contained client job.
 | [`@motionforge/core-engine`](packages/core-engine) | Fastify service: validation, assets, Playwright frame renderer, FFmpeg encode, SFX mix, **project workspace manager** |
 | [`@motionforge/scene-runtime`](packages/scene-runtime) | Browser canvas: layers, 2.5D camera rig, timeline scrubber (Vite + Tailwind + GSAP + Lottie) |
 | [`@motionforge/mcp-server`](packages/mcp-server) | Thin MCP adapter exposing exactly **6 tools** |
+| [`@motionforge/studio`](packages/studio) | Solid.js + Tailwind desktop editor interface (NLE timeline, inspector, preview overlay) |
+| [`@motionforge/desktop`](packages/desktop) | Electron desktop shell packaging the studio and embedding the core engine |
 
 ## Quick start — engine development
 
@@ -91,5 +93,9 @@ lifecycle / opacity / bbox / text-overflow) next to the images.
 
 ## Status
 
-Milestones 0–6 are complete — see [`docs/00_PLAN.md`](docs/00_PLAN.md) for live
-milestone status and measured acceptance results.
+- **Engine & Core Pipeline:** Complete and passing (329/329 tests). Headless rendering, MCP adapter, and CLI workflows are verified.
+- **Desktop Application & Studio UX:** Currently in remediation. An exhaustive zero-trust audit conducted in October 2026 identified 11 UX interaction and architecture issues.
+  - See [`docs/11_CURRENT_STATE_AUDIT.md`](docs/11_CURRENT_STATE_AUDIT.md) for empirical test results and root causes.
+  - See [`docs/12_FEATURE_STATUS_MATRIX.md`](docs/12_FEATURE_STATUS_MATRIX.md) for the verified status of all 39 features.
+  - See [`docs/plans/`](docs/plans/) and [`docs/13_NEXT_STEPS.md`](docs/13_NEXT_STEPS.md) for the prioritized remediation roadmap.
+

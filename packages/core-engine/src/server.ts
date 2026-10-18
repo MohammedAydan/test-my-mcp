@@ -17,7 +17,7 @@ import {
   vaultFileExists,
   vaultFileStream,
 } from "./vault.js";
-import { inspectKeyframes } from "./keyframes.js";
+import { inspectKeyframes, getFrameBounds } from "./keyframes.js";
 import {
   initCreativeProject,
   ProjectWorkspaceError,
@@ -263,7 +263,7 @@ export async function registerPreviewRoutes(app: FastifyInstance, runtimeDistDir
   await app.register(staticFiles, {
     root: runtimeDistDir,
     prefix: "/preview/",
-    wildcard: false,
+    wildcard: true,
   });
   // the built bundle uses relative asset URLs — requires the trailing slash;
   // keep the original query string intact
@@ -455,6 +455,26 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
     };
     store.bus.on(`scene:${id}`, listener);
     req.raw.on("close", () => store.bus.off(`scene:${id}`, listener));
+  });
+
+  app.get("/api/scenes/:id/frame/:frameIndex/bounds", async (req, reply) => {
+    const { id, frameIndex } = req.params as { id: string; frameIndex: string };
+    const stored = store.get(id);
+    if (!stored) {
+      return reply.code(404).send({ error: `unknown scene "${id}"` });
+    }
+    const idx = parseInt(frameIndex, 10) || 0;
+    try {
+      const bounds = await getFrameBounds({
+        scene: stored.scene,
+        sceneId: id,
+        baseUrl: `http://127.0.0.1:${config.port}`,
+        frameIndex: idx,
+      });
+      return reply.send(bounds);
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
   });
 
   // -------------------------------------------------------------------------

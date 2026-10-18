@@ -5,6 +5,9 @@ Schema source of truth: `packages/scene-spec/src/**` (Zod, strict — unknown ke
 validation errors). All times are **milliseconds**, all positions are **percent of
 canvas**, all font sizes/lengths are **design px** (authored against the canvas scale).
 
+> **Roadmap Note (BE-001):** Track lane assignment (`trackIndex`) is currently planned for addition to `layerBaseSchema` to enable multiple non-overlapping clips per timeline track row. See [`plans/BACKEND_PLAN.md`](plans/BACKEND_PLAN.md).
+
+
 > **Machine-readable twin of this document.** Everything below is also emitted
 > programmatically so an agent never has to guess or read source: call
 > `get_motion_capabilities` (MCP) / `GET /api/capabilities` (HTTP), or read the MCP
