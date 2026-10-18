@@ -446,6 +446,7 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache",
+      "access-control-allow-origin": "*",
       connection: "keep-alive",
     });
     reply.raw.write(": connected\n\n");
