@@ -1,0 +1,26 @@
+{
+  "name": "@motionforge/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "pack": "electron-builder --dir",
+    "package": "electron-builder"
+  },
+  "dependencies": {
+    "@motionforge/core-engine": "*",
+    "@motionforge/scene-spec": "*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.2"
+  }
+}

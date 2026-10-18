@@ -3,6 +3,11 @@
 // Modular ES Module Architecture
 // ============================================================
 
+// Desktop Electron Shim
+if (window.motionforge?.engineUrl) {
+  console.log('[desktop] Running inside Electron with engine at:', window.motionforge.engineUrl);
+}
+
 import { api } from './js/api.js';
 import { store, state } from './js/state.js';
 import { toast } from './js/ui/toast.js';
@@ -30,6 +35,7 @@ window.api = api;
 window.__mf_duplicateLayer = (l) => layersPanel.duplicateLayer(l);
 window.__mf_deleteLayer = (id) => layersPanel.deleteLayer(id);
 window.__mf_loadScene = (id) => loadScene(id);
+window.__mf_loadDemoScene = () => loadDemoScene();
 
 // ---------- DEMO SCENE SPEC ----------
 const DEMO_SCENE = {
@@ -802,6 +808,89 @@ function initTabs() {
   });
 }
 
+function initDesktopMenuIntegration() {
+  if (!window.motionforge?.onMenuAction) return;
+
+  window.motionforge.onMenuAction((action, payload) => {
+    switch (action) {
+      case 'new-project':
+        openNewSceneModal();
+        break;
+      case 'save-project':
+      case 'save-project-as':
+        if (state.scene) {
+          const projectData = {
+            schemaVersion: 1,
+            name: state.scene.name || 'Untitled Project',
+            sceneId: state.sceneId,
+            scene: state.scene,
+            openScenes: state.openScenes,
+            activeTab: state.sceneId,
+            panelLayout: {
+              activeLeftTab: state.activeLeftTab,
+              activeRightTab: state.activeRightTab,
+            },
+          };
+          window.motionforge
+            .saveProjectFile({ content: JSON.stringify(projectData, null, 2) })
+            .then((res) => {
+              if (!res.canceled) {
+                store.setSaveStatus('saved');
+                toast.success('Project Saved', res.filePath || 'Saved project file');
+              }
+            });
+        }
+        break;
+      case 'open-project-content':
+        if (payload?.content) {
+          try {
+            const data = JSON.parse(payload.content);
+            if (data.scene) {
+              const sid = data.sceneId || data.scene.id || 'loaded-project';
+              store.setScene(data.scene, sid);
+              api.saveScene(data.scene).catch(() => {});
+              toast.success('Project Opened', data.name || sid);
+            }
+          } catch (e) {
+            toast.error('Project Open Error', e.message);
+          }
+        }
+        break;
+      case 'undo': {
+        const desc = store.undo();
+        if (desc) toast.info('Undone', desc);
+        break;
+      }
+      case 'redo': {
+        const desc = store.redo();
+        if (desc) toast.info('Redone', desc);
+        break;
+      }
+      case 'render-draft':
+        if (state.sceneId) executeRender(state.sceneId, 'draft');
+        break;
+      case 'render-production':
+        if (state.sceneId) executeRender(state.sceneId, 'production');
+        break;
+      case 'open-queue':
+        renderQueuePanel.openQueueModal();
+        break;
+      case 'open-shortcuts':
+        openShortcutsModal();
+        break;
+      case 'open-command-palette':
+        commandPalette.open();
+        break;
+      case 'canvas-fit':
+        previewPanel.fitStage?.();
+        break;
+      case 'canvas-actual-size':
+        previewPanel.resetZoom?.();
+        break;
+    }
+  });
+}
+
 // ---------- BOOTSTRAP INITIALIZATION ----------
 async function boot() {
   console.log('[MotionForge Studio] Booting studio workstation...');
@@ -811,6 +900,7 @@ async function boot() {
   initTabs();
   initTransport();
   registerCommandPaletteActions();
+  initDesktopMenuIntegration();
 
   // Wire titlebar buttons
   $('#btn-new')?.addEventListener('click', () => openNewSceneModal());

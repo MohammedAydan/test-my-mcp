@@ -29,7 +29,8 @@ export function sanitizeSceneForEngine(scene) {
 
 export class API {
   constructor(url) {
-    this.url = (url || 'http://127.0.0.1:4000').replace(/\/$/, '');
+    const defaultUrl = window.motionforge?.engineUrl || 'http://127.0.0.1:4000';
+    this.url = (url || defaultUrl).replace(/\/$/, '');
   }
 
   setUrl(url) {
