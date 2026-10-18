@@ -218,6 +218,13 @@ export const Inspector: Component = () => {
                                 `Set sizePx of ${layer().id}`
                               )
                             }
+                            onChange={(e) =>
+                              updateField(
+                                'sizePx',
+                                Number(e.currentTarget.value),
+                                `Set sizePx of ${layer().id}`
+                              )
+                            }
                           />
                         </div>
                         <div class="insp-field">
@@ -297,24 +304,28 @@ export const Inspector: Component = () => {
             fallback={<div class="empty-state">Loading capabilities…</div>}
           >
             <div style="padding: 12px; display: flex; flex-direction: column; gap: 16px;">
-              <div>
-                <div class="insp-section-title" style="margin-bottom: 8px;">Motion Presets</div>
-                <div style="font-size: 11px; color: var(--text-2); line-height: 1.6;">
-                  Entrance: {state.capabilities?.presets?.entrance?.join(', ') || 'fadeUp, pop, springPop'}<br />
-                  Emphasis: {state.capabilities?.presets?.emphasis?.join(', ') || 'pulse, shimmer, float'}<br />
-                  Exit: {state.capabilities?.presets?.exit?.join(', ') || 'fadeOut, popOut'}
+              <div class="cap-section">
+                <div class="cap-title">Motion Presets</div>
+                <div class="cap-pills" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
+                  <For each={state.capabilities?.presets?.entrance || ['fadeUp', 'pop', 'springPop']}>
+                    {(p) => <span class="cap-pill" style="font-size: 11px; padding: 2px 6px; background: var(--bg-2); border-radius: 4px; color: var(--text-2);">{p}</span>}
+                  </For>
                 </div>
               </div>
-              <div>
-                <div class="insp-section-title" style="margin-bottom: 8px;">Easings</div>
-                <div style="font-size: 11px; color: var(--text-2); line-height: 1.6;">
-                  {state.capabilities?.easings?.join(', ') || 'power2.out, power3.out, back.out, elastic.out'}
+              <div class="cap-section">
+                <div class="cap-title">Easings</div>
+                <div class="cap-pills" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
+                  <For each={state.capabilities?.easings || ['power2.out', 'power3.out', 'back.out', 'elastic.out']}>
+                    {(e) => <span class="cap-pill" style="font-size: 11px; padding: 2px 6px; background: var(--bg-2); border-radius: 4px; color: var(--text-2);">{e}</span>}
+                  </For>
                 </div>
               </div>
-              <div>
-                <div class="insp-section-title" style="margin-bottom: 8px;">SFX Bank</div>
-                <div style="font-size: 11px; color: var(--text-2); line-height: 1.6;">
-                  {state.capabilities?.sfx?.join(', ') || 'whoosh, pop, click, subImpact, shimmer, riser'}
+              <div class="cap-section">
+                <div class="cap-title">SFX Bank</div>
+                <div class="cap-pills" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">
+                  <For each={state.capabilities?.sfx || ['whoosh', 'pop', 'click', 'subImpact', 'shimmer', 'riser']}>
+                    {(s) => <span class="cap-pill" style="font-size: 11px; padding: 2px 6px; background: var(--bg-2); border-radius: 4px; color: var(--text-2);">{s}</span>}
+                  </For>
                 </div>
               </div>
             </div>

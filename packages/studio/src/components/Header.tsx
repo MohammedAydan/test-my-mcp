@@ -33,12 +33,21 @@ export const Header: Component<HeaderProps> = (props) => {
 
         {/* Scene Tabs */}
         <nav class="scene-tabs" id="scene-tabs" aria-label="Open scenes">
-          <div class="scene-tab active" id="tab-active-scene">
-            <span class={`scene-tab-dirty ${state.dirty ? '' : 'hidden'}`} id="tab-dirty-indicator"></span>
-            <span class="scene-tab-name" id="scene-title">
-              {state.scene?.id || 'No scene'}
-            </span>
-          </div>
+          <For each={state.openScenes.length > 0 ? state.openScenes : [state.sceneId || 'No scene']}>
+            {(sId) => {
+              const isActive = () => sId === state.sceneId;
+              return (
+                <div class={`scene-tab ${isActive() ? 'active' : ''}`} id={isActive() ? 'tab-active-scene' : undefined}>
+                  <Show when={isActive() && state.dirty}>
+                    <span class="scene-tab-dirty" id="tab-dirty-indicator"></span>
+                  </Show>
+                  <span class="scene-tab-name" id={isActive() ? 'scene-title' : undefined}>
+                    {sId}
+                  </span>
+                </div>
+              );
+            }}
+          </For>
         </nav>
       </div>
 

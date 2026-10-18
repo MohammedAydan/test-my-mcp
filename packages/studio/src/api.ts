@@ -154,3 +154,4 @@ export class API {
 }
 
 export const api = new API();
+(window as unknown as { api: API }).api = api;

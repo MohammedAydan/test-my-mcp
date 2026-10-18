@@ -90,6 +90,9 @@ export const Preview: Component<PreviewProps> = (props) => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isFullscreen()) {
         setIsFullscreen(false);
+      } else if (e.key.toLowerCase() === 'f' && !['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+        e.preventDefault();
+        setIsFullscreen(!isFullscreen());
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -138,7 +141,7 @@ export const Preview: Component<PreviewProps> = (props) => {
         </button>
       </div>
 
-      <div class="preview-stage" id="preview-stage" tabindex="0">
+      <div class={`preview-stage ${isFullscreen() ? 'preview-stage-fullscreen' : ''}`} id="preview-stage" tabindex="0">
         <Show
           when={Boolean(state.scene && state.sceneId)}
           fallback={

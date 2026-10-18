@@ -9,7 +9,7 @@ export const Toasts: Component = () => {
       <For each={state.toasts}>
         {(t) => (
           <div class={`toast ${t.type}`} role="alert">
-            <span class="toast-message">{t.message}</span>
+            <span class="toast-message toast-body">{t.message}</span>
             <button class="toast-close" aria-label="Dismiss toast" onClick={() => store.removeToast(t.id)}>
               ×
             </button>

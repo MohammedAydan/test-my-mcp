@@ -10,6 +10,8 @@ import { Timeline } from './components/Timeline.js';
 import { StatusBar } from './components/StatusBar.js';
 import { Toasts } from './components/Toasts.js';
 import { Modal } from './components/Modal.js';
+import { CommandPalette } from './components/CommandPalette.js';
+import { OnboardingTour } from './components/OnboardingTour.js';
 import type { StudioScene } from './types.js';
 
 export const DEMO_SCENE: StudioScene = {
@@ -184,6 +186,27 @@ export const App: Component = () => {
     }
 
     store.mutateScene((scene) => {
+      if (type === 'imageLogo') {
+        if (!scene.assets) scene.assets = [];
+        if (!scene.assets.some((a) => a.id === 'logo')) {
+          scene.assets.push({
+            id: 'logo',
+            kind: 'image',
+            src: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PGNpcmNsZSBjeD0iNTAiIGN5PSI1MCIgcj0iNDAiIGZpbGw9IiNmNTllMGIiLz48L3N2Zz4=',
+            name: 'Default Logo',
+          });
+        }
+      } else if (type === 'lottie') {
+        if (!scene.assets) scene.assets = [];
+        if (!scene.assets.some((a) => a.id === 'lottie')) {
+          scene.assets.push({
+            id: 'lottie',
+            kind: 'lottie',
+            src: 'data:application/json;base64,eyJ2IjoiNS41LjciLCJmciI6NjAsImlwIjowLCJvcCI6NjAsInciOjIwMCwiaCI6MjAwLCJubWFyIjowLCJkZGQiOjAsImFzc2V0cyI6W10sImxheWVycyI6W119',
+            name: 'Default Lottie',
+          });
+        }
+      }
       scene.layers.push(newLayer as any);
       store.selectLayer(id);
     }, `Added ${type} layer`);
@@ -204,12 +227,10 @@ export const App: Component = () => {
       }
     }
 
-    // 2. Load last scene or demo scene
+    // 2. Load last scene if present
     const lastSceneId = localStorage.getItem('motionforge_last_scene');
     if (lastSceneId) {
       await loadScene(lastSceneId);
-    } else {
-      await loadDemoScene();
     }
 
     // 3. Electron menu integration
@@ -252,6 +273,37 @@ export const App: Component = () => {
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
         store.setPlayhead(state.playhead + 100);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        const selId = state.selectedLayerId;
+        if (selId && state.scene) {
+          const l = state.scene.layers.find((x) => x.id === selId);
+          if (l) {
+            store.mutateScene((scene) => {
+              const clone = JSON.parse(JSON.stringify(l));
+              let newId = `${l.id}-copy`;
+              let counter = 1;
+              while (scene.layers.some((x) => x.id === newId)) {
+                newId = `${l.id}-copy-${counter++}`;
+              }
+              clone.id = newId;
+              clone.at = (l.at || 0) + 100;
+              scene.layers.push(clone);
+              store.selectLayer(newId);
+            }, `Duplicated layer ${l.id}`);
+            store.addToast(`Duplicated ${l.id}`, 'success');
+          }
+        }
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        const selId = state.selectedLayerId;
+        if (selId && state.scene) {
+          e.preventDefault();
+          store.mutateScene((scene) => {
+            scene.layers = scene.layers.filter((l) => l.id !== selId);
+            store.selectLayer(scene.layers[0]?.id || null);
+          }, `Deleted layer ${selId}`);
+          store.addToast(`Deleted layer ${selId}`, 'info');
+        }
       } else if (e.key === '?' || (e.shiftKey && e.key === '/')) {
         e.preventDefault();
         store.setActiveModal('shortcuts');
@@ -276,7 +328,7 @@ export const App: Component = () => {
       <Header
         onNew={() => store.setActiveModal('new')}
         onLoad={() => store.setActiveModal('load')}
-        onPalette={() => store.addToast('Command Palette: Ctrl+K', 'info')}
+        onPalette={() => (window as unknown as { openCommandPalette?: () => void }).openCommandPalette?.()}
         onQueue={() => store.setActiveModal('queue')}
         onInspect={() => store.setActiveModal('inspect')}
         onPreviewTab={() => window.open(api.previewUrl(state.sceneId || ''), '_blank')}
@@ -310,6 +362,17 @@ export const App: Component = () => {
         onExecuteRender={executeRender}
         onAddLayer={addLayer}
       />
+
+      {/* COMMAND PALETTE */}
+      <CommandPalette
+        onOpenRender={() => store.setActiveModal('render')}
+        onOpenInspect={() => store.setActiveModal('inspect')}
+        onOpenNew={() => store.setActiveModal('new')}
+        onOpenLoad={() => store.setActiveModal('load')}
+      />
+
+      {/* ONBOARDING TOUR */}
+      <OnboardingTour />
     </div>
   );
 };
