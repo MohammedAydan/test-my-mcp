@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { findTransitionOverlaps } from "./coverage.js";
 import { colorSchema, idSchema, msSchema } from "./common.js";
 import { cameraSchema } from "./camera.js";
 import { assetSchema, fontRefSchema, type AssetKind } from "./assets.js";
@@ -191,6 +192,23 @@ export const sceneSpecSchema = sceneShapeSchema
         fail(["transitions", i, "at"], "transition at or after scene end");
       }
     });
+    // SINGLE ACTIVE TRANSITION POLICY
+    //
+    // Two live transitions stack their overlays AND their camera offsets, which
+    // renders as two broken transitions happening at once — and neither one can
+    // be judged against the act it was meant to bridge. One transition at a
+    // time is a hard rule, not a style preference.
+    for (const overlap of findTransitionOverlaps(scene)) {
+      const a = scene.transitions[overlap.first];
+      const b = scene.transitions[overlap.second];
+      const aEnd = a ? a.at + a.durationMs : 0;
+      fail(
+        ["transitions", overlap.second, "at"],
+        `overlaps transitions.${overlap.first} ("${a?.kind ?? "?"}", ends at ${aEnd}ms): ` +
+          `at most one transition may be active at a time — the ${b ? b.at - aEnd : 0}ms of overlap would ` +
+          `stack two overlays and two camera offsets on the same cut`
+      );
+    }
     scene.audio.cues.forEach((cue, i) => {
       if (cue.at > scene.durationMs) {
         fail(["audio", "cues", i, "at"], "cue at or after scene end");

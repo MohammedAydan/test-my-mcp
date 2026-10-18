@@ -1,14 +1,25 @@
 import { gsap } from "gsap";
+import {
+  bridgedWindow,
+  foregroundDeadGaps,
+  isForegroundContent,
+  MAX_DEAD_GAP_MS,
+  planSeamBridges,
+  type ActWindow,
+  type DeadGap,
+} from "@motionforge/scene-spec";
 import type { AssetKind, FontRole, SceneSpec } from "@motionforge/scene-spec";
 import type { Stage } from "./stage.js";
 import {
   applyCamera,
-  applyViewportClamp,
   cameraStateFromRig,
+  emptyCameraContext,
+  type CameraContext,
   type LayerAnchor,
   type ResolvedCameraState,
+  type RigShake,
 } from "./camera.js";
-import { autoExitWindow, needsAutoExit, AUTO_EXIT_FADE_MS } from "./envelope.js";
+import { needsAutoExit, AUTO_EXIT_FADE_MS } from "./envelope.js";
 import { PRESET_DEFAULTS, applyEmphasis, applyEntrance, applyExit, type PresetTarget } from "./presets.js";
 import { renderLayer, type BuiltLayer } from "./layers/index.js";
 import type { LayerContext } from "./layers/context.js";
@@ -17,6 +28,7 @@ import {
   LayerLifecycle,
   planMotionSlots,
   type MotionSlotPlan,
+  type PlannedWindow,
   type SceneLayer,
 } from "./motion-slots.js";
 import {
@@ -43,6 +55,23 @@ export interface BuiltScene {
   lifecycle: LayerLifecycle;
   overlays: TransitionOverlay[];
   describeFrame: FrameDescriber;
+  /** seam bridges applied at build time, for `framesMeta` / diagnostics */
+  coverage: CoverageReport;
+}
+
+/**
+ * What the frame actually has on it, and when.
+ *
+ * `deadGaps` is the rule the brief calls for, made observable: a production
+ * cut may hide the stage only for its own peak cover, never for a run of
+ * screen time with nothing on it. The list is empty for a healthy scene.
+ */
+export interface CoverageReport {
+  windows: Record<string, ActWindow>;
+  /** interior runs with no foreground content, longer than the permitted gap */
+  deadGaps: DeadGap[];
+  /** true when no gap exceeds {@link MAX_DEAD_GAP_MS} */
+  ok: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +94,8 @@ export interface FrameDescription {
   atMs: number;
   camera: ReturnType<typeof cameraStateFromRig>;
   activeTransitions: ActiveTransition[];
+  /** visible foreground content on this frame; empty ⇒ the stage is bare */
+  foreground: string[];
   layers: LayerFrameInfo[];
 }
 
@@ -116,6 +147,23 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
   const lifecycle = new LayerLifecycle();
   const descriptors: LayerDescriptor[] = [];
 
+  /**
+   * SEAM BRIDGING — decided before a single tween exists.
+   *
+   * Layer windows are authored independently of the transitions that cut
+   * between them, so an act can legally finish 500 ms before the next one
+   * begins: the frame is empty for that whole run, and nothing warns about it.
+   * Pinning each bounded layer to the seam it belongs to — held to the midpoint
+   * on the way out, started at the midpoint on the way in — is what keeps the
+   * stage populated on both sides of every cut.
+   */
+  const bridges = new Map(planSeamBridges(scene).map((b) => [b.layerId, b]));
+  const windows: Record<string, ActWindow> = {};
+  for (const layer of scene.layers) {
+    windows[layer.id] = bridgedWindow(scene, layer, bridges.get(layer.id));
+  }
+  const deadGaps = foregroundDeadGaps(scene).filter((g) => g.durationMs > MAX_DEAD_GAP_MS);
+
   const sorted = scene.layers
     .map((layer, index) => ({ layer, index }))
     .sort((a, b) => (a.layer.z ?? 0) - (b.layer.z ?? 0) || a.index - b.index);
@@ -148,7 +196,15 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
     };
 
     const built = renderLayer(layer, ctx);
-    const plan = applyLayerTiming(tl, scene, layer, built, wrappers, stage.rig, layerFocus, lifecycle);
+    const bridge = bridges.get(layer.id);
+    const planned: PlannedWindow = {
+      startMs: windows[layer.id]!.startMs,
+      endMs: windows[layer.id]!.endMs,
+      // an outgoing act that is being HELD is removed by the transition's own
+      // cover, so its exit (authored or auto) must not run as well
+      suppressExit: bridge?.mode === "holdOutgoing",
+    };
+    const plan = applyLayerTiming(tl, scene, layer, built, wrappers, stage.rig, layerFocus, lifecycle, planned);
     descriptors.push({ layer, built, wrappers, plan });
   });
 
@@ -166,16 +222,35 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
     }
   }
 
-  const cameraInfo = applyCamera(tl, scene, stage.rig, layerAnchors);
+  // `cameraShakeImpact` is a camera move expressed as a layer emphasis, so its
+  // absolute window is resolved here and handed to the camera composition.
+  // The rig has exactly one writer (the composition), so an emphasis can no
+  // longer tween the rig behind its back.
+  const shakes: RigShake[] = [];
+  for (const { layer, plan } of descriptors) {
+    if (layer.emphasis?.name !== "cameraShakeImpact" || !plan.emphasis) continue;
+    shakes.push({
+      atSec: plan.emphasis.startMs / 1000,
+      windowSec: (plan.emphasis.endMs - plan.emphasis.startMs) / 1000,
+      strength: layer.emphasis.strength ?? 1,
+    });
+  }
+
+  const cameraCtx: CameraContext = { ...emptyCameraContext(), layerAnchors, shakes, widthPx: stage.width, heightPx: stage.height };
+  applyCamera(tl, scene, stage.rig, cameraCtx);
   const overlays = applyTransitions(tl, scene, stage.rig);
-  // The viewport clamp runs on the timeline's own `onUpdate`, so it observes
-  // the pose that is actually rendered: keyframes + moves + drift + transitions.
-  applyViewportClamp(tl, stage.rig, scene, cameraInfo);
 
   lifecycle.applyInitial();
 
   window.masterTimeline = tl;
-  return { tl, layerFocus, lifecycle, overlays, describeFrame: makeFrameDescriber(scene, stage, overlays, descriptors) };
+  return {
+    tl,
+    layerFocus,
+    lifecycle,
+    overlays,
+    coverage: { windows, deadGaps, ok: deadGaps.length === 0 },
+    describeFrame: makeFrameDescriber(scene, stage, overlays, descriptors),
+  };
 }
 
 interface LayerDescriptor {
@@ -193,9 +268,10 @@ function applyLayerTiming(
   wrappers: ReturnType<typeof createMotionWrappers>,
   rig: HTMLElement,
   layerFocus: Map<string, HTMLElement>,
-  lifecycle: LayerLifecycle
+  lifecycle: LayerLifecycle,
+  planned: PlannedWindow
 ): MotionSlotPlan {
-  const plan = planMotionSlots(layer, scene.durationMs);
+  const plan = planMotionSlots(layer, scene.durationMs, planned);
   const staggerMs =
     layer.entrance?.staggerMs ??
     (layer.type === "kineticText" ? (layer.animateBy === "char" ? 30 : 80) : 60);
@@ -217,6 +293,7 @@ function applyLayerTiming(
     // so the sweep keeps hugging the element's own box
     sweepHost: built.content,
     units: built.units,
+    lines: built.lines,
     unitStaggerMs: staggerMs,
     startMs: window.startMs,
     endMs: window.endMs,
@@ -236,12 +313,19 @@ function applyLayerTiming(
 
   if (plan.exit && layer.exit) {
     applyExit(tl, layer.exit, slotTarget(wrappers.exit, plan.exit));
+  } else if (plan.exitSuppressedBySeam) {
+    // A transition seam is covering this cut and will remove the layer itself.
+    // Running an exit here as well would empty the stage BEFORE the cover
+    // arrives — the exact "everything leaves, then a blank frame" defect.
   } else if (needsAutoExit(layer, scene.durationMs)) {
     // Graceful layer auto-exit guard: a bounded layer that declares no exit
     // used to be force-hidden by the lifecycle registry at its end time, which
     // is a one-frame pop. Fade it out over the tail of its own window instead.
-    const { startMs, endMs } = autoExitWindow(layer, scene.durationMs);
-    if (endMs > startMs) {
+    // The fade is anchored to the BRIDGED end, so a held layer stays put.
+    const endMs = Math.min(layer.at + (layer.duration ?? scene.durationMs), scene.durationMs);
+    const fadeMs = Math.min(AUTO_EXIT_FADE_MS, Math.max(0, endMs - plan.visibleStartMs));
+    const startMs = endMs - fadeMs;
+    if (endMs > startMs && startMs >= plan.visibleStartMs) {
       tl.fromTo(
         wrappers.exit,
         { autoAlpha: 1 },
@@ -295,9 +379,25 @@ function makeFrameDescriber(
       atMs: timeMs,
       camera: cameraStateFromRig(stage.rig),
       activeTransitions: activeTransitionsAt(overlays, timeMs),
+      // the ids of every VISIBLE foreground content layer on this frame — the
+      // per-frame half of the "no dead frame" rule. An empty list means the
+      // frame is background and grade only, which is a defect unless a
+      // transition is mid-peak.
+      foreground: layers
+        .filter(
+          (l, i) =>
+            l.opacity > 0.01 &&
+            isForegroundContent(descriptors[i]!.layer) &&
+            !lifecycleHidden(descriptors[i]!.plan, timeMs)
+        )
+        .map((l) => l.id),
       layers,
     };
   };
+}
+
+function lifecycleHidden(plan: MotionSlotPlan, timeMs: number): boolean {
+  return timeMs < plan.visibleStartMs || timeMs >= plan.visibleEndMs;
 }
 
 function alphaOf(el: HTMLElement): number {

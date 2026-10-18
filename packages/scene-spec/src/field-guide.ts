@@ -207,6 +207,13 @@ export const NESTED_SHAPE_NOTES: string[] = [
   'SFX come in two equivalent forms: `layer.sfx[]` (fires at `layer.at + offsetMs`) and `scene.audio.cues[]` (absolute `at`). Both use the same fixed bank names.',
   'Scene timing must fit: a layer may not start at/after durationMs, and `at + duration` must not exceed it. The same bound applies to transitions, cues and camera keyframes/moves.',
   'Unknown keys are REJECTED everywhere (strict schemas) — a typo like `preset` or `positionX` fails with an "Unrecognized key" issue naming the exact path.',
+  'AT MOST ONE TRANSITION at a time. Two transitions whose `[at, at+durationMs)` windows overlap are rejected by the schema — at one cut, two overlays and two camera offsets read as "two broken transitions happening at once".',
+  'A transition hides the stage only while its cover is at full extent, and never for more than ~120ms around its midpoint (`at + durationMs / 2`). Keep `durationMs` in the 350–550ms range; the engine warns with `TRANSITION_PEAK_TOO_LONG` past that.',
+  'A cut must be covered from BOTH sides: an act that ends inside 300ms before a transition is held to its midpoint, and an act that starts within 300ms after one begins AT its midpoint. Put a transition whose midpoint sits inside any hole longer than 200ms — otherwise the engine warns with `FOREGROUND_COVERAGE_GAP` and the render shows a dead dark frame.',
+  'Mask reveals (`maskRevealWipe`, `collapseMask`) clip the whole TEXT LINE along the reading direction — never a single word. Per-word clips slice every word of an Arabic sentence open at once, so the line reads as fragments for most of the wipe.',
+  'For an OUTRO headline, keep the entrance short: `durationMs: 450` or less. A slow multi-word wipe means the closing line is still being revealed while the scene is ending.',
+  'A `highlight` on a kineticText layer paints ONE soft pill behind the whole LINE (borderless, `border-radius: 0.28em`) — not a bordered box per word. Per-word boxes read as separate compartments and chop an Arabic phrase into segments.',
+  'A `focusTarget` is a gentle nudge, not a zoom solve: it adds at most +0.14x to the current scale and pans toward the layer within 80% of the safe headroom. To actually reframe, use a camera keyframe instead.',
 ];
 
 /** Smallest scene that passes `validateScene()` — post it as-is to confirm the round trip. */

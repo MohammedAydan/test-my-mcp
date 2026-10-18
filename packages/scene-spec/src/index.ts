@@ -16,6 +16,8 @@ export * from "./layers/foreground-fx.js";
 // --- scene + validation -----------------------------------------------------
 export * from "./scene.js";
 export * from "./validate.js";
+// --- act seams / foreground coverage (shared runtime ⇄ engine contract) -----
+export * from "./coverage.js";
 // --- authoring guidance (LLM-facing, derived from the schemas above) -------
 export * from "./field-guide.js";
 // --- creative project manifest (client/job workspaces) ---------------------

@@ -171,6 +171,33 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 - Validate early and often via `create_or_update_scene`, then eyeball with
   `inspect_scene_keyframes` before spending a production render.
 
+## Camera & transitions (the invariants)
+
+- **The camera has exactly ONE writer.** `composeCameraAt(scene, t, ctx)` in
+  `camera.ts` is a pure function — `Clamp(Keyframes ⊕ Moves ⊕ Drift ⊕ Stage)` — and
+  the timeline's `onUpdate` applies it with `gsap.quickSetter`. Never add a tween
+  that writes `rig` scale/translation/rotation: a competing writer is what produced
+  the "double-pump" zoom (hold at 1.47× → snap to 1.00 → back to 1.47×). Transitions
+  contribute through `stageOffsetAt`, not through rig tweens.
+- **`focusTarget` is a nudge, not a zoom solve.** Max `+0.14×` on the current scale
+  and a pan capped at 80% of the safe headroom. Use a camera keyframe to actually
+  reframe.
+- **A move holds its framing into the act cut.** When a transition midpoint falls
+  within 1 s after a move's window, the ramp-out is deferred to that midpoint — the
+  frame is covered while the release happens.
+- **At most one transition at a time** (schema-enforced) and a fully-covered peak
+  never longer than ~120 ms (`PEAK_HOLD_MS` = 100 ms target).
+- **Act seams are bridged automatically.** `planSeamBridges` holds an outgoing act
+  to the transition midpoint and starts an incoming act there. `framesMeta[].foreground`
+  lists the visible content layers per frame — an empty list outside a transition
+  peak is a defect, and `create_or_update_scene` warns with
+  `FOREGROUND_COVERAGE_GAP` when a hole exceeds 200 ms.
+- **Mask presets clip the LINE, never a word.** `maskRevealWipe`/`collapseMask`
+  drive a single directional clip-path per line container, so a multi-word Arabic
+  sentence is never sliced open mid-phrase.
+- **`highlight` is one pill per line**, borderless and rounded — not a bordered box
+  per word.
+
 ## Where to look / where to add things
 
 | Task | Location |

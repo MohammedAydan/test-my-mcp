@@ -1,12 +1,15 @@
 /**
  * Scene transitions — every one of them is a symmetric two-phase bell curve.
  *
- * THE DEFECT THIS FIXES: the four transitions were each one asymmetric animation.
- * `wipe` slid a solid cover off the frame (never covering the seam), `whipPan`
- * pushed the stage and let the drift term push back, `glitch` stepped the rig
- * from `x = -16` to `x = 0` with no decaying tail, and `morph` was a flat
- * opacity dip. In delivered videos they read as warped, one-sided or as a flash
- * that never resolved.
+ * THE DEFECTS THIS FIXES (field audit of `scene-01`):
+ *
+ *  - `whipPan` painted a full-frame `repeating-linear-gradient(90deg, …)` band,
+ *    i.e. literal vertical bars, over a stage that had already emptied — so the
+ *    cut rendered as prison bars on a black screen;
+ *  - `wipe` was a flat rectangle in the scene's own background colour, which on
+ *    a dark scene is indistinguishable from a dead frame;
+ *  - every kind held its peak for an unbounded share of the window, and the
+ *    outgoing act had already finished exiting before the cover arrived.
  *
  * The contract, identical for all four kinds:
  *
@@ -15,70 +18,46 @@
  *        │  PHASE "in"   │    "peak"     │  "out" │      intensity
  *   ──────╰──────────────╯──────────────╯──────
  *
- * The cover reaches full extent exactly at the midpoint — which is the only
- * place the outgoing and incoming content can swap without being seen — and
- * returns to exact identity at both ends. All values are pure functions of `p`,
- * so a seek to an arbitrary frame lands on a well-defined state.
+ * The cover reaches full extent exactly at the midpoint — the only place the
+ * outgoing and incoming content can swap without being seen — and the peak is
+ * held for {@link PEAK_HOLD_MS} and never longer, so a transition reads as a
+ * cut, not as a pause. All values are pure functions of `p`, so a seek to an
+ * arbitrary frame lands on a well-defined state.
+ *
+ * NOTHING here writes the camera rig. A transition's contribution to the camera
+ * (a `whipPan`'s stage translation and the headroom it must buy, a `glitch`'s
+ * jitter) is a pure function evaluated by `camera.ts` inside the single camera
+ * composition, so overlays and camera can no longer fight over one transform.
  */
 import { gsap } from "gsap";
 import type { SceneSpec, Transition, TransitionKind } from "@motionforge/scene-spec";
-import { cameraStateAt, translationForLookAt } from "./camera.js";
 
 // ---------------------------------------------------------------------------
 // The bell curve
 // ---------------------------------------------------------------------------
 
-export type TransitionPhase = "in" | "peak" | "out";
-
 /**
- * Fraction of the window spent covering. `wipe` needs a hair wider hold (its
- * curtain must be 100% opaque *while* the seam swaps); the other three swap on
- * the midpoint itself.
+ * The bell curve is part of the SceneSpec CONTRACT, so it is defined once in
+ * `scene-spec` and re-exported here for the overlay builders and `framesMeta`.
  */
-const PEAK_WINDOW: Record<TransitionKind, { inEnd: number; outStart: number }> = {
-  wipe: { inEnd: 0.48, outStart: 0.52 },
-  whipPan: { inEnd: 0.5, outStart: 0.5 },
-  glitch: { inEnd: 0.5, outStart: 0.5 },
-  morph: { inEnd: 0.5, outStart: 0.5 },
+import {
+  PEAK_HOLD_MS,
+  bellAmountAt,
+  bellPhaseAt,
+  legProgressAt,
+  peakHoldMs,
+  peakWindow,
+  type TransitionPhase,
+} from "@motionforge/scene-spec";
+export {
+  PEAK_HOLD_MS,
+  bellAmountAt,
+  bellPhaseAt,
+  legProgressAt,
+  peakHoldMs,
+  peakWindow,
+  type TransitionPhase,
 };
-
-export function peakWindow(kind: TransitionKind): { inEnd: number; outStart: number } {
-  return PEAK_WINDOW[kind];
-}
-
-/** Which third of the bell a normalized progress falls in. */
-export function bellPhaseAt(kind: TransitionKind, p: number): TransitionPhase {
-  const { inEnd, outStart } = PEAK_WINDOW[kind];
-  const clamped = Math.min(1, Math.max(0, p));
-  if (clamped < inEnd) return "in";
-  if (clamped > outStart) return "out";
-  return "peak";
-}
-
-/**
- * Normalized bell value: `0` at both ends, `1` at the midpoint. `power2.inOut`
- * per leg, so each phase accelerates into the cover and decelerates out of it.
- */
-export function bellAmountAt(kind: TransitionKind, p: number): number {
-  const { inEnd, outStart } = PEAK_WINDOW[kind];
-  const clamped = Math.min(1, Math.max(0, p));
-  const leg = (from: number, to: number): number => {
-    const x = Math.min(1, Math.max(0, (clamped - from) / Math.max(1e-6, to - from)));
-    return x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
-  };
-  if (clamped <= inEnd) return leg(0, inEnd);
-  if (clamped >= outStart) return 1 - leg(outStart, 1);
-  return 1;
-}
-
-/** Normalized position inside the current leg — what the tween eases run on. */
-export function legProgressAt(kind: TransitionKind, p: number): number {
-  const { inEnd, outStart } = PEAK_WINDOW[kind];
-  const clamped = Math.min(1, Math.max(0, p));
-  if (clamped < inEnd) return clamped / inEnd;
-  if (clamped > outStart) return (clamped - outStart) / (1 - outStart);
-  return 1;
-}
 
 // ---------------------------------------------------------------------------
 // Pure per-kind curves (the shapes the tweens below are built from)
@@ -135,39 +114,44 @@ export function wipeClips(direction: WipeDirection): {
  * phase "in" and back out over phase "out", holding a fully-open frame across
  * the midpoint where the seam swaps.
  */
-export function wipeClipAt(direction: WipeDirection, p: number): string {
-  // the clipped inset is the *complement* of the bell: 100% inset (nothing
-  // painted) at p = 0, 0px inset (frame fully covered) at the midpoint
-  const amount = bellAmountAt("wipe", p);
+export function wipeClipAt(direction: WipeDirection, p: number, durationMs = 0): string {
+  const amount = bellAmountAt("wipe", p, durationMs);
   const value = amount >= 1 ? "0px" : amount <= 0 ? "100%" : `${((1 - amount) * 100).toFixed(3)}%`;
-  const hidden = p <= PEAK_WINDOW.wipe.outStart ? trailingEdge(direction) : LEADING_EDGE[direction];
+  const { outStart } = peakWindow("wipe", durationMs);
+  const hidden = p <= outStart ? trailingEdge(direction) : LEADING_EDGE[direction];
   return HIDDEN_EDGE[hidden](value);
 }
 
-export const WHIP_PAN_AMPLITUDE_PCT = 45;
-
 /**
- * `whipPan` stage offset. Rises to `±amplitude` on `power3.in`, wraps to `∓` at
- * the midpoint (at peak motion blur, where the discontinuity is invisible) and
- * decelerates back to exact zero.
+ * How far a `whipPan` throws the stage, in percent of the canvas.
+ *
+ * The stage accelerates out to ±`amplitude` and, at the midpoint, has already
+ * wrapped to the far side — at peak motion speed, which is exactly where a
+ * discontinuity is invisible. It then decelerates home to exact zero.
  */
-export function whipPanOffsetAt(p: number, direction: "left" | "right", amplitude = WHIP_PAN_AMPLITUDE_PCT): number {
+export const whipPanAmplitudePct = 50;
+
+export function whipPanOffsetAt(
+  p: number,
+  direction: "left" | "right",
+  amplitude = whipPanAmplitudePct
+): number {
   const sign = direction === "left" ? -1 : 1;
-  const { inEnd, outStart } = PEAK_WINDOW.whipPan;
+  const { inEnd, outStart } = peakWindow("whipPan", 0);
   const clamped = Math.min(1, Math.max(0, p));
   const power3In = (x: number): number => Math.pow(Math.min(1, Math.max(0, x)), 3);
   // phase in: accelerate into the slam
-  if (clamped <= inEnd) return sign * amplitude * power3In(clamped / inEnd);
+  if (clamped <= inEnd) return sign * amplitude * power3In(inEnd > 0 ? clamped / inEnd : 1);
   // midpoint: the stage has wrapped to the far side at peak motion blur
   if (clamped <= outStart) return sign * amplitude;
-  // phase out: decelerate from ∓amplitude back to exact zero
+  // phase out: decelerate from −amplitude back to exact zero
   const x = (clamped - outStart) / (1 - outStart);
   return -sign * amplitude * (1 - power3In(x));
 }
 
 /** Motion-blur / streak overlay opacity, `0 → 1 → 0` around the midpoint. */
-export function whipPanStreakAt(p: number): number {
-  return bellAmountAt("whipPan", p);
+export function whipPanStreakAt(p: number, durationMs = 0): number {
+  return bellAmountAt("whipPan", p, durationMs);
 }
 
 /**
@@ -175,14 +159,20 @@ export function whipPanStreakAt(p: number): number {
  * same value quantised into discrete steps, because a glitch that glides is not
  * a glitch.
  */
-export function glitchIntensityAt(p: number, intensity: number): number {
-  return bellAmountAt("glitch", p) * intensity;
+export function glitchIntensityAt(p: number, intensity: number, durationMs = 0): number {
+  return bellAmountAt("glitch", p, durationMs) * intensity;
 }
 
 /** Slice-bar displacement for bar `i` at progress `p`, in percent of width. */
-export function glitchSliceAt(p: number, index: number, count: number, intensity: number): number {
+export function glitchSliceAt(
+  p: number,
+  index: number,
+  count: number,
+  intensity: number,
+  durationMs = 0
+): number {
   if (count <= 0) return 0;
-  const bell = bellAmountAt("glitch", p);
+  const bell = bellAmountAt("glitch", p, durationMs);
   const step = Math.floor(bell * 7) % 7;
   // a fixed, reproducible ladder: no Math.random, so a seek always matches
   const ladder = [0, 1, -1, 0.6, -0.4, 0.25, -0.75, 0];
@@ -190,24 +180,37 @@ export function glitchSliceAt(p: number, index: number, count: number, intensity
   return amp * intensity * 18;
 }
 
+/**
+ * The whole-frame jitter a `glitch` adds to the camera, in PIXELS.
+ *
+ * `camera.ts` folds this into the single camera composition (converting it to a
+ * translation percent against the render width) instead of writing `rig.x` from
+ * a competing tween, which is how the rig used to be left jittering after the
+ * window closed.
+ */
+export function glitchRigOffsetPxAt(p: number, intensity: number, durationMs = 0): number {
+  return glitchSliceAt(p, 0, 1, intensity, durationMs) * 0.5;
+}
+
 const MORPH_MAX_SCALE = 1.05;
 export const MORPH_MAX_BLUR_PX = 24;
+export const WHIP_PAN_MAX_BLUR_PX = 16;
 
 /** `morph` portal geometry. Scales out of the centre to envelop the frame at 50%. */
-export function morphScaleAt(p: number): number {
-  return MORPH_MAX_SCALE * bellAmountAt("morph", p);
+export function morphScaleAt(p: number, durationMs = 0): number {
+  return MORPH_MAX_SCALE * bellAmountAt("morph", p, durationMs);
 }
 
 /** `morph` veil opacity — up into the cover, back down out of it. */
-export function morphOpacityAt(p: number): number {
-  return bellAmountAt("morph", p);
+export function morphOpacityAt(p: number, durationMs = 0): number {
+  return bellAmountAt("morph", p, durationMs);
 }
 
 /** Frosted-glass blur that resolves to `0px` by the end of the window. */
-export function morphBlurAt(p: number): number {
-  const { inEnd, outStart } = PEAK_WINDOW.morph;
+export function morphBlurAt(p: number, durationMs = 0): number {
+  const { inEnd, outStart } = peakWindow("morph", durationMs);
   const clamped = Math.min(1, Math.max(0, p));
-  if (clamped <= inEnd) return MORPH_MAX_BLUR_PX * (clamped / inEnd);
+  if (clamped <= inEnd) return inEnd > 0 ? MORPH_MAX_BLUR_PX * (clamped / inEnd) : MORPH_MAX_BLUR_PX;
   if (clamped <= outStart) return MORPH_MAX_BLUR_PX;
   return MORPH_MAX_BLUR_PX * (1 - (clamped - outStart) / (1 - outStart));
 }
@@ -251,9 +254,12 @@ function prepare(tl: gsap.core.Timeline, el: HTMLElement, atSec: number, durSec:
 }
 
 /**
- * Build and schedule every transition in the scene. Returns the overlays so
+ * Build and schedule every transition's OVERLAY. Returns the overlays so
  * `describeFrame` can report which transition (and which phase) is live at a
  * given timestamp.
+ *
+ * The camera side of a transition is NOT built here — `camera.ts` folds it into
+ * the single composed pose. See `stageOffsetAt`.
  */
 export function applyTransitions(
   tl: gsap.core.Timeline,
@@ -265,7 +271,7 @@ export function applyTransitions(
   for (const tr of scene.transitions) {
     const atSec = tr.at / 1000;
     const durSec = tr.durationMs / 1000;
-    const { inEnd, outStart } = PEAK_WINDOW[tr.kind];
+    const { inEnd, outStart } = peakWindow(tr.kind, tr.durationMs);
     const inSec = durSec * inEnd;
     const holdSec = durSec * (outStart - inEnd);
     const outSec = durSec * (1 - outStart);
@@ -273,7 +279,7 @@ export function applyTransitions(
     if (tr.kind === "wipe") {
       buildWipe(rig, tl, tr, atSec, inSec, holdSec, outSec);
     } else if (tr.kind === "whipPan") {
-      buildWhipPan(rig, tl, tr, scene, atSec, inSec, holdSec, outSec);
+      buildWhipPan(rig, tl, tr, atSec, inSec, holdSec, outSec);
     } else if (tr.kind === "glitch") {
       buildGlitch(rig, tl, tr, atSec, inSec, outSec);
     } else {
@@ -289,6 +295,15 @@ export function applyTransitions(
 
 // --- wipe -------------------------------------------------------------------
 
+/**
+ * A CRISP ACCENT BAR, not a flat slab.
+ *
+ * The cover is the scene's own colour with a hard leading edge and a luminous
+ * accent band riding the front. On a dark scene a same-colour slab is literally
+ * a black rectangle — indistinguishable from the dead frame it replaced — so
+ * the bar is built to read as a light sweep crossing the frame, and it always
+ * reaches full coverage at the seam midpoint where the acts swap.
+ */
 function buildWipe(
   rig: HTMLElement,
   tl: gsap.core.Timeline,
@@ -298,26 +313,41 @@ function buildWipe(
   holdSec: number,
   outSec: number
 ): void {
-  const cover = mk([`z-index:900;background:${tr.color}`]);
+  const vertical = tr.direction === "up" || tr.direction === "down";
+  const along = vertical ? "0deg" : "90deg";
+
+  // layered body: accent-tinted core, deepening to the authored colour at the
+  // trailing edge — a bar with an interior, never a uniform block
+  const cover = mk([
+    "z-index:900;",
+    `background:linear-gradient(${along}, ${tr.color} 0%, ${tr.color} 62%, ` +
+      `color-mix(in srgb, ${tr.color} 72%, #7dd3fc) 100%);`,
+    "box-shadow:inset 0 0 0 1px rgba(255,255,255,0.14);",
+  ]);
+  rig.appendChild(cover);
   if (tr.featherPx > 0) {
     // feather is authored in design px; the mask gradient works in percentages,
     // so scale it against the canvas the scene will be rendered at
     const softness = Math.min(50, (tr.featherPx / 1080) * 50);
-    const gradient = tr.direction === "left" || tr.direction === "right"
-      ? `linear-gradient(90deg, #000 ${(50 - softness / 2).toFixed(1)}%, transparent ${(50 + softness / 2).toFixed(1)}%)`
-      : `linear-gradient(0deg, #000 ${(50 - softness / 2).toFixed(1)}%, transparent ${(50 + softness / 2).toFixed(1)}%)`;
+    const gradient =
+      vertical === true
+        ? `linear-gradient(0deg, #000 ${(50 - softness / 2).toFixed(1)}%, transparent ${(50 + softness / 2).toFixed(1)}%)`
+        : `linear-gradient(90deg, #000 ${(50 - softness / 2).toFixed(1)}%, transparent ${(50 + softness / 2).toFixed(1)}%)`;
     cover.style.maskImage = gradient;
     cover.style.webkitMaskImage = gradient;
   }
-  // glowing leading edge, so the wipe reads as a light sweep rather than a slab
-  const edge = mk(["z-index:901;background:linear-gradient(90deg, transparent, rgba(125,211,252,0.55))"]);
-  edge.style.width = "18%";
+
+  // the leading edge: a narrow luminous accent that rides the curtain front
+  const edge = mk([
+    "z-index:901;",
+    vertical
+      ? "left:0;right:0;top:0;height:16%;background:linear-gradient(0deg, rgba(255,255,255,0.62), rgba(255,255,255,0));"
+      : "top:0;bottom:0;left:0;width:16%;background:linear-gradient(90deg, rgba(255,255,255,0.62), rgba(255,255,255,0));",
+  ]);
   cover.appendChild(edge);
-  rig.appendChild(cover);
   prepare(tl, cover, at, inSec + holdSec + outSec);
 
   const { entering, full, leaving } = wipeClips(tr.direction);
-  const vertical = tr.direction === "up" || tr.direction === "down";
   const growing = tr.direction === "left" || tr.direction === "up";
 
   // phase in: cover grows from the leading edge to full frame
@@ -327,83 +357,86 @@ function buildWipe(
   // phase out: cover retracts past the same edge, back to exact identity
   tl.to(cover, { clipPath: leaving, duration: outSec, ease: "expo.out" }, at + inSec + holdSec);
   tl.set(cover, { clipPath: full }, at + inSec + holdSec + outSec);
-  // the edge glow tracks the curtain front and dies with it
-  if (vertical) {
-    edge.style.cssText = [edge.style.cssText, "width:100%;height:18%"].join(";");
-    tl.fromTo(edge, { yPercent: growing ? 400 : -400, autoAlpha: 0.9 }, { yPercent: 0, autoAlpha: 0.4, duration: inSec, ease: "expo.in", immediateRender: false }, at);
-  } else {
-    tl.fromTo(edge, { xPercent: growing ? 400 : -400, autoAlpha: 0.9 }, { xPercent: 0, autoAlpha: 0.4, duration: inSec, ease: "expo.in", immediateRender: false }, at);
-  }
+  // the accent front tracks the curtain and dies with it
+  tl.fromTo(
+    edge,
+    vertical ? { yPercent: growing ? 700 : -700, autoAlpha: 0.9 } : { xPercent: growing ? 700 : -700, autoAlpha: 0.9 },
+    vertical ? { yPercent: 0, autoAlpha: 0.55, duration: inSec, ease: "expo.in", immediateRender: false }
+            : { xPercent: 0, autoAlpha: 0.55, duration: inSec, ease: "expo.in", immediateRender: false },
+    at
+  );
   tl.to(edge, { autoAlpha: 0, duration: outSec, ease: "expo.out" }, at + inSec + holdSec);
 }
 
 // --- whipPan ----------------------------------------------------------------
 
+/**
+ * A CINEMATIC WHIP: luminous horizontal streaks, not vertical bars.
+ *
+ * The previous overlay was `repeating-linear-gradient(90deg, …)` — evenly
+ * spaced vertical bars over the whole frame, which read as a rendering fault
+ * rather than as motion. This is a soft directional smear (two accent streaks
+ * plus a real horizontal backdrop blur) that is invisible at both ends of the
+ * window and maximal exactly at the midpoint, where the stage has wrapped and
+ * the acts swap.
+ *
+ * The stage translation itself lives in `camera.ts` (`stageOffsetAt`) so it
+ * composes with the keyframes instead of fighting them.
+ */
 function buildWhipPan(
   rig: HTMLElement,
   tl: gsap.core.Timeline,
   tr: Extract<Transition, { kind: "whipPan" }>,
-  scene: SceneSpec,
   at: number,
   inSec: number,
   holdSec: number,
   outSec: number
 ): void {
+  const dir = tr.direction === "left" ? -1 : 1;
+
   const band = mk([
-    "z-index:900;opacity:0;mix-blend-mode:screen;",
-    "background:repeating-linear-gradient(90deg, rgba(255,255,255,0.16) 0 40px, transparent 40px 120px);",
-    "backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);",
+    "z-index:900;opacity:0;",
+    // a horizontal smear: bright at the leading edge, nothing at the trailing one
+    `background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(125,211,252,0.20) ${dir < 0 ? 22 : 70}%, ` +
+      `rgba(255,255,255,0.44) 50%, rgba(167,139,250,0.20) ${dir < 0 ? 70 : 22}%, rgba(255,255,255,0) 100%);`,
+    `backdrop-filter:blur(${WHIP_PAN_MAX_BLUR_PX}px);-webkit-backdrop-filter:blur(${WHIP_PAN_MAX_BLUR_PX}px);`,
   ]);
   rig.appendChild(band);
+
+  // two thin accent streaks riding the direction of travel — the "luminous
+  // accent" that sells the pan, spaced so they never read as a repeating band
+  for (const atPct of [34, 62]) {
+    const streak = mk([
+      "position:absolute;top:0;bottom:0;",
+      `left:${atPct - 3}%;width:6%;`,
+      "background:linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.5), rgba(255,255,255,0));",
+      "filter:blur(2px);",
+    ]);
+    band.appendChild(streak);
+    tl.fromTo(
+      streak,
+      { xPercent: dir * 120, autoAlpha: 0.2 },
+      { xPercent: dir * -120, autoAlpha: 1, duration: Math.max(0.01, inSec + holdSec), ease: "power2.in", immediateRender: false },
+      at
+    );
+    tl.to(streak, { autoAlpha: 0, duration: Math.max(0.01, outSec), ease: "power2.out" }, at + inSec + holdSec);
+  }
+
   prepare(tl, band, at, inSec + holdSec + outSec);
 
-  const amp = WHIP_PAN_AMPLITUDE_PCT;
-  const sign = tr.direction === "left" ? -1 : 1;
-  const toAmp = sign * amp;
-
-  // The pose the whip composes with: the camera's analytic state at the moment
-  // the transition starts, resolved the same way `focusTarget` resolves its own
-  // base.
-  //
-  // It is computed rather than read. A `+=` tween resolves its start by reading
-  // the element at FIRST RENDER, and which value that read returns depends on
-  // the order GSAP happens to render children in for the seek that first
-  // reaches it — so a seek straight past the whole window captured the wrong
-  // base and stranded the rig at double amplitude. Explicit from/to values have
-  // no such ordering.
-  const base = cameraStateAt(scene.camera.keyframes, Math.round(at * 1000));
-  const baseX = translationForLookAt(base.scale, base.xPct);
-  const baseScale = base.scale;
-
-  // A whip pan slides the stage out of frame. For the frame to stay covered the
-  // rig must ALSO be zoomed far enough that the pan stays inside the headroom
-  // the zoom creates: |dX| <= w*(S - 1)/2  =>  S >= 1 + 2*amp/100.
-  const peakZoom = ((2 * Math.abs(amp)) / 100) * 1.02;
-  const peakScale = baseScale + peakZoom;
-  const peakX = baseX + toAmp;
-  const restX = baseX - toAmp;
-
-  // phase in: slam the stage to +amp, streaks ramp in behind it
-  tl.fromTo(rig, { xPercent: baseX, scale: baseScale }, {
-    xPercent: peakX, scale: peakScale,
-    duration: inSec, ease: "power3.in", immediateRender: false,
-  }, at);
-  tl.fromTo(band, { opacity: 1 }, { opacity: 1, duration: Math.max(0.01, inSec), ease: "none", immediateRender: false }, at);
-  // midpoint: wrap through to -amp while the blur is at full strength
-  tl.fromTo(rig, { xPercent: peakX, scale: peakScale }, {
-    xPercent: restX, scale: peakScale,
-    duration: Math.max(0.001, holdSec), ease: "none", immediateRender: false,
-  }, at + inSec);
-  // phase out: decelerate home and clear every inline transform
-  tl.fromTo(rig, { xPercent: restX, scale: peakScale }, {
-    xPercent: baseX, scale: baseScale,
-    duration: outSec, ease: "power3.out", immediateRender: false,
-  }, at + inSec + holdSec);
-  tl.fromTo(band, { opacity: 1 }, { opacity: 0, duration: Math.max(0.01, outSec), ease: "none", immediateRender: false }, at + inSec + holdSec);
-  // the terminal set is the residue guarantee: whatever the window computed,
-  // the rig is handed back to the camera's own pose
-  tl.set(rig, { xPercent: baseX, scale: baseScale }, at + inSec + holdSec + outSec);
-  tl.set(band, { opacity: 0, xPercent: 0 }, at + inSec + holdSec + outSec);
+  // the smear itself: 0 at both ends, full at the seam midpoint
+  tl.fromTo(
+    band,
+    { opacity: 1, backdropFilter: "blur(0px)", WebkitBackdropFilter: "blur(0px)" },
+    { opacity: 1, duration: Math.max(0.01, inSec), ease: "power2.in", immediateRender: false },
+    at
+  );  tl.fromTo(
+    band,
+    { opacity: 1, backdropFilter: `blur(${WHIP_PAN_MAX_BLUR_PX}px)`, WebkitBackdropFilter: `blur(${WHIP_PAN_MAX_BLUR_PX}px)` },
+    { opacity: 0, backdropFilter: "blur(0px)", WebkitBackdropFilter: "blur(0px)", duration: Math.max(0.01, outSec), ease: "power2.out", immediateRender: false },
+    at + inSec + holdSec
+  );
+  tl.set(band, { opacity: 0, backdropFilter: "blur(0px)", WebkitBackdropFilter: "blur(0px)" }, at + inSec + holdSec + outSec);
 }
 
 // --- glitch -----------------------------------------------------------------
@@ -417,6 +450,7 @@ function buildGlitch(
   outSec: number
 ): void {
   const peak = Math.max(0.05, tr.intensity);
+  const durMs = tr.durationMs;
   const fringe = mk([
     "z-index:900;opacity:0;mix-blend-mode:screen;",
     "background:repeating-linear-gradient(0deg, rgba(255,0,60,0.18) 0 3px, transparent 3px 7px, rgba(0,255,255,0.16) 7px 9px, transparent 9px 14px);",
@@ -443,28 +477,23 @@ function buildGlitch(
   const steps = 8;
   for (let i = 0; i <= steps; i++) {
     const pIn = i / steps;
-    const intensity = glitchIntensityAt(pIn, peak);
-    tl.set(fringe, { opacity: intensity }, at + inSec * pIn);
+    tl.set(fringe, { opacity: glitchIntensityAt(pIn, peak, durMs) }, at + inSec * pIn);
     tl.set(flash, { opacity: i === steps ? 0.55 : 0 }, at + inSec * pIn);
-    tl.set(rig, { x: Math.round(glitchSliceAt(pIn, 0, slices, peak)) }, at + inSec * pIn);
   }
   for (let i = 0; i <= steps; i++) {
     const pOut = 0.5 + (i / steps) * 0.5;
-    const intensity = glitchIntensityAt(pOut, peak);
-    tl.set(fringe, { opacity: intensity }, at + inSec + outSec * (i / steps));
+    tl.set(fringe, { opacity: glitchIntensityAt(pOut, peak, durMs) }, at + inSec + outSec * (i / steps));
     tl.set(flash, { opacity: 0 }, at + inSec + outSec * (i / steps));
-    tl.set(rig, { x: Math.round(glitchSliceAt(pOut, 0, slices, peak)) }, at + inSec + outSec * (i / steps));
   }
   sliceEls.forEach((bar, i) => {
     for (let step = 0; step <= steps; step++) {
       const pIn = step / steps;
-      tl.set(bar, { xPercent: glitchSliceAt(pIn, i, slices, peak) }, at + inSec * pIn);
+      tl.set(bar, { xPercent: glitchSliceAt(pIn, i, slices, peak, durMs) }, at + inSec * pIn);
       const pOut = 0.5 + (step / steps) * 0.5;
-      tl.set(bar, { xPercent: glitchSliceAt(pOut, i, slices, peak) }, at + inSec + outSec * (step / steps));
+      tl.set(bar, { xPercent: glitchSliceAt(pOut, i, slices, peak, durMs) }, at + inSec + outSec * (step / steps));
     }
   });
-  // nothing may survive the window: rig jitter, slice offsets, fringe opacity
-  tl.set(rig, { x: 0 }, at + inSec + outSec);
+  // nothing may survive the window
   tl.set(fringe, { opacity: 0 }, at + inSec + outSec);
   sliceEls.forEach((bar) => tl.set(bar, { xPercent: 0, opacity: 0 }, at + inSec + outSec));
 }
@@ -479,9 +508,14 @@ function buildMorph(
   inSec: number,
   outSec: number
 ): void {
+  // Opaque CORE. The portal used to top out at 0.72–0.95 alpha, so the frame
+  // it was supposed to hide stayed faintly visible through it — the acts were
+  // swapped in plain sight at the seam. The core is now fully opaque and only
+  // the outer rim feathers.
   const portal = mk([
-    "z-index:900;opacity:0;background:radial-gradient(circle at 50% 50%, rgba(8,12,24,0.72) 0%, rgba(8,12,24,0.95) 100%);",
-    `backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);`,
+    "z-index:900;opacity:0;",
+    "background:radial-gradient(circle at 50% 50%, rgba(8,12,24,1) 0%, rgba(8,12,24,1) 58%, rgba(8,12,24,0.94) 100%);",
+    "backdrop-filter:blur(0px);-webkit-backdrop-filter:blur(0px);",
   ]);
   rig.appendChild(portal);
   prepare(tl, portal, at, inSec + outSec);
@@ -526,7 +560,7 @@ export function activeTransitionsAt(
     out.push({
       kind: overlay.kind,
       progressPct: Math.round(p * 1000) / 10,
-      phase: bellPhaseAt(overlay.kind, p),
+      phase: bellPhaseAt(overlay.kind, p, overlay.durationMs),
     });
   }
   return out.sort((a, b) => a.progressPct - b.progressPct);

@@ -77,6 +77,11 @@ export interface PresetTarget {
   sweepHost: HTMLElement;
   /** optional split units (word/char spans) that receive staggered versions */
   units?: HTMLElement[];
+  /**
+   * line containers for text layers. Mask presets clip THESE, never the units:
+   * a per-unit clip slices every word of a sentence open simultaneously.
+   */
+  lines?: HTMLElement[];
   unitStaggerMs: number;
   /** absolute ms window this preset slot occupies in the scene */
   startMs: number;
@@ -108,14 +113,29 @@ interface Vars {
 const NO_ANIMATED_LAYOUT = ["width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight"] as const;
 
 /**
- * Direction-aware mask reveal. An RTL line must be wiped from its own leading
- * edge, which is the right-hand one — sweeping left-to-right would uncover the
- * end of the Arabic sentence first.
+ * Direction-aware mask reveal, applied to ONE LINE at a time.
+ *
+ * THE DEFECT THIS FIXES: this clip used to be applied per split unit. A
+ * five-word Arabic outro then had five independent horizontal clips opening at
+ * once, each cutting a word in half at its own boundary, so most of the wipe
+ * showed `"مو   ن"` and `"جا   لإ"` — fragments, not a sentence. Clipping the
+ * LINE reveals the phrase as a phrase and no word is ever sliced.
+ *
+ * The insets open along the reading direction: an RTL line is uncovered from
+ * its right edge (leading inset 100% → 0%), an LTR line from its left.
+ * Vertical insets are negative so Arabic ascenders, descenders and diacritics
+ * are never nibbled by the mask.
  */
+export const MASK_LINE_INSET = "-15% 0% -20%";
+
 function maskRevealClip(direction: "ltr" | "rtl"): { from: gsap.TweenVars; to: gsap.TweenVars } {
+  // `inset(top right bottom left)`: the opening inset is the one that closes.
+  // RTL reads right-to-left, so its opening edge is the RIGHT one; LTR's is the
+  // LEFT one. Both end at the identical unclipped box.
+  const open = `inset(${MASK_LINE_INSET} 0%)`;
   return direction === "rtl"
-    ? { from: { clipPath: "inset(0% 0% 0% 100%)" }, to: { clipPath: "inset(0% 0% 0% 0%)" } }
-    : { from: { clipPath: "inset(0% 100% 0% 0%)" }, to: { clipPath: "inset(0% 0% 0% 0%)" } };
+    ? { from: { clipPath: `inset(${MASK_LINE_INSET} 100%)` }, to: { clipPath: open } }
+    : { from: { clipPath: `inset(-15% 100% -20% 0%)` }, to: { clipPath: open } };
 }
 
 const ENTRANCE_VARS: Record<EntrancePreset, Vars> = {
@@ -173,44 +193,71 @@ function refDurationMs(ref: PresetRef, def: PresetDef): number {
 export function applyEntrance(tl: gsap.core.Timeline, ref: PresetRef, target: PresetTarget): void {
   const def = PRESET_DEFAULTS[ref.name as EntrancePreset] ?? null;
   if (!def) throw new Error(`"${ref.name}" is not an entrance preset`);
-  const vars = ENTRANCE_VARS[ref.name as EntrancePreset];
   const dur = refDurationMs(ref, def) / 1000;
   const at = target.startMs / 1000 + (ref.delayMs ?? 0) / 1000;
   const ease = refEase(ref, def);
-  const strength = ref.strength ?? 1;
   const endAt = at + dur;
 
-  // `maskRevealWipe` is the one preset whose tween vars depend on the layer, so
-  // the rest share a single scaled pair.
-  const scaled =
-    ref.name === "maskRevealWipe"
-      ? null
-      : { from: withStrength({ ...vars.from }, strength), to: withStrength({ ...vars.to }, strength) };
-  // fixed box: only the clip changes, so nothing can reflow
-  const maskVars: Vars = maskRevealClip(target.direction ?? "ltr");
+  if (ref.name === "maskRevealWipe") {
+    // ONE continuous line-level wipe — never a per-word clip
+    applyLineMask(tl, maskRevealClip(target.direction ?? "ltr"), target, at, dur, ease, "reveal");
+    assertNoLayoutTweening(ref.name, { clipPath: "" });
+    return;
+  }
+
+  const vars = ENTRANCE_VARS[ref.name as EntrancePreset];
+  const strength = ref.strength ?? 1;
+  const scaledFrom = withStrength({ ...vars.from }, strength);
+  const scaledTo = withStrength({ ...vars.to }, strength);
 
   if (target.units && target.units.length > 1) {
     // staggered units carry their own opacity — the container only gates visibility
     tl.set(target.el, { autoAlpha: 1 }, at);
     tl.fromTo(
       target.units,
-      scaled?.from ?? maskVars.from,
-      { ...(scaled?.to ?? maskVars.to), duration: dur, ease, stagger: target.unitStaggerMs / 1000 },
+      scaledFrom,
+      { ...scaledTo, duration: dur, ease, stagger: target.unitStaggerMs / 1000 },
       at
     );
   } else {
-    tl.fromTo(
-      target.el,
-      scaled?.from ?? maskVars.from,
-      { ...(scaled?.to ?? maskVars.to), duration: dur, ease },
-      at
-    );
+    tl.fromTo(target.el, scaledFrom, { ...scaledTo, duration: dur, ease }, at);
   }
   if (vars.clearOnEnd) {
     tl.set(target.el, vars.clearOnEnd, endAt);
   }
-  const guard: gsap.TweenVars = scaled ? { ...scaled.from, ...scaled.to } : {};
-  assertNoLayoutTweening(ref.name, guard);
+  assertNoLayoutTweening(ref.name, { ...scaledFrom, ...scaledTo });
+}
+
+/**
+ * Drive one clip-path across a layer's LINE containers.
+ *
+ * Every line is tweened with the SAME start and end pose and no stagger, so the
+ * wipe is one continuous directional reveal of the text block. Words are never
+ * clipped independently, which is the only way a multi-word Arabic sentence can
+ * stay readable throughout its own entrance.
+ */
+function applyLineMask(
+  tl: gsap.core.Timeline,
+  clip: { from: gsap.TweenVars; to: gsap.TweenVars },
+  target: PresetTarget,
+  at: number,
+  dur: number,
+  ease: gsap.TweenVars["ease"],
+  mode: "reveal" | "collapse"
+): void {
+  // the line boxes are the mask surface; fall back to the slot element for a
+  // non-text layer (a card has no lines and no words to slice)
+  const surfaces = target.lines && target.lines.length > 0 ? target.lines : [target.el];
+  // `clip.from` is the fully-masked pose and `clip.to` the unclipped one; which
+  // end a wipe STARTS from is what reveal and collapse mean
+  const from = mode === "reveal" ? clip.from : clip.to;
+  const to = mode === "reveal" ? clip.to : clip.from;
+  tl.set(target.el, { autoAlpha: 1 }, at);
+  for (const el of surfaces) {
+    tl.fromTo(el, from, { ...to, duration: dur, ease, immediateRender: false }, at);
+  }
+  // hard identity past the window, so a later seek never resurrects the mask
+  tl.set(surfaces, { ...to }, at + dur);
 }
 
 export function applyExit(tl: gsap.core.Timeline, ref: PresetRef, target: PresetTarget): void {
@@ -226,20 +273,12 @@ export function applyExit(tl: gsap.core.Timeline, ref: PresetRef, target: Preset
     // An explicit `fromTo` is required: GSAP would otherwise interpolate the
     // clip from whatever the browser reports (identity), which produces a
     // visible "un-collapse" flash at the very start of the exit.
-    tl.fromTo(
-      target.el,
-      { clipPath: "inset(0% 0% 0% 0%)" },
-      {
-        clipPath: direction === "rtl" ? "inset(0% 0% 0% 50%)" : "inset(0% 50% 0% 50%)",
-        autoAlpha: 1,
-        duration: dur,
-        ease: refEase(ref, def),
-      },
-      at
-    );
-    // the box is only ever clipped, never resized: no reflow, no sliced words
-    tl.set(target.el, { clipPath: "inset(0% 100% 0% 100%)" }, at + dur);
-    assertNoLayoutTweening(ref.name, { clipPath: "inset(0% 50% 0% 50%)" });
+    //
+    // The collapse runs on the LINE surfaces — the same ones the reveal opened —
+    // so the closing wipe retreats along the reading direction of the whole
+    // sentence rather than closing each word's own box at a different time.
+    // Clipping a unit here would slice every word open again on the way out.
+    applyLineMask(tl, maskRevealClip(direction), target, at, dur, refEase(ref, def), "collapse");
     return;
   }
 
@@ -301,18 +340,13 @@ export function applyEmphasis(tl: gsap.core.Timeline, ref: PresetRef, target: Pr
       break;
     }
     case "cameraShakeImpact": {
-      // sin(p·π·n)·(1−p)² — snaps in, settles to x/y/rotation/scale 0 by p = 1
-      applyDecayEnvelope(tl, target.rig, {
-        at,
-        windowSec: windowSec,
-        amplitude: {
-          x: 16 * strength,
-          y: 12 * strength,
-          rotation: 1.4 * strength,
-          scale: 0.02 * strength,
-        },
-        samples: SHAKE_SAMPLES,
-      });
+      // The camera rig has exactly ONE writer — the per-frame composition in
+      // `camera.ts` — so this emphasis must not tween the rig behind its back.
+      // `scene-builder.ts` resolves the emphasis window at build time and hands
+      // it to the composition as a `RigShake`, which rings the same
+      // sin·(1−p)² decay around whatever pose the camera is actually in.
+      void strength;
+      void windowSec;
       break;
     }
   }
@@ -416,25 +450,4 @@ function assertNoLayoutTweening(preset: string, vars: gsap.TweenVars): void {
       );
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// camera move envelopes (shared with camera.ts)
-// ---------------------------------------------------------------------------
-
-/**
- * Temporary camera moves get the same In → Hold → Out treatment as every other
- * bounded effect, so a `focusTarget` no longer leaves the camera stranded at
- * 1.45× zoom once its window closes.
- */
-export function applyCameraMoveEnvelope(
-  tl: gsap.core.Timeline,
-  rig: HTMLElement,
-  opts: { delta: gsap.TweenVars; atSec: number; durationSec: number }
-): void {
-  applyCameraEnvelope(tl, rig, {
-    delta: opts.delta,
-    plan: planCameraEnvelope(opts.durationSec),
-    at: opts.atSec,
-  });
 }

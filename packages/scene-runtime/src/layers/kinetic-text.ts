@@ -40,10 +40,22 @@ export function resolveGranularity(
   return animateBy;
 }
 
-export function renderKineticText(
-  layer: KineticTextLayer,
-  ctx: LayerContext
-): { content: HTMLElement; units?: HTMLElement[] } {
+export interface KineticTextBuild {
+  content: HTMLElement;
+  units?: HTMLElement[];
+  /**
+   * The line containers, one per authored line.
+   *
+   * `maskRevealWipe` / `collapseMask` drive these instead of the per-word
+   * units: a per-word horizontal clip slices an Arabic sentence open along
+   * every word boundary at once, so for most of the wipe the headline reads as
+   * scattered fragments (`"مو   ن"`). One continuous line-level clip reveals the
+   * phrase as a phrase, in the reading direction, without ever cutting a word.
+   */
+  lines?: HTMLElement[];
+}
+
+export function renderKineticText(layer: KineticTextLayer, ctx: LayerContext): KineticTextBuild {
   const family = fontFamilyFor(ctx.fonts, layer.role, layer.googleFamily);
 
   const block = document.createElement("div");
@@ -91,17 +103,31 @@ export function renderKineticText(
 
   const lines = layer.text.split("\n");
   const units: HTMLElement[] = [];
+  const lineEls: HTMLElement[] = [];
 
   for (const line of lines) {
     const lineEl = document.createElement("div");
+    lineEl.className = "mf-line";
+    // The line is the pill's positioning context AND its stacking context, so
+    // the highlight resolves against the line box and never escapes into the
+    // (3D-preserving) wrapper chain.
+    lineEl.style.cssText = ["position:relative", "isolation:isolate"].join(";");
+
+    // THE HIGHLIGHT IS ONE PILL PER LINE, NOT ONE PER WORD.
+    //
+    // Per-word pills put a separate bordered box around each word of a
+    // sentence; four boxes of differing heights with gaps between them read as
+    // four separate compartments rather than as one highlighted phrase. A
+    // single pill spanning the whole line is what makes an Arabic sentence look
+    // like a sentence.
+    if (layer.highlight) lineEl.appendChild(buildHighlight(layer.highlight));
+
     if (granularity === "line") {
-      lineEl.className = "mf-unit";
-      // the same isolation as a word unit, so a line that carries a highlight
-      // resolves its z-index inside its own stacking context
-      lineEl.style.cssText = ["position:relative", "isolation:isolate", TEXT_UNIT_GUARD_CSS].join(";");
-      applyTextPaint(lineEl, layer.fill, layer.stroke);
       // a non-breaking space keeps empty lines at full line height
       lineEl.textContent = line || "\u00a0";
+      lineEl.classList.add("mf-unit");
+      lineEl.style.cssText = [lineEl.style.cssText, TEXT_UNIT_GUARD_CSS].join(";");
+      applyTextPaint(lineEl, layer.fill, layer.stroke);
       units.push(lineEl);
     } else {
       // whitespace tokens stay as plain text nodes so words keep natural spacing
@@ -123,32 +149,9 @@ export function renderKineticText(
         const span = document.createElement("span");
         span.className = "mf-unit";
         // `position:relative` + `isolation:isolate` makes the unit its own
-        // stacking context, so the highlight pill's z-index is resolved INSIDE
-        // the unit instead of escaping into the (3D-preserving) wrapper chain.
-        span.style.cssText = ["position:relative", "isolation:isolate", TEXT_UNIT_GUARD_CSS].join(";");
-        // The highlight pill lives INSIDE the animated `.mf-unit`, not beside
-        // it. As a sibling it was painted by the *container* while the glyphs
-        // were still staggered in, so the box showed up before the word did.
-        //
-        // It must ALSO be behind the glyphs: an absolutely positioned sibling
-        // paints ABOVE the element's own inline content, so the pill used to
-        // cover the Arabic letterforms with a solid rectangle. The pill
-        // therefore gets `z-index: 1` and the glyphs `z-index: 2`, both
-        // resolved inside the unit's isolated stacking context.
-        if (granularity === "word" && layer.highlight) {
-          const hl = document.createElement("span");
-          hl.className = "mf-highlight";
-          hl.dataset.mfHighlight = "true";
-          hl.style.cssText = [
-            "position:absolute",
-            `inset:${-layer.highlight.paddingPx}px`,
-            `border-radius:${layer.highlight.radiusPx}px`,
-            `background:${layer.highlight.color}`,
-            "z-index:1",
-            "pointer-events:none",
-          ].join(";");
-          span.appendChild(hl);
-        }
+        // stacking context, so it stacks ABOVE the line-level pill (z-index 2)
+        // instead of being painted over by it.
+        span.style.cssText = ["position:relative", "isolation:isolate", "z-index:2", TEXT_UNIT_GUARD_CSS].join(";");
         // The glyphs live in their own span so they can sit ABOVE the pill.
         const glyphs = document.createElement("span");
         glyphs.className = "mf-unit-glyphs";
@@ -162,10 +165,45 @@ export function renderKineticText(
       }
     }
     block.appendChild(lineEl);
+    lineEls.push(lineEl);
   }
 
   ctx.content.appendChild(block);
-  return { content: block, units: units.length > 1 ? units : undefined };
+  return {
+    content: block,
+    units: units.length > 1 ? units : undefined,
+    lines: lineEls,
+  };
+}
+
+/**
+ * The soft, borderless highlight pill.
+ *
+ * A `1px solid` edge is what made adjacent word boxes read as hard-edged
+ * compartments; the fix is not a thinner border but no border at all, plus a
+ * generous radius relative to the type size so the fill reads as one luminous
+ * shape behind the phrase.
+ */
+function buildHighlight(highlight: NonNullable<KineticTextLayer["highlight"]>): HTMLElement {
+  const pill = document.createElement("span");
+  pill.className = "mf-highlight";
+  pill.dataset.mfHighlight = "true";
+  pill.style.cssText = [
+    "position:absolute",
+    // symmetric bleed: the fill sits behind the glyphs, never on them
+    `top:${-highlight.paddingPx}px`,
+    `bottom:${-highlight.paddingPx}px`,
+    `left:${-highlight.paddingPx}px`,
+    `right:${-highlight.paddingPx}px`,
+    // longhand, because the `border` shorthand is not reliably parsed
+    "border-style:none",
+    "border-width:0px",
+    "border-radius:0.28em",
+    `background:${highlight.color}`,
+    "z-index:1",
+    "pointer-events:none",
+  ].join(";");
+  return pill;
 }
 
 /** Solid color → color; gradient → background-clip:text gradient fill. */

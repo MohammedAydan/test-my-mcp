@@ -41,20 +41,46 @@ export interface MotionSlotPlan {
   entrance: MotionWindow | null;
   emphasis: MotionWindow | null;
   exit: MotionWindow | null;
+  /**
+   * True when a transition seam is doing the hiding instead of this layer.
+   *
+   * A layer held past its own end to cover a cut must NOT also play its exit:
+   * the exit finishes it 220 ms before the transition cover arrives, which is
+   * precisely the "mass exit, then dead frame" defect the seam bridge exists to
+   * remove. So the slot is suppressed wholesale — the content stays put and
+   * fully opaque, and the transition's own cover is what removes it.
+   */
+  exitSuppressedBySeam: boolean;
 }
 
 function presetDurationMs(ref: { name: keyof typeof PRESET_DEFAULTS; durationMs?: number }): number {
   return ref.durationMs ?? PRESET_DEFAULTS[ref.name].durationMs;
 }
 
+/** The window a layer is planned over, honouring any seam bridge. */
+export interface PlannedWindow {
+  startMs: number;
+  endMs: number;
+  /** the exit slot is owned by a transition seam, not by this layer */
+  suppressExit?: boolean;
+}
+
 /**
  * Split a layer's [at, end) window into three windows that can never overlap.
  * Emphasis only exists when the gap between entrance and exit is worth
  * animating (the same >200 ms rule the timeline builder used before).
+ *
+ * `window` overrides the authored `[at, at+duration)` when a transition seam
+ * has bridged it — see `planSeamBridges` in `@motionforge/scene-spec`.
  */
-export function planMotionSlots(layer: SceneLayer, sceneDurationMs: number): MotionSlotPlan {
-  const startMs = layer.at;
-  const endMs = layer.duration !== undefined ? layer.at + layer.duration : sceneDurationMs;
+export function planMotionSlots(
+  layer: SceneLayer,
+  sceneDurationMs: number,
+  window?: PlannedWindow
+): MotionSlotPlan {
+  const startMs = window?.startMs ?? layer.at;
+  const endMs = window?.endMs ?? (layer.duration !== undefined ? layer.at + layer.duration : sceneDurationMs);
+  const suppressExit = window?.suppressExit === true;
 
   let cursor = startMs;
 
@@ -67,7 +93,7 @@ export function planMotionSlots(layer: SceneLayer, sceneDurationMs: number): Mot
       })()
     : null;
 
-  const exit: MotionWindow | null = layer.exit
+  const exit: MotionWindow | null = layer.exit && !suppressExit
     ? (() => {
         const delay = layer.exit?.delayMs ?? 0;
         const window: MotionWindow = {
@@ -91,6 +117,7 @@ export function planMotionSlots(layer: SceneLayer, sceneDurationMs: number): Mot
     entrance,
     emphasis,
     exit,
+    exitSuppressedBySeam: suppressExit,
   };
 }
 

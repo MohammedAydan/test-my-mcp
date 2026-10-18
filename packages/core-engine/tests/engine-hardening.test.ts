@@ -190,10 +190,13 @@ describe("audio pan (field report C1 / F1)", () => {
 
 describe("camera diagnostics (report 1 P0-2 / I-3)", () => {
   it("computes the safe pan range from the zoom", () => {
-    expect(safePanRange(1)).toEqual({ min: 0, max: 100 });
-    expect(safePanRange(0.8)).toEqual({ min: 0, max: 100 });
+    expect(safePanRange(1)).toEqual({ min: 0, max: 100, half: 0 });
+    expect(safePanRange(0.8)).toEqual({ min: 0, max: 100, half: 0 });
     expect(safePanRange(2).min).toBeCloseTo(25, 6);
     expect(safePanRange(2).max).toBeCloseTo(75, 6);
+    // the half-span is the runtime's `safeLookAtRange().half`, which the
+    // `focusTarget` pan budget is expressed against
+    expect(safePanRange(2).half).toBeCloseTo(25, 6);
   });
 
   it("measures how much of the frame would be black void", () => {

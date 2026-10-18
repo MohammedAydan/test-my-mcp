@@ -18,17 +18,19 @@ import {
 } from "../src/envelope.js";
 import {
   applyCamera,
-  applyViewportClamp,
   CAMERA_BASELINE,
   cameraExceedsCanvas,
   cameraStateAt,
   clampCameraTranslation,
+  composeCameraAt,
+  emptyCameraContext,
   FOCUS_MAX_SCALE,
   lookAtPct,
   requiredScaleForPan,
   resolveCameraKeyframes,
   safeLookAtRange,
   translationForLookAt,
+  type CameraContext,
   type LayerAnchor,
 } from "../src/camera.js";
 import {
@@ -81,8 +83,10 @@ function rigAndMap(): { rig: HTMLElement; focus: Map<string, LayerAnchor> } {
 function buildCamera(scene: SceneSpec, rig: HTMLElement, focus: Map<string, LayerAnchor>): gsap.core.Timeline {
   const tl = gsap.timeline({ paused: true });
   tl.to({}, { duration: scene.durationMs / 1000 }, 0);
-  applyCamera(tl, scene, rig, focus);
-  applyViewportClamp(tl, rig, scene);
+  // `applyCamera` installs the single per-frame composition: keyframes, moves,
+  // drift and transitions in one pass, then the viewport clamp. There is no
+  // separate clamp hook any more — one writer, one owner.
+  applyCamera(tl, scene, rig, { ...emptyCameraContext(), layerAnchors: focus });
   return tl;
 }
 
@@ -191,7 +195,7 @@ describe("emphasis presets return to exact identity", () => {
    * "returned to identity" state is `opacity: 0`. The other three own a
    * transform and must land back on exact rest values.
    */
-  const TRANSFORM_PRESETS = ["pulseGlow", "floatIdle", "cameraShakeImpact"] as const;
+    const TRANSFORM_PRESETS = ["pulseGlow", "floatIdle"] as const;
 
   it.each(TRANSFORM_PRESETS)("%s starts and ends at the baseline on the live timeline", (name) => {
     const el = document.createElement("div");
@@ -250,6 +254,42 @@ describe("emphasis presets return to exact identity", () => {
       Math.abs(midY) > 0.05 ||
       Math.abs(midRotation) > 1e-4;
     expect(moved).toBe(true);
+  });
+
+  /**
+   * `cameraShakeImpact` is a CAMERA move, and the camera has exactly one writer.
+   * The emphasis no longer tweens the rig (that was a competing writer — the same
+   * class of defect as the camera double-pump); the composition owns the decay
+   * now, so it is asserted there.
+   */
+  it("cameraShakeImpact rings around the camera pose and returns to it", () => {
+    const scene = sceneOf({
+      schemaVersion: 1,
+      name: "shake",
+      canvas: { shape: "16:9", scale: 1080 },
+      durationMs: 6000,
+      layers: [{ id: "bg", type: "background", variant: { variant: "solid", color: "#000" } }],
+      camera: { keyframes: [{ at: 0, scale: 1.2, xPct: 50, yPct: 44 }] },
+    } as SceneSpecInput);
+    const shake = { atSec: 1, windowSec: 1, strength: 1 };
+    const ctx: CameraContext = { ...emptyCameraContext(), layerAnchors: new Map(), shakes: [shake] };
+
+    const baseline = composeCameraAt(scene, 0.2, ctx);
+    const atStart = composeCameraAt(scene, 1, ctx);
+    expect(atStart.scale).toBeCloseTo(baseline.scale, 6);
+    expect(atStart.roll).toBeCloseTo(baseline.roll, 6);
+
+    // mid-window the decay is doing something — on top of the keyframed pose
+    const mid = composeCameraAt(scene, 1.5, ctx);
+    expect(Math.abs(mid.scale - baseline.scale)).toBeGreaterThan(0.0005);
+    expect(Math.abs(mid.roll - baseline.roll)).toBeGreaterThan(0.005);
+
+    // and the pan is a real displacement, not a no-op
+    expect(Math.abs(mid.xPct - baseline.xPct)).toBeGreaterThan(0.05);
+
+    const atEnd = composeCameraAt(scene, 2, ctx);
+    expect(atEnd.scale).toBeCloseTo(baseline.scale, 6);
+    expect(atEnd.roll).toBeCloseTo(baseline.roll, 6);
   });
 
   it("pulses mid-window and leaves no scale or shadow residue at the end", () => {
@@ -592,11 +632,14 @@ describe("wipe geometry", () => {
 });
 
 describe("whipPan geometry", () => {
-  it("ramps to ±45% and comes back to exactly zero", () => {
+  // The whip throws the stage a FULL half-frame out and back — the pan needs
+  // headroom the camera then has to buy (`|x| ≤ 50·(S−1)`), and a half-frame is
+  // what makes the wrap at the midpoint read as a cut rather than a slide.
+  it("ramps to ±50% and comes back to exactly zero", () => {
     expect(whipPanOffsetAt(0, "left")).toBeCloseTo(0, 6);
     expect(whipPanOffsetAt(1, "left")).toBeCloseTo(0, 6);
-    expect(Math.abs(whipPanOffsetAt(0.5, "left"))).toBeCloseTo(45, 6);
-    expect(Math.abs(whipPanOffsetAt(0.5, "right"))).toBeCloseTo(45, 6);
+    expect(Math.abs(whipPanOffsetAt(0.5, "left"))).toBeCloseTo(50, 6);
+    expect(Math.abs(whipPanOffsetAt(0.5, "right"))).toBeCloseTo(50, 6);
   });
 
   it("flips sign across the midpoint wrap", () => {
@@ -754,7 +797,7 @@ describe("mask presets animate clip-path, never layout", () => {
     }
   });
 
-  it("maskRevealWipe wipes from the leading edge, mirrored for RTL", () => {
+  it("maskRevealWipe wipes along the reading direction, mirrored for RTL", () => {
     const ltr = document.createElement("div");
     document.body.appendChild(ltr);
     const rtl = document.createElement("div");
@@ -771,16 +814,17 @@ describe("mask presets animate clip-path, never layout", () => {
 
     tlLtr.seek(0.001, false);
     tlRtl.seek(0.001, false);
-    expect(String(gsap.getProperty(ltr, "clipPath"))).toBe("inset(0% 100% 0% 0%)");
-    expect(String(gsap.getProperty(rtl, "clipPath"))).toBe("inset(0% 0% 0% 100%)");
+    // LTR opens from the left edge (its leading edge); RTL from the right
+    expect(String(gsap.getProperty(ltr, "clipPath"))).toBe("inset(-15% 100% -20% 0%)");
+    expect(String(gsap.getProperty(rtl, "clipPath"))).toBe("inset(-15% 0% -20% 100%)");
 
     tlLtr.seek(0.8, false);
     tlRtl.seek(0.8, false);
-    expect(String(gsap.getProperty(ltr, "clipPath"))).toBe("inset(0% 0% 0% 0%)");
-    expect(String(gsap.getProperty(rtl, "clipPath"))).toBe("inset(0% 0% 0% 0%)");
+    expect(String(gsap.getProperty(ltr, "clipPath"))).toBe("inset(-15% 0% -20% 0%)");
+    expect(String(gsap.getProperty(rtl, "clipPath"))).toBe("inset(-15% 0% -20% 0%)");
   });
 
-  it("collapseMask closes from both edges to nothing, and uses clip-path only", () => {
+  it("collapseMask retreats along the reading direction and uses clip-path only", () => {
     const el = document.createElement("div");
     document.body.appendChild(el);
     const tl = gsap.timeline({ paused: true });
@@ -789,12 +833,13 @@ describe("mask presets animate clip-path, never layout", () => {
     });
     // the exit occupies the last 600ms of the window
     tl.seek(3.4, false);
-    expect(String(gsap.getProperty(el, "clipPath"))).toBe("inset(0% 0% 0% 0%)");
+    expect(String(gsap.getProperty(el, "clipPath"))).toBe("inset(-15% 0% -20% 0%)");
     tl.seek(3.7, false); // halfway through
-    expect(String(gsap.getProperty(el, "clipPath"))).toBe("inset(0% 25% 0% 25%)");
+    // closing from the left edge (the leading edge for LTR)
+    expect(String(gsap.getProperty(el, "clipPath"))).toBe("inset(-15% 50% -20% 0%)");
     tl.seek(4, false);
     // fully closed: the box keeps its layout size, only the visible slice goes
-    expect(String(gsap.getProperty(el, "clipPath"))).toBe("inset(0% 100% 0% 100%)");
+    expect(String(gsap.getProperty(el, "clipPath"))).toBe("inset(-15% 100% -20% 0%)");
     expect(el.style.width).toBe("");
     expect(el.style.height).toBe("");
   });
@@ -807,7 +852,8 @@ describe("mask presets animate clip-path, never layout", () => {
       el, sweepHost: el, startMs: 0, endMs: 4000, rig: document.createElement("div"), unitStaggerMs: 0, direction: "rtl",
     });
     tl.seek(3.7, false);
-    expect(String(gsap.getProperty(el, "clipPath"))).toBe("inset(0% 0% 0% 25%)");
+    // RTL retreats from the right edge
+    expect(String(gsap.getProperty(el, "clipPath"))).toBe("inset(-15% 0% -20% 50%)");
   });
 
   it("drops the blur filter the instant blurFadeIn completes (no compositor snap)", () => {

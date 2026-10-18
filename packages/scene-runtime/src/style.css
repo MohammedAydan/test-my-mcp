@@ -66,6 +66,19 @@ body {
 }
 
 /*
+ * One line container per authored line.
+ *
+ * `position: relative` anchors the highlight pill to the line box, and
+ * `isolation: isolate` makes the line its own stacking context so the pill's
+ * z-index resolves here instead of escaping into the wrapper chain (which is
+ * `transform-style: preserve-3d`).
+ */
+.mf-line {
+  position: relative;
+  isolation: isolate;
+}
+
+/*
  * Kinetic text split unit.
  * The padding/margin pair is a clipping guard: mask-reveal presets clip at the
  * element box, and Arabic ascenders/descenders/diacritics overflow the nominal
@@ -78,11 +91,6 @@ body {
  */
 .mf-unit {
   position: relative;
-  /*
-   * `isolation: isolate` makes the unit its OWN stacking context, so the
-   * highlight pill's z-index is resolved inside the unit instead of escaping
-   * into the wrapper chain (which is `transform-style: preserve-3d`).
-   */
   isolation: isolate;
   display: inline-block;
   padding: 0.12em 0.08em;
@@ -98,7 +106,7 @@ body {
  * An absolutely positioned element paints above the in-flow inline content of
  * its parent, so a pill that is a sibling of the text covers the letterforms
  * (a solid rectangle over the Arabic). The pill is `z-index: 1` and the glyphs
- * `z-index: 2`, both inside the unit's isolated stacking context.
+ * `z-index: 2`, both inside the same isolated stacking context.
  */
 .mf-unit-glyphs {
   position: relative;
@@ -106,10 +114,19 @@ body {
   display: inline;
 }
 
+/*
+ * The highlight pill: ONE per line, soft and borderless.
+ *
+ * A pill per word gave a sentence four separate rounded boxes with gaps between
+ * them — which read as four compartments rather than one highlighted phrase.
+ * A single pill spanning the line, with no border and a radius relative to the
+ * type size, reads as one luminous shape behind the whole phrase.
+ */
 .mf-highlight {
   position: absolute;
   z-index: 1;
   pointer-events: none;
+  border: none;
 }
 
 /*

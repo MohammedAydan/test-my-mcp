@@ -12,6 +12,11 @@ export interface BuiltLayer {
   content: HTMLElement;
   /** split units (word/char/line spans) for staggered text presets */
   units?: HTMLElement[];
+  /**
+   * line containers for text layers — the level mask-reveal presets clip at.
+   * Clipping a *unit* cuts a word in half; clipping a *line* reveals the phrase.
+   */
+  lines?: HTMLElement[];
 }
 
 export type AnyLayerRenderer = (layer: never, ctx: LayerContext) => BuiltLayer;

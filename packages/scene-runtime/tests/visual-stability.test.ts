@@ -343,7 +343,7 @@ describe("text splitting", () => {
     expect(TEXT_UNIT_GUARD_CSS).toContain("margin:-0.12em -0.08em");
   });
 
-  it("nests the highlight pill INSIDE the animated word unit, never beside it", () => {
+  it("paints ONE highlight pill per line, never one per word", () => {
     const ctx = makeCtx();
     const built = renderKineticText(
       parsedLayer({
@@ -358,15 +358,22 @@ describe("text splitting", () => {
     );
     const units = built.units ?? [];
     expect(units.length).toBe(2);
+    const lines = built.lines ?? [];
+    // two words, one line — and the line carries the single pill
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.querySelectorAll(".mf-highlight").length).toBe(1);
+    // no word has its own pill: adjacent boxes are what made a sentence read as
+    // four separate compartments
     for (const unit of units) {
-      const pill = unit.querySelector(".mf-highlight");
-      // the pill must be a DESCENDANT of the unit the entrance preset tweens,
-      // so opacity/blur/transform animate it in lockstep with the glyphs
-      expect(pill).not.toBeNull();
-      expect(unit.parentElement?.querySelector(".mf-highlight")).toBe(pill);
-      // …and it is the first child, behind the glyphs
-      expect(unit.firstElementChild).toBe(pill);
+      expect(unit.querySelector(".mf-highlight")).toBeNull();
+      expect(unit.closest(".mf-line")?.querySelector(".mf-highlight")).not.toBeNull();
     }
+    // the pill covers the whole line, so it is wider than either word alone
+    const pill = lines[0]!.querySelector<HTMLElement>(".mf-highlight")!;
+    // `border-width: 0px` is what actually removes the edge (jsdom drops the
+    // `border` shorthand; Chromium honours both it and the CSS rule)
+    expect(pill.style.borderWidth).toBe("0px");
+    expect(pill.style.borderRadius).toBe("0.28em");
   });
 
   it("paints the highlight pill BEHIND the glyphs (never over the letterforms)", () => {
@@ -383,24 +390,28 @@ describe("text splitting", () => {
       } as SceneSpecInput["layers"][number]) as unknown as KineticTextLayer,
       ctx
     );
+    const line = built.lines![0]!;
+    const pill = line.querySelector<HTMLElement>(".mf-highlight");
+    expect(pill).not.toBeNull();
+    // …and the word units come AFTER the pill in the DOM
+    expect(line.firstElementChild).toBe(pill);
+    const last = line.lastElementChild!;
+    expect(last.querySelector(".mf-unit")).not.toBeNull();
+    expect(last.textContent).toBe("فورج");
+    // the pill is BELOW every word unit inside the line's stacking context
+    expect(pill!.style.zIndex).toBe("1");
     for (const unit of built.units ?? []) {
-      const pill = unit.querySelector<HTMLElement>(".mf-highlight");
+      expect(unit.style.zIndex).toBe("2");
       const glyphs = unit.querySelector<HTMLElement>(".mf-unit-glyphs");
-      expect(pill).not.toBeNull();
       expect(glyphs).not.toBeNull();
-      // the pill sits behind the glyphs…
-      expect(pill!.style.zIndex).toBe("1");
       expect(glyphs!.style.zIndex).toBe("2");
-      // …and the glyphs come AFTER the pill in the DOM
-      expect(unit.firstElementChild).toBe(pill);
-      expect(unit.lastElementChild).toBe(glyphs);
-      // the unit is its own stacking context, so the z-index is local
-      expect(unit.style.isolation).toBe("isolate");
-      expect(unit.style.position).toBe("relative");
-      // the glyph text is intact (the pill never eats it)
-      expect(glyphs!.textContent).toBe(glyphs!.textContent?.trim());
-      expect(glyphs!.textContent?.trim().length).toBeGreaterThan(0);
     }
+    // the line resolves its own stacking context, so the z-index stays local
+    expect(line.style.isolation).toBe("isolate");
+    expect(line.style.position).toBe("relative");
+    // the glyph text is intact (the pill never eats it)
+    const text = built.units!.map((u) => u.textContent).join("");
+    expect(text.length).toBeGreaterThan(0);
   });
 });
 

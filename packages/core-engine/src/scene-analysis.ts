@@ -11,10 +11,42 @@
  * exposes black void where the video should be. Report 1 shipped a frame that
  * was 34% black for exactly this reason.
  */
-import { resolveCanvasSize, type CameraKeyframe, type CameraMove, type SceneSpec } from "@motionforge/scene-spec";
+import {
+  FOCUS_PAN_HEADROOM_FRACTION,
+  FOCUS_SCALE_DELTA,
+  FOCUS_MAX_SCALE,
+  PEAK_COVER_MAX_MS,
+  MAX_DEAD_GAP_MS as MAX_GAP,
+  foregroundDeadGaps,
+  requiredFocusScale,
+  transitionPeakHoldMs,
+  transitionPeakOverflowMs,
+  type CameraKeyframe,
+  type CameraMove,
+  type SceneSpec,
+} from "@motionforge/scene-spec";
+import { resolveCanvasSize } from "@motionforge/scene-spec";
 
 export const CAMERA_VIEWPORT_EXCEEDS_CANVAS = "CAMERA_VIEWPORT_EXCEEDS_CANVAS";
 export const CAMERA_MOVE_OVERRUNS_SCENE = "CAMERA_MOVE_OVERRUNS_SCENE";
+
+/**
+ * A transition peak held longer than the cover allows.
+ *
+ * A cut may hide the stage only for the brief moment its cover is at full
+ * extent; past ~120 ms the audience stops reading it as a transition and starts
+ * reading it as a hold on an empty screen.
+ */
+export const TRANSITION_PEAK_TOO_LONG = "TRANSITION_PEAK_TOO_LONG";
+
+/**
+ * A run of screen time with no foreground content on it.
+ *
+ * A scene whose acts do not meet at their cut renders a dead dark frame, and no
+ * individual field is illegal — so it is reported, and the runtime bridges it
+ * where a transition is near enough to cover it.
+ */
+export const FOREGROUND_COVERAGE_GAP = "FOREGROUND_COVERAGE_GAP";
 
 export interface SceneWarning {
   /** stable machine code — an agent can branch on it without parsing prose */
@@ -57,10 +89,12 @@ export function resolvePoses(keyframes: readonly CameraKeyframe[]): CameraPose[]
  * smaller than the frame, so nothing is ever exposed and the range is the full
  * canvas.
  */
-export function safePanRange(scale: number): { min: number; max: number } {
-  if (!(scale > 1)) return { min: 0, max: 100 };
+export function safePanRange(scale: number): { min: number; max: number; half: number } {
+  if (!(scale > 1)) return { min: 0, max: 100, half: 0 };
   const margin = 50 / scale;
-  return { min: margin, max: 100 - margin };
+  const min = margin;
+  const max = 100 - margin;
+  return { min, max, half: (max - min) / 2 };
 }
 
 /** How much of the frame would be black void at this pose. */
@@ -75,16 +109,30 @@ export function voidPercent(scale: number, xPct: number, yPct: number): { x: num
 }
 
 /** The highest zoom a `focusTarget` will take on its own (mirrors the runtime). */
-export const FOCUS_MAX_SCALE = 3;
-
 /**
- * The zoom `focusTarget` needs to centre on a point `d` percent from the canvas
- * centre: `|d| ≤ 50(1 − 1/S)`  ⟹  `S ≥ 1 / (1 − |d|/50)`. Capped, because a
- * target on the very edge of the canvas is unreachable at any finite zoom.
+ * The zoom budget a `focusTarget` is allowed to spend.
+ *
+ * This MUST stay in step with `FOCUS_SCALE_DELTA` in `scene-runtime`: a focus
+ * is a bounded nudge (max +0.14× on the current zoom), never the zoom the
+ * target mathematically needs. Solving for the latter centred a logo 16% above
+ * the canvas middle at 1.47× and threw the headline 35% below it off the bottom
+ * of the frame.
  */
-export function requiredFocusScale(offsetPct: number): number {
-  const d = Math.min(49.999, Math.abs(offsetPct));
-  return Math.min(FOCUS_MAX_SCALE, 1 / (1 - d / 50));
+/**
+ * Every interior run of screen time with no foreground content, computed AFTER
+ * the runtime's seam bridging — so a cut the runtime can cover does not show up
+ * here, and what remains is a genuine hole.
+ */
+export function foregroundCoverageGaps(scene: SceneSpec): DeadGapReport[] {
+  return foregroundDeadGaps(scene)
+    .filter((gap) => gap.durationMs > MAX_GAP)
+    .map((gap) => ({ fromMs: gap.fromMs, toMs: gap.toMs, durationMs: gap.durationMs }));
+}
+
+export interface DeadGapReport {
+  fromMs: number;
+  toMs: number;
+  durationMs: number;
 }
 
 /**
@@ -147,11 +195,15 @@ export function movePoses(scene: SceneSpec): CameraPose[] {
         return { ...pose, scale: base.scale + 0.12 * strength, xPct: base.xPct, yPct: base.yPct };
       case "focusTarget": {
         const anchor = layerAnchor(scene, move.targetLayerId);
-        if (!anchor) return { ...pose, scale: 1.45 * strength, xPct: base.xPct, yPct: base.yPct };
-        const offset = Math.max(Math.abs(50 - anchor.xPct), Math.abs(50 - anchor.yPct));
-        const scale = Math.max(1.45 * strength, requiredFocusScale(offset));
-        const { min, max } = safePanRange(scale);
-        const limit = (v: number): number => Math.min(max, Math.max(min, v));
+        if (!anchor) return { ...pose, scale: 1 + FOCUS_SCALE_DELTA * strength, xPct: base.xPct, yPct: base.yPct };
+        const delta = Math.min(1, Math.max(0.05, strength)) * FOCUS_SCALE_DELTA;
+        const scale = base.scale + delta;
+        // the pan may spend only 80% of the headroom the focus zoom creates
+        const headroom = FOCUS_PAN_HEADROOM_FRACTION * safePanRange(scale).half;
+        const limit = (v: number): number => {
+          const want = 50 - v;
+          return Math.abs(want) <= headroom ? v : 50 - Math.sign(want) * headroom;
+        };
         return { ...pose, scale, xPct: limit(anchor.xPct), yPct: limit(anchor.yPct) };
       }
       case "whipPanLeft":
@@ -283,6 +335,41 @@ export function analyzeScene(scene: SceneSpec): SceneWarning[] {
         `camera move "${move.move}" at ${move.at}ms runs ${end - scene.durationMs}ms past the scene end ` +
         `(${scene.durationMs}ms) and will be cut off mid-effect`,
       detail: { at: move.at, endsAtMs: end, sceneDurationMs: scene.durationMs },
+    });
+  }
+
+  // a run of screen time with nothing on it — the audited dead frame
+  scene.transitions.forEach((tr, index) => {
+    const overflow = transitionPeakOverflowMs(tr.kind, tr.durationMs);
+    if (overflow <= 0) return;
+    warnings.push({
+      code: TRANSITION_PEAK_TOO_LONG,
+      path: `transitions.${index}.durationMs`,
+      message:
+        `"${tr.kind}" at ${tr.at}ms is authored at ${tr.durationMs}ms, which holds full-screen cover for ` +
+        `${round(transitionPeakHoldMs(tr.kind, tr.durationMs))}ms — past the ${PEAK_COVER_MAX_MS}ms ceiling. ` +
+        `The runtime clamps it, so the last ${round(overflow)}ms would read as a hold on an empty screen; ` +
+        `shorten the transition.`,
+      detail: {
+        at: tr.at,
+        durationMs: tr.durationMs,
+        peakHoldMs: round(transitionPeakHoldMs(tr.kind, tr.durationMs)),
+        maxPeakHoldMs: PEAK_COVER_MAX_MS,
+      },
+    });
+  });
+
+  // a run of screen time with nothing on it — the audited dead frame
+  for (const gap of foregroundCoverageGaps(scene)) {
+    warnings.push({
+      code: FOREGROUND_COVERAGE_GAP,
+      path: "layers",
+      message:
+        `no foreground content is on screen from ${gap.fromMs}ms to ${gap.toMs}ms ` +
+        `(${gap.durationMs}ms). A production cut may hide the stage only while its cover is at full extent ` +
+        `(${PEAK_COVER_MAX_MS}ms); anything longer renders as a dead dark frame. Put a transition whose midpoint ` +
+        `sits inside that window, or extend an act across it.`,
+      detail: { fromMs: gap.fromMs, toMs: gap.toMs, durationMs: gap.durationMs },
     });
   }
 

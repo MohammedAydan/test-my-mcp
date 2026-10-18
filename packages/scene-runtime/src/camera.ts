@@ -1,25 +1,27 @@
 import { gsap } from "gsap";
+import { sceneSeams, type SceneSpec } from "@motionforge/scene-spec";
 import { centerPctInRig } from "./stage.js";
-import { applyDecayEnvelope, planCameraEnvelope, SHAKE_SAMPLES } from "./envelope.js";
+import { CAMERA_ENVELOPE_IN_FRACTION, planCameraEnvelope, SHAKE_WOBBLES, shakeDecayAt } from "./envelope.js";
 import { easeToGsap } from "./presets.js";
-import type { CameraKeyframe, SceneSpec } from "@motionforge/scene-spec";
+import { glitchRigOffsetPxAt, whipPanOffsetAt } from "./transitions.js";
+import type { CameraKeyframe, CameraMove } from "@motionforge/scene-spec";
 
 /**
- * 2.5D virtual camera.
+ * 2.5D virtual camera — ONE deterministic composition per frame.
  *
- * THE MODEL (one paragraph, because every camera bug traces back to it):
+ * ## The model (every camera bug traces back to it)
  *
  * The rig's transform is `translate(xPercent%, yPercent%) scale(S)`, applied
  * about the canvas centre. The translate happens in the PARENT's (unscaled)
- * units, so a rig translation of `p` percent moves the content by
- * `p/100 · width` pixels — and, because the scale is applied first, the
- * canvas point that ends up at the viewport centre is
+ * units, so a rig translation of `p` percent moves the content by `p/100·width`
+ * pixels — and, because the scale is applied first, the canvas point that ends
+ * up at the viewport centre is
  *
  *     lookAtPct = 50 − xPercent / S
  *
  * Two consequences drive everything below:
  *
- * 1. **Centring a canvas point `c`** needs `xPercent = (50 − c) · S`, not
+ * 1. **Centring a canvas point `c`** needs `xPercent = (50 − c)·S`, not
  *    `50 − c`. The old mapping was only correct at `S = 1`, so a zoomed camera
  *    never actually looked where it was told to.
  * 2. **No black void** requires the content to still cover the viewport:
@@ -29,11 +31,33 @@ import type { CameraKeyframe, SceneSpec } from "@motionforge/scene-spec";
  *    which in percent is `|xPercent| ≤ 50 · (S − 1)`, or equivalently a
  *    look-at inside `[50 − 50(1−1/S), 50 + 50(1−1/S)]`.
  *
- * The clamp at the bottom of this file enforces (2) on the FINAL composed
- * pose of every frame — keyframes, moves and drift together — and does so
- * SYNCHRONOUSLY, because a deferred write is a write the next tween
- * overwrites, and a camera that is corrected one frame late is a camera that
- * renders void.
+ * ## Why there is exactly ONE writer
+ *
+ * THE DEFECT THIS FIXES ("double-pump" zoom, field audit of `scene-01`):
+ * the camera used to be driven by *competing GSAP tweens* on the same element
+ * — a full-length keyframe tween that re-wrote `scale: 1` on every frame, plus
+ * a move's ramp-in / hold / ramp-out pair. GSAP only re-renders a child while
+ * the playhead is inside its window, so the instant a move's ramp-in tween
+ * ended, the permanent keyframe tween put `scale: 1` back — a one-frame snap
+ * out of 1.47× — and then the ramp-out tween started from its own explicit peak
+ * and slammed it back in. Measured: 1.47 at 2.9 s → **1.00 at 3.0 s** → 1.47
+ * again at 3.6 s.
+ *
+ * No amount of tween bookkeeping fixes that: the write order is GSAP's, not
+ * ours, and it changes with seek order. So the camera no longer uses tweens at
+ * all. Every frame runs ONE pure function
+ *
+ *     State(t) = Clamp( Keyframes(t) ⊕ MergedMoves(t) ⊕ Drift(t) ⊕ Stage(t) )
+ *
+ * where `⊕` is composition (not overwrite) and `Stage` is the transition
+ * contribution (a `whipPan` translates the stage and buys the headroom that
+ * pan needs; a `glitch` jitters it). The result is written once, through
+ * `gsap.quickSetter`, so the pose on screen is always exactly the pose the
+ * metadata reports — and it is the same pose for the same `t` no matter how
+ * the renderer got there.
+ *
+ * The composition is also *pure and exported*, which is what makes the curve
+ * testable: `composeCameraAt(scene, t, ctx)` is the whole camera.
  */
 
 /** The rig's neutral pose — the baseline every first keyframe inherits from. */
@@ -59,6 +83,37 @@ export interface ResolvedCameraState {
 
 /** The highest zoom a `focusTarget` may reach on its own. */
 export const FOCUS_MAX_SCALE = 3;
+
+/**
+ * How much zoom a `focusTarget` may add, as a DELTA on the current scale.
+ *
+ * The old move solved for the zoom a target *needs* (`1/(1 − |d|/50)`) and
+ * applied it: centring a logo 16% above centre demanded 1.47×, which threw the
+ * headline sitting 35% below it straight off the bottom of the frame. A focus
+ * is a nudge, not a crane — the brief caps it at `clamp(strength,.05,1)·0.14`,
+ * i.e. at most ~1.14×, so the composition around the target survives.
+ */
+export const FOCUS_SCALE_DELTA = 0.14;
+
+/**
+ * The fraction of the safe pan headroom a `focusTarget` may spend.
+ *
+ * Full headroom centres the target but leaves nothing on either side of it; 80%
+ * keeps the layer's neighbours (a headline under a logo) comfortably inside the
+ * frame, which is the whole point of a focus.
+ */
+export const FOCUS_PAN_HEADROOM_FRACTION = 0.8;
+
+/**
+ * How long after a move ends it will still hold its final pose before ramping
+ * down, looking for the act cut it belongs to.
+ *
+ * A move whose window closes mid-act used to ramp its zoom all the way back to
+ * 1.0 and then let the NEXT keyframe zoom in again — the same "pump" seen from
+ * the other side. Holding the final pose into the cut means the frame changes
+ * act at full framing and crossfades out of it, instead of breathing.
+ */
+export const MOVE_SEAM_HOLD_MS = 1000;
 
 /**
  * Expand camera keyframes into fully-resolved states.
@@ -88,8 +143,8 @@ export function resolveCameraKeyframes(keyframes: readonly CameraKeyframe[]): Re
 
 /**
  * The resolved camera pose in effect at `timeMs`, interpolated with the SAME
- * ease the runtime tween uses — so a `focusTarget` can compute its delta
- * against the pose it will actually compose with.
+ * ease the scene authored — so a `focusTarget` can compute its delta against
+ * the pose it will actually compose with.
  */
 export function cameraStateAt(keyframes: readonly CameraKeyframe[], timeMs: number): ResolvedCameraState {
   const resolved = resolveCameraKeyframes(keyframes);
@@ -149,7 +204,11 @@ export function lookAtPct(scale: number, translationPercent: number): number {
  * The smallest zoom at which `offsetPct` (the distance of the look-at point
  * from the canvas centre) is still reachable without exposing void.
  *
- * `|offset| ≤ 50(1 − 1/S)` ���  `S ≥ 1 / (1 − |offset|/50)`.
+ * `|offset| ≤ 50(1 − 1/S)` ⟹  `S ≥ 1 / (1 − |offset|/50)`.
+ *
+ * Kept for diagnosis (the engine's warning still quotes the zoom a *keyframe*
+ * would need) — but a `focusTarget` deliberately does NOT use it: see
+ * {@link FOCUS_SCALE_DELTA}.
  */
 export function requiredScaleForPan(offsetPct: number, cap: number = FOCUS_MAX_SCALE): number {
   const d = Math.min(49.999, Math.abs(offsetPct));
@@ -211,14 +270,14 @@ export const CAMERA_UNCLAMPED_Y = "mfCameraUnclampedY";
  * The look-at a `focusTarget` ASKED for, when it could not be honoured.
  *
  * The final clamp reports poses it pinned itself; this reports a pan the
- * `focusTarget` move itself had to limit (a target on the canvas edge is
- * unreachable at any finite zoom). Without it, `clampedVoid` would read `false`
- * on exactly the frames where the framing quietly departed from the brief.
+ * `focusTarget` move itself had to limit (a target further from centre than the
+ * focus budget can cover). Without it, `clampedVoid` would read `false` on
+ * exactly the frames where the framing quietly departed from the brief.
  */
 export const CAMERA_REQUESTED_X = "mfCameraRequestedX";
 export const CAMERA_REQUESTED_Y = "mfCameraRequestedY";
 
-/** A `focusTarget` whose requested look-at exceeded the safe band at its peak. */
+/** A `focusTarget` whose requested look-at exceeded the focus budget at its peak. */
 export interface FocusClamp {
   startSec: number;
   endSec: number;
@@ -226,9 +285,11 @@ export interface FocusClamp {
   applied: { xPct: number; yPct: number };
 }
 
-/** Everything the clamp needs to know that is decided at BUILD time. */
+/** Everything the composition needs that is decided at BUILD time. */
 export interface CameraRuntimeInfo {
   focusClamps: FocusClamp[];
+  /** the seam midpoint each move holds its final pose into, by move index */
+  moveHolds: Array<{ holdToSec: number; seamMidSec: number | null }>;
 }
 
 /** Read the live camera state off the rig, after clamping. */
@@ -281,252 +342,435 @@ export interface LayerAnchor {
   yPct: number;
 }
 
+/** A `cameraShakeImpact` emphasis, already resolved to its absolute window. */
+export interface RigShake {
+  atSec: number;
+  windowSec: number;
+  strength: number;
+}
+
+/** Build-time facts the per-frame composition needs. */
+export interface CameraContext {
+  layerAnchors: ReadonlyMap<string, LayerAnchor>;
+  shakes: readonly RigShake[];
+  widthPx: number;
+  heightPx: number;
+}
+
+export function emptyCameraContext(): CameraContext {
+  return { layerAnchors: new Map(), shakes: [], widthPx: 1920, heightPx: 1080 };
+}
+
+// ---------------------------------------------------------------------------
+// Composition terms — each one a pure function of t
+// ---------------------------------------------------------------------------
+
+/** Handheld drift, as a translation-percent offset. Identity at every period. */
+export function driftOffsetAt(
+  drift: SceneSpec["camera"]["drift"],
+  timeSec: number
+): { xPct: number; yPct: number } {
+  if (!drift) return { xPct: 0, yPct: 0 };
+  const amp = drift.amplitudePct;
+  const period = Math.max(0.5, drift.periodMs / 1000);
+  return {
+    xPct: amp * Math.sin((2 * Math.PI * timeSec) / period),
+    yPct: amp * 0.6 * Math.sin((2 * Math.PI * timeSec) / (period * 1.3)),
+  };
+}
+
+/** The window a move occupies once its final pose is held into the act cut. */
+export interface CameraMoveWindow {
+  startSec: number;
+  /** the authored end of the move */
+  authoredEndSec: number;
+  /** when the final pose may finally start releasing (the act cut, if any) */
+  holdToSec: number;
+  /** when the move is completely back at its pre-move contribution */
+  endSec: number;
+  seamMidSec: number | null;
+  plan: ReturnType<typeof planCameraEnvelope>;
+}
+
 /**
- * A camera state expressed as the rig transform that realises it.
+ * When a move ends, look forward for the act cut it belongs to.
  *
- * Every camera tween is authored through this function, with EXPLICIT from and
- * to values. That matters more than it looks: a `to` tween (or a relative
- * `+=` value) resolves its start by reading the element's live state at first
- * render — and the viewport clamp writes to that same element, synchronously,
- * on every frame. Reading it back would feed the clamped value into the next
- * tween's start, so a keyframe whose authored start is 70% would silently
- * begin at the clamped 20% and interpolate to the wrong pose. `fromTo` never
- * looks at the element, so the clamp and the tweens cannot corrupt each other.
+ * A move whose window closes mid-act has to decide what to hand the next thing
+ * on the timeline. The old answer was "ramp all the way back to 1.0", and since
+ * the move's ramp-out finished *before* the next keyframe began its own zoom,
+ * the frame visibly deflated to neutral and then inflated again: the same
+ * "pump" seen from the other side (1.47 at 2.9 s → 1.00 at 3.0 s → 1.47 at 3.6 s).
+ *
+ * The answer is now "hold the framing you had until the cut, then let it go".
+ * The release starts AT the seam midpoint — the one instant a transition is
+ * guaranteed to be covering the frame — so the whole visible act plays at one
+ * sustained framing and the release reads as part of the cut rather than as a
+ * breath.
  */
-export function rigVars(state: ResolvedCameraState): gsap.TweenVars {
+export function planCameraMoveWindow(move: CameraMove, scene: SceneSpec): CameraMoveWindow {
+  const startSec = move.at / 1000;
+  const durationSec = Math.max(0, (move.durationMs ?? 800) / 1000);
+  const authoredEndSec = startSec + durationSec;
+  const seam = sceneSeams(scene)
+    .map((s) => s.midMs / 1000)
+    .filter((mid) => mid >= authoredEndSec - 1e-6 && mid <= authoredEndSec + MOVE_SEAM_HOLD_MS / 1000)
+    .sort((a, b) => a - b)[0];
+  const holdToSec = seam ?? authoredEndSec;
+
+  // The envelope is authored in its own duration; only the HOLD is stretched to
+  // reach the cut. `planCameraEnvelope` cannot express that — it derives the
+  // hold from whatever is left after two 28% ramps of the TOTAL, which would
+  // place the release at the wrong time entirely.
+  //
+  //   ramp-in: 28% of the authored duration
+  //   hold:    from the end of the ramp-in to `holdToSec`
+  //   release: 28% of the authored duration, starting AT `holdToSec`
+  const inSec = durationSec * CAMERA_ENVELOPE_IN_FRACTION;
+  const outSec = durationSec * CAMERA_ENVELOPE_IN_FRACTION;
+  const holdSec = Math.max(0, holdToSec - startSec - inSec);
   return {
-    scale: state.scale,
-    xPercent: translationForLookAt(state.scale, state.xPct),
-    yPercent: translationForLookAt(state.scale, state.yPct),
-    rotation: state.roll,
-    rotationX: state.pitch,
-    rotationY: state.yaw,
+    startSec,
+    authoredEndSec,
+    holdToSec,
+    endSec: holdToSec + outSec,
+    seamMidSec: seam ?? null,
+    plan: { inSec, holdSec, outSec, totalSec: inSec + holdSec + outSec },
   };
 }
 
-/** Add a translation offset (in canvas percent) to a state. */
-function withPan(state: ResolvedCameraState, dxPct: number, dyPct: number): ResolvedCameraState {
-  return {
-    ...state,
-    scale: state.scale,
-    // the offset is a *look-at* offset, so it is re-expressed in the new scale
-    xPct: clampNum(lookAtPct(state.scale, translationForLookAt(state.scale, state.xPct) + dxPct), state.scale),
-    yPct: clampNum(lookAtPct(state.scale, translationForLookAt(state.scale, state.yPct) + dyPct), state.scale),
-  };
+/** The move's envelope weight (0..1) at `timeSec`. */
+export function moveWeightAt(window: CameraMoveWindow, timeSec: number): number {
+  const { startSec, endSec, plan } = window;
+  const elapsed = timeSec - startSec;
+  if (elapsed <= 0 || elapsed >= endSec) return 0;
+  if (plan.inSec <= 0) return 1;
+  if (elapsed < plan.inSec) {
+    const p = elapsed / plan.inSec;
+    return 1 - Math.pow(2, -10 * p); // expo.out
+  }
+  if (elapsed < plan.inSec + plan.holdSec) return 1;
+  const outElapsed = elapsed - plan.inSec - plan.holdSec;
+  if (plan.outSec <= 0) return 0;
+  // expo.inOut on the way down — the same curve family as the way up, so the
+  // derivative is continuous at both ends of the hold
+  const p = Math.min(1, outElapsed / plan.outSec);
+  const eased =
+    p === 0 ? 0 : p === 1 ? 1 : p < 0.5 ? Math.pow(2, 20 * p - 10) / 2 : (2 - Math.pow(2, -20 * p + 10)) / 2;
+  return 1 - eased;
 }
 
-function clampNum(lookAt: number, scale: number): number {
-  // no canvas point lives outside 0..100; a zoomed camera simply cannot see the rest
-  return Math.min(100, Math.max(0, lookAt));
+/** One move's contribution at full weight, in look-at space. */
+export interface MoveContribution {
+  scale: number;
+  xPct: number;
+  yPct: number;
+  roll: number;
+  /** the look-at this move ASKED for, when it had to limit its own pan */
+  requestedLookAt?: { xPct: number; yPct: number };
 }
 
-/** Scale a state by a delta factor and set its look-at point. */
-function toState(
+const NO_CONTRIBUTION: MoveContribution = { scale: 0, xPct: 0, yPct: 0, roll: 0 };
+
+/**
+ * What a single move asks of the camera at its peak.
+ *
+ * `base` is the pose in effect where the move begins — the same analytic
+ * state the keyframes produce, so a move always composes with the camera it
+ * actually inherits rather than with whatever the rig happened to be holding.
+ */
+export function moveContributionAtPeak(
+  move: CameraMove,
   base: ResolvedCameraState,
-  scale: number,
-  lookAtX: number,
-  lookAtY: number
-): ResolvedCameraState {
-  return { ...base, scale, xPct: lookAtX, yPct: lookAtY };
+  ctx: CameraContext
+): MoveContribution {
+  const s = move.strength ?? 1;
+  switch (move.move) {
+    case "slowPushIn":
+      return { ...NO_CONTRIBUTION, scale: 0.12 * s };
+    case "whipPanLeft":
+    case "whipPanRight": {
+      const dir = move.move === "whipPanLeft" ? -1 : 1;
+      return { ...NO_CONTRIBUTION, xPct: dir * 26 * s };
+    }
+    case "shakeImpact":
+      return { ...NO_CONTRIBUTION, scale: 0.02 * s, roll: 1.6 * s };
+    case "focusTarget": {
+      const anchor = move.targetLayerId ? ctx.layerAnchors.get(move.targetLayerId) : undefined;
+      if (!anchor) return NO_CONTRIBUTION;
+      // GENTLE, COMPOSITION-SAFE FOCUS
+      //
+      // A bounded delta instead of the zoom the target "needs": centring a
+      // logo 16% above the middle used to demand 1.47×, and at that zoom the
+      // headline 35% below it fell off the bottom edge. A focus moves the eye,
+      // it does not crop the composition away.
+      const deltaScale = Math.min(1, Math.max(0.05, s)) * FOCUS_SCALE_DELTA;
+      // …and the pan may only spend 80% of the headroom that zoom creates, so
+      // the layer's neighbours stay comfortably inside the frame.
+      const headroom = FOCUS_PAN_HEADROOM_FRACTION * safeLookAtRange(base.scale + deltaScale).half;
+      const toward = (want: number): number => {
+        const from = 50;
+        const delta = want - from;
+        return Math.abs(delta) <= headroom ? delta : Math.sign(delta) * headroom;
+      };
+      const xPct = toward(anchor.xPct);
+      const yPct = toward(anchor.yPct);
+      const applied = { xPct: base.xPct + xPct, yPct: base.yPct + yPct };
+      const limited = applied.xPct !== anchor.xPct || applied.yPct !== anchor.yPct;
+      return {
+        ...NO_CONTRIBUTION,
+        scale: deltaScale,
+        xPct,
+        yPct,
+        ...(limited ? { requestedLookAt: { ...anchor } } : {}),
+      };
+    }
+    default:
+      return NO_CONTRIBUTION;
+  }
 }
 
+/**
+ * How the scene's transitions move the STAGE.
+ *
+ * A transition is a camera move too: a `whipPan` throws the whole stage aside
+ * and must buy back the headroom that pan costs, or the frame goes black; a
+ * `glitch` jitters it. Both used to be tweens on the rig, which fought the
+ * keyframes; here they are just another composed term.
+ */
+export function stageOffsetAt(
+  scene: SceneSpec,
+  timeSec: number,
+  poseScale: number,
+  ctx: CameraContext
+): { xPct: number; yPct: number; scale: number } {
+  let xPct = 0;
+  let scale = poseScale;
+  for (const tr of scene.transitions) {
+    const durSec = tr.durationMs / 1000;
+    const elapsed = timeSec - tr.at / 1000;
+    if (elapsed <= 0 || elapsed >= durSec || durSec <= 0) continue;
+    const p = elapsed / durSec;
+    if (tr.kind === "whipPan") {
+      const offset = whipPanOffsetAt(p, tr.direction);
+      xPct += offset;
+      // the pan costs headroom: `|x| ≤ 50·(S−1)` ⟹ `S ≥ 1 + 2|x|/100`
+      scale = Math.max(scale, 1 + (2 * Math.abs(offset)) / 100 * 1.02);
+    } else if (tr.kind === "glitch") {
+      xPct += (glitchRigOffsetPxAt(p, tr.intensity) / Math.max(1, ctx.widthPx)) * 100;
+    }
+  }
+  return { xPct, yPct: 0, scale };
+}
+
+/**
+ * Merge per-move contributions on one axis without ever letting them stack.
+ *
+ * WHY NOT AN AVERAGE: averaging the weighted contributions looks like the
+ * obvious answer, but it is not monotone. With a strong move already at full
+ * weight and a weaker one joining it, the weighted mean sits BELOW the strong
+ * move's own contribution — so the act dips by exactly the amount the joining
+ * move "contributed", and the curve reads as zoom → back off → zoom (the very
+ * double tooth this pipeline exists to kill). Measured on the mixed-act scene:
+ * `1.3800 → 1.3755 → 1.3780` in consecutive 50 ms samples.
+ *
+ * The dominant term wins instead. That is monotone in every contribution
+ * (raising one move's weight never lowers the result), it can never exceed the
+ * largest single move — so two overlapping `slowPushIn`s still read as one — and
+ * a move with nothing overlapping it is untouched. The crossover is C0 rather
+ * than C1: two moves of comparable size can meet at a velocity corner. That is
+ * why overlapping moves are also flagged by the scene analyser: they are legal
+ * but worth spacing out.
+ */
+export function blendDominant(values: readonly number[]): number {
+  let best = 0;
+  for (const value of values) {
+    if (Math.abs(value) > Math.abs(best)) best = value;
+  }
+  return best;
+}
+
+/**
+ * THE CAMERA.
+ *
+ * One pure function of `timeSec`. Nothing in it reads the DOM, so a seek to any
+ * frame — from any direction — produces exactly the pose that frame has.
+ */
+export function composeCameraAt(
+  scene: SceneSpec,
+  timeSec: number,
+  ctx: CameraContext
+): ResolvedCameraState & {
+  clamped: boolean;
+  /** the look-at the composition asked for, before the canvas-bound clamp */
+  wantXPct: number;
+  wantYPct: number;
+} {
+  // 1. keyframes
+  const base = cameraStateAt(scene.camera.keyframes, Math.round(timeSec * 1000));
+
+  // 2. moves — each weighted by its own envelope, then blended so overlapping
+  //    moves lead with the strongest one instead of doubling the peak
+  const scales: number[] = [];
+  const pansX: number[] = [];
+  const pansY: number[] = [];
+  const rolls: number[] = [];
+  for (const move of scene.camera.moves) {
+    const weight = moveWeightAt(planCameraMoveWindow(move, scene), timeSec);
+    if (weight <= 0) continue;
+    const contribution = moveContributionAtPeak(move, base, ctx);
+    scales.push(weight * contribution.scale);
+    pansX.push(weight * contribution.xPct);
+    pansY.push(weight * contribution.yPct);
+    rolls.push(weight * contribution.roll);
+  }
+  const dScale = blendDominant(scales);
+  const dxPct = blendDominant(pansX);
+  const dyPct = blendDominant(pansY);
+  const dRoll = blendDominant(rolls);
+
+  // 3. drift (never touches scale, so it cannot perturb the zoom curve)
+  const drift = driftOffsetAt(scene.camera.drift, timeSec);
+
+  // 4. emphasis shakes (also scale/roll only, and they ring around the pose)
+  let shakeScale = 0;
+  let shakeRoll = 0;
+  let shakeXPct = 0;
+  let shakeYPct = 0;
+  const pxToPct = 100 / Math.max(1, ctx.widthPx);
+  for (const shake of ctx.shakes) {
+    if (shake.windowSec <= 0) continue;
+    const p = (timeSec - shake.atSec) / shake.windowSec;
+    if (p < 0 || p > 1) continue;
+    const k = shakeDecayAt(p, SHAKE_WOBBLES) * shake.strength;
+    shakeScale += k * 0.02;
+    shakeRoll += k * 1.4;
+    shakeXPct += k * 16 * pxToPct;
+    shakeYPct += k * 12 * (100 / Math.max(1, ctx.heightPx));
+  }
+
+  // 5. compose, then clamp — in that order, because the clamp is about the
+  //    FINAL pose, not about any individual term
+  const composedScale = Math.max(0.05, base.scale + (dScale + shakeScale));
+  const stage = stageOffsetAt(scene, timeSec, composedScale, ctx);
+
+  const lookAtX = base.xPct + dxPct;
+  const lookAtY = base.yPct + dyPct;
+  const wantX = translationForLookAt(stage.scale, lookAtX) + drift.xPct + stage.xPct + shakeXPct;
+  const wantY = translationForLookAt(stage.scale, lookAtY) + drift.yPct + stage.yPct + shakeYPct;
+
+  const clamped = clampCameraTranslation(stage.scale, wantX, wantY);
+
+  return {
+    at: timeSec,
+    scale: stage.scale,
+    xPct: lookAtPct(stage.scale, clamped.xPercent),
+    yPct: lookAtPct(stage.scale, clamped.yPercent),
+    // what the composition ASKED for, before the canvas-bound clamp
+    wantXPct: lookAtPct(stage.scale, wantX),
+    wantYPct: lookAtPct(stage.scale, wantY),
+    roll: base.roll + dRoll + shakeRoll,
+    pitch: base.pitch,
+    yaw: base.yaw,
+    clamped: clamped.clamped,
+  };
+}
+
+/** Where a move's own budget stopped short of the look-at it asked for. */
+export function focusClampsForScene(scene: SceneSpec, ctx: CameraContext): FocusClamp[] {
+  const out: FocusClamp[] = [];
+  for (const move of scene.camera.moves) {
+    if (move.move !== "focusTarget") continue;
+    const anchor = move.targetLayerId ? ctx.layerAnchors.get(move.targetLayerId) : undefined;
+    if (!anchor) continue;
+    const base = cameraStateAt(scene.camera.keyframes, move.at);
+    const contribution = moveContributionAtPeak(move, base, ctx);
+    if (!contribution.requestedLookAt) continue;
+    const window = planCameraMoveWindow(move, scene);
+    out.push({
+      startSec: window.startSec,
+      endSec: window.holdToSec,
+      requested: contribution.requestedLookAt,
+      applied: { xPct: base.xPct + contribution.xPct, yPct: base.yPct + contribution.yPct },
+    });  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The single writer
+// ---------------------------------------------------------------------------
+
+/**
+ * Install the one and only writer for the rig transform.
+ *
+ * Installed on the master timeline's `onUpdate`, which fires AFTER every child
+ * has rendered — but that no longer matters for correctness, because nothing
+ * else writes the rig's scale/translation any more. It matters only for
+ * ordering: the pose must be the last thing applied in a frame.
+ *
+ * The write is SYNCHRONOUS (`gsap.quickSetter`) for the same reason as before:
+ * `gsap.set` lands on the GLOBAL timeline one tick later, by which point the
+ * next frame's composition has already overwritten it.
+ */
 export function applyCamera(
   tl: gsap.core.Timeline,
   scene: SceneSpec,
   rig: HTMLElement,
-  layerAnchors: Map<string, LayerAnchor>
+  ctx: CameraContext
 ): CameraRuntimeInfo {
-  const focusClamps: FocusClamp[] = [];
-  const cam = scene.camera;
-  const durationSec = scene.durationMs / 1000;
-
-  rig.parentElement?.style.setProperty("perspective", `${cam.perspective}px`);
-  gsap.set(rig, {
-    scale: 1,
-    xPercent: 0,
-    yPercent: 0,
-    rotation: 0,
-    rotationX: 0,
-    rotationY: 0,
-    transformStyle: "preserve-3d",
-  });
-  delete rig.dataset[CAMERA_CLAMP_FLAG];
-
-  // subtle handheld drift (timeline-driven → deterministic under seek).
-  // The drift oscillates between the neutral pose and the neutral pose plus
-  // the amplitude, so both ends are written explicitly.
-  if (cam.drift) {
-    const amp = cam.drift.amplitudePct;
-    const periodSec = Math.max(0.5, cam.drift.periodMs / 1000);
-    const repeats = Math.max(1, Math.ceil(durationSec / periodSec) * 2);
-    tl.fromTo(
-      rig,
-      { xPercent: 0 },
-      {
-        xPercent: amp,
-        duration: periodSec,
-        ease: "sine.inOut",
-        yoyo: true,
-        repeat: repeats,
-        immediateRender: false,
-      },
-      0
-    );
-    tl.fromTo(
-      rig,
-      { yPercent: 0 },
-      {
-        yPercent: amp * 0.6,
-        duration: periodSec * 1.3,
-        ease: "sine.inOut",
-        yoyo: true,
-        repeat: Math.max(1, Math.ceil(durationSec / (periodSec * 1.3)) * 2),
-        immediateRender: false,
-      },
-      0
-    );
-  }
-
-  // canonical keyframes: each tween runs from the previous keyframe's state.
-  // EVERY field is written on EVERY tween — including the inherited ones — so
-  // the pose is a pure function of the timeline position, and the from-value is
-  // explicit so the clamp can never feed a stale pose back in.
-  const resolved = resolveCameraKeyframes(cam.keyframes);
-  let prev: ResolvedCameraState = { ...CAMERA_BASELINE };
-  resolved.forEach((kf, index) => {
-    const authored = cam.keyframes[index];
-    tl.fromTo(
-      rig,
-      rigVars(prev),
-      {
-        ...rigVars(kf),
-        duration: Math.max(0, (kf.at - prev.at) / 1000),
-        ease: easeToGsap(authored?.ease ?? "power2.inOut"),
-        immediateRender: false,
-      },
-      prev.at / 1000
-    );
-    prev = kf;
+  const focusClamps = focusClampsForScene(scene, ctx);
+  const moveHolds = scene.camera.moves.map((move) => {
+    const window = planCameraMoveWindow(move, scene);
+    return { holdToSec: window.holdToSec, seamMidSec: window.seamMidSec };
   });
 
-  // high-level moves compose on top of keyframes. Every one of them is a
-  // *temporary* effect: ramp in, hold, ramp back out — a move must never leave
-  // the rig parked at its peak when its window closes.
-  for (const mv of cam.moves) {
-    const s = mv.strength ?? 1;
-    const dur = Math.max(0, (mv.durationMs ?? 800) / 1000);
-    const at = mv.at / 1000;
-    const plan = planCameraEnvelope(dur);
-    // the pose the move composes with, at the moment the move starts
-    const base = cameraStateAt(cam.keyframes, mv.at);
-    /** ramp-in → peak, then peak → back to the exact pre-move pose */
-    const toPeak = (peak: ResolvedCameraState, easeIn: string, easeOut: string): void => {
-      tl.fromTo(rig, rigVars(base), { ...rigVars(peak), duration: plan.inSec, ease: easeIn, immediateRender: false }, at);
-      tl.fromTo(
-        rig,
-        rigVars(peak),
-        { ...rigVars(base), duration: plan.outSec, ease: easeOut, immediateRender: false },
-        at + plan.inSec + plan.holdSec
-      );
-    };
-    switch (mv.move) {
-      case "slowPushIn":
-        toPeak({ ...base, scale: base.scale + 0.12 * s }, "expo.out", "expo.inOut");
-        break;
-      case "whipPanLeft":
-      case "whipPanRight": {
-        const dir = mv.move === "whipPanLeft" ? -1 : 1;
-        toPeak(withPan(base, dir * 26 * s, 0), "power3.in", "power3.out");
-        break;
-      }
-      case "shakeImpact":
-        // the decay rings AROUND the pre-move pose, it does not replace it —
-        // without the bias the final sample would drive `scale` to 0
-        applyDecayEnvelope(tl, rig, {
-          at,
-          windowSec: dur,
-          amplitude: { rotation: 1.6 * s, scale: 0.02 * s },
-          bias: { rotation: base.roll, scale: base.scale },
-          samples: SHAKE_SAMPLES,
-        });
-        break;
-      case "focusTarget": {
-        const anchor = mv.targetLayerId ? layerAnchors.get(mv.targetLayerId) : undefined;
-        if (!anchor) break;
+  rig.parentElement?.style.setProperty("perspective", `${scene.camera.perspective}px`);
 
-        // SMART SCALE / PAN COUPLING
-        //
-        // Centring a point that sits `d` percent away from the canvas centre
-        // needs a zoom of at least `1 / (1 − |d|/50)`; below that, honouring
-        // the pan would push the frame past the canvas edge and expose black
-        // void. So the move either boosts its zoom until the target is
-        // reachable, or — if even the cap cannot reach it (a target on the very
-        // edge of the canvas) — limits the pan to the safe band.
-        const dX = 50 - anchor.xPct;
-        const dY = 50 - anchor.yPct;
-        const authoredPeak = 1.45 * s;
-        const peakScale = Math.max(
-          authoredPeak,
-          requiredScaleForPan(Math.max(Math.abs(dX), Math.abs(dY)))
-        );
-        const { min, max } = safeLookAtRange(peakScale);
-        const clampTo = (v: number): number => Math.min(max, Math.max(min, v));
-        const lookAtX = clampTo(anchor.xPct);
-        const lookAtY = clampTo(anchor.yPct);
-
-        // a target the zoom cannot reach (it sits on the canvas edge) still has
-        // to render safely, so the pan is limited — and that limitation is
-        // reported, because the framing quietly departed from the brief
-        if (lookAtX !== anchor.xPct || lookAtY !== anchor.yPct) {
-          focusClamps.push({
-            startSec: at,
-            endSec: at + dur,
-            requested: { xPct: anchor.xPct, yPct: anchor.yPct },
-            applied: { xPct: lookAtX, yPct: lookAtY },
-          });
-        }
-
-        toPeak(toState(base, peakScale, lookAtX, lookAtY), "expo.out", "expo.inOut");
-        break;
-      }
-    }
-  }
-  return { focusClamps };
-}
-
-/**
- * The FINAL composed camera clamp.
- *
- * Installed on the master timeline's `onUpdate`, which fires after every child
- * has rendered — so it observes the pose that is actually rendered: keyframes,
- * moves and drift together.
- *
- * The write is SYNCHRONOUS (`gsap.quickSetter`), which is the whole point: a
- * deferred write (`gsap.set`, which lands on the global timeline) is applied
- * one tick later — by which time the next camera tween has already
- * overwritten it with the unclamped value. That is why a camera could be
- * "clamped" in the metadata while the screenshot still showed black void.
- */
-export function applyViewportClamp(
-  tl: gsap.core.Timeline,
-  rig: HTMLElement,
-  scene: SceneSpec,
-  info: CameraRuntimeInfo = { focusClamps: [] }
-): void {
-  void scene;
+  const setScaleX = gsap.quickSetter(rig, "scaleX") as (value: number) => void;
+  const setScaleY = gsap.quickSetter(rig, "scaleY") as (value: number) => void;
   const setX = gsap.quickSetter(rig, "xPercent") as (value: number) => void;
   const setY = gsap.quickSetter(rig, "yPercent") as (value: number) => void;
-  // The TIMELINE's own `onUpdate` is the only hook that is guaranteed to run
-  // after every child tween has written its pose — a sibling tween does not
-  // work, because GSAP keeps a timeline's children sorted by start time, and a
-  // keyframe that starts later in the scene would render *after* the guard and
-  // put the unclamped value straight back.
+  const setRot = gsap.quickSetter(rig, "rotation") as (value: number) => void;
+  const setRotX = gsap.quickSetter(rig, "rotationX") as (value: number) => void;
+  const setRotY = gsap.quickSetter(rig, "rotationY") as (value: number) => void;
+
+  const write = (timeSec: number): void => {
+    const pose = composeCameraAt(scene, timeSec, ctx);
+    // `quickSetter(rig, "scale")` is not usable: CSSPlugin expands the alias to
+    // "scaleX,scaleY" and the setter then fails to parse that as a property
+    // name. The uniform scale is written as both components instead.
+    setScaleX(pose.scale);
+    setScaleY(pose.scale);
+    setX(translationForLookAt(pose.scale, pose.xPct));
+    setY(translationForLookAt(pose.scale, pose.yPct));
+    setRot(pose.roll);
+    setRotX(pose.pitch);
+    setRotY(pose.yaw);
+
+    // report the pose BEFORE the clamp next to the pose that was rendered
+    rig.dataset[CAMERA_UNCLAMPED_X] = String(round(pose.wantXPct));
+    rig.dataset[CAMERA_UNCLAMPED_Y] = String(round(pose.wantYPct));
+
+    const limited = noteFocusClamp(rig, timeSec, focusClamps);
+    if (pose.clamped || limited) {
+      rig.dataset[CAMERA_CLAMP_FLAG] = "1";
+    } else {
+      delete rig.dataset[CAMERA_CLAMP_FLAG];
+    }
+  };
+
+  gsap.set(rig, { transformStyle: "preserve-3d" });
+  delete rig.dataset[CAMERA_CLAMP_FLAG];
+
   const previous = tl.eventCallback("onUpdate");
-  tl.eventCallback("onUpdate", function clampedOnUpdate(this: gsap.core.Timeline) {
-    clampRigToCanvas(rig, setX, setY);
-    noteFocusClamp(rig, this.time(), info.focusClamps);
+  tl.eventCallback("onUpdate", function composedOnUpdate(this: gsap.core.Timeline) {
+    write(this.time());
     if (typeof previous === "function") previous.call(this);
   });
+
+  // frame 0 must already be correct before anything seeks
+  write(0);
+
+  return { focusClamps, moveHolds };
 }
 
 /**
@@ -540,41 +784,16 @@ function noteFocusClamp(
   rig: HTMLElement,
   timeSec: number,
   focusClamps: readonly FocusClamp[]
-): void {
+): boolean {
   const active = focusClamps.find((c) => timeSec >= c.startSec && timeSec < c.endSec);
-  if (active) {
-    rig.dataset[CAMERA_REQUESTED_X] = String(round(active.requested.xPct));
-    rig.dataset[CAMERA_REQUESTED_Y] = String(round(active.requested.yPct));
-    rig.dataset[CAMERA_CLAMP_FLAG] = "1";
-  } else {
+  if (!active) {
     delete rig.dataset[CAMERA_REQUESTED_X];
     delete rig.dataset[CAMERA_REQUESTED_Y];
+    return false;
   }
-}
-
-function clampRigToCanvas(
-  rig: HTMLElement,
-  setX: (value: number) => void,
-  setY: (value: number) => void
-): void {
-  const scale = Number(gsap.getProperty(rig, "scale")) || 1;
-  const xPercent = Number(gsap.getProperty(rig, "xPercent")) || 0;
-  const yPercent = Number(gsap.getProperty(rig, "yPercent")) || 0;
-  const clamped = clampCameraTranslation(scale, xPercent, yPercent);
-
-  // remember the pose BEFORE the clamp, so `framesMeta` can report what the
-  // author asked for next to what was actually rendered
-  rig.dataset[CAMERA_UNCLAMPED_X] = String(round(lookAtPct(scale, xPercent)));
-  rig.dataset[CAMERA_UNCLAMPED_Y] = String(round(lookAtPct(scale, yPercent)));
-
-  if (clamped.xPercent !== xPercent) setX(clamped.xPercent);
-  if (clamped.yPercent !== yPercent) setY(clamped.yPercent);
-
-  if (clamped.clamped) {
-    rig.dataset[CAMERA_CLAMP_FLAG] = "1";
-  } else {
-    delete rig.dataset[CAMERA_CLAMP_FLAG];
-  }
+  rig.dataset[CAMERA_REQUESTED_X] = String(round(active.requested.xPct));
+  rig.dataset[CAMERA_REQUESTED_Y] = String(round(active.requested.yPct));
+  return true;
 }
 
 function round(value: number): number {

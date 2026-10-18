@@ -5,14 +5,18 @@ import { parseScene, type SceneSpecInput } from "@motionforge/scene-spec";
 
 import {
   applyCamera,
-  applyViewportClamp,
   cameraStateFromRig,
   clampCameraTranslation,
+  composeCameraAt,
+  emptyCameraContext,
   FOCUS_MAX_SCALE,
+  FOCUS_PAN_HEADROOM_FRACTION,
+  FOCUS_SCALE_DELTA,
   lookAtPct,
   requiredScaleForPan,
   safeLookAtRange,
   translationForLookAt,
+  type CameraContext,
   type LayerAnchor,
 } from "../src/camera.js";
 import { applyTransitions } from "../src/transitions.js";
@@ -23,9 +27,8 @@ import { applyTransitions } from "../src/transitions.js";
  *   "The rendered pixels must never show black void outside the canvas."
  *
  * The camera is the only system that can break it, so it gets three layers of
- * defence: exact centring maths, a smart scale/pan coupling for `focusTarget`,
- * and a FINAL composed clamp that runs on every frame — synchronously, because
- * a deferred write is a write the next tween overwrites.
+ * defence: exact centring maths, a composition-safe focus budget for
+ * `focusTarget`, and a clamp on the FINAL composed pose of every frame.
  */
 
 function sceneOf(input: SceneSpecInput) {
@@ -38,6 +41,10 @@ function rigFixture(): { rig: HTMLElement; anchors: Map<string, LayerAnchor> } {
   return { rig, anchors: new Map<string, LayerAnchor>() };
 }
 
+function ctxOf(anchors: Map<string, LayerAnchor>): CameraContext {
+  return { ...emptyCameraContext(), layerAnchors: anchors };
+}
+
 function buildCamera(
   scene: ReturnType<typeof sceneOf>,
   rig: HTMLElement,
@@ -45,8 +52,7 @@ function buildCamera(
 ): gsap.core.Timeline {
   const tl = gsap.timeline({ paused: true });
   tl.to({}, { duration: scene.durationMs / 1000 }, 0);
-  applyCamera(tl, scene, rig, anchors);
-  applyViewportClamp(tl, rig, scene);
+  applyCamera(tl, scene, rig, ctxOf(anchors));
   return tl;
 }
 
@@ -172,7 +178,7 @@ describe("final composed viewport clamp", () => {
 
   it("applies the clamp SYNCHRONOUSLY (a deferred write is overwritten)", () => {
     // The bug: the clamp was written with `gsap.set`, which lands on the
-    // GLOBAL timeline — one tick later, by which time the next camera tween
+    // GLOBAL timeline — one tick later, by which point the next camera tween
     // had already put the unclamped value back. The rendered frame showed void
     // while the metadata claimed the camera was clamped.
     const scene = sceneOf({
@@ -194,10 +200,10 @@ describe("final composed viewport clamp", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 3. focusTarget: smart scale / pan coupling
+// 3. focusTarget: a composition-safe budget, not a solved-for zoom
 // ---------------------------------------------------------------------------
 
-describe("focusTarget scale/pan coupling", () => {
+describe("focusTarget scale/pan budget", () => {
   const focusScene = (strength: number) =>
     sceneOf({
       schemaVersion: 1,
@@ -206,7 +212,13 @@ describe("focusTarget scale/pan coupling", () => {
       durationMs: 6000,
       layers: [
         { id: "bg", type: "background", variant: { variant: "solid", color: "#000" } },
-        { id: "logo", type: "card", at: 0, position: { xPct: 50, yPct: 25 }, variant: { variant: "glassCard", title: "T" } },
+        {
+          id: "logo",
+          type: "card",
+          at: 0,
+          position: { xPct: 50, yPct: 25 },
+          variant: { variant: "glassCard", title: "T" },
+        },
       ],
       camera: {
         keyframes: [{ at: 0, scale: 1.08 }],
@@ -214,27 +226,48 @@ describe("focusTarget scale/pan coupling", () => {
       },
     } as SceneSpecInput);
 
-  it("boosts the zoom until the target is reachable, so the frame stays covered", () => {
-    const scene = focusScene(0.74);
-    const { rig, anchors } = rigFixture();
-    // the AUTHORED anchor — a measured box would be distorted by the layer's
-    // own entrance tween
-    anchors.set("logo", { xPct: 50, yPct: 25 });
-    const tl = buildCamera(scene, rig, anchors);
-    tl.seek(1.6, false);
-
-    const scale = Number(gsap.getProperty(rig, "scale"));
-    const x = Number(gsap.getProperty(rig, "xPercent"));
-    const y = Number(gsap.getProperty(rig, "yPercent"));
-    // zero void
-    expect(voidFree(scale, x, y)).toBe(true);
-    // …and the zoom really was boosted: 25% needs S ≥ 1/(1−0.25) = 1.333
-    expect(scale).toBeGreaterThanOrEqual(1.333 - 1e-6);
-    // the target is centred
-    expect(lookAtPct(scale, y)).toBeCloseTo(25, 1);
+  it("caps the focus zoom at a gentle delta instead of the zoom the target needs", () => {
+    // THE DEFECT: centring a logo 25% above the middle "needs" 1.333×, and the
+    // move used to apply exactly that — throwing the headline below it off the
+    // bottom of the frame. The focus is now a bounded nudge.
+    const scene = focusScene(1);
+    const anchors = new Map<string, LayerAnchor>([["logo", { xPct: 50, yPct: 25 }]]);
+    const ctx = ctxOf(anchors);
+    const peak = composeCameraAt(scene, 1.6, ctx);
+    expect(peak.scale).toBeCloseTo(1.08 + FOCUS_SCALE_DELTA, 3);
+    expect(peak.scale).toBeLessThan(1.25);
+    expect(peak.scale).toBeGreaterThan(1.1);
   });
 
-  it("keeps the frame covered even for a target that cannot be reached", () => {
+  it("scales the budget with strength but never past the cap", () => {
+    const anchors = new Map<string, LayerAnchor>([["logo", { xPct: 50, yPct: 25 }]]);
+    const ctx = ctxOf(anchors);
+    const half = composeCameraAt(focusScene(0.5), 1.6, ctx).scale - 1.08;
+    const full = composeCameraAt(focusScene(1), 1.6, ctx).scale - 1.08;
+    const over = composeCameraAt(focusScene(3), 1.6, ctx).scale - 1.08;
+    expect(half).toBeCloseTo(FOCUS_SCALE_DELTA / 2, 3);
+    expect(full).toBeCloseTo(FOCUS_SCALE_DELTA, 3);
+    // strength above 1 is clamped away: the brief caps the delta at 0.14
+    expect(over).toBeCloseTo(FOCUS_SCALE_DELTA, 3);
+  });
+
+  it("keeps the frame covered and the pan inside 80% of the safe headroom", () => {
+    const scene = focusScene(1);
+    const anchors = new Map<string, LayerAnchor>([["logo", { xPct: 50, yPct: 25 }]]);
+    const pose = composeCameraAt(scene, 1.6, ctxOf(anchors));
+    const headroom = safeLookAtRange(pose.scale).half;
+    // the pan is limited: the target sits 25% away and cannot be centred
+    expect(Math.abs(50 - pose.yPct)).toBeLessThan(25);
+    // …and never spends more than 80% of what the zoom made safe
+    expect(Math.abs(50 - pose.yPct)).toBeLessThanOrEqual(
+      FOCUS_PAN_HEADROOM_FRACTION * headroom + 1e-6
+    );
+    const tx = translationForLookAt(pose.scale, pose.xPct);
+    const ty = translationForLookAt(pose.scale, pose.yPct);
+    expect(voidFree(pose.scale, tx, ty)).toBe(true);
+  });
+
+  it("keeps the frame covered even for a target on the canvas edge", () => {
     const scene = sceneOf({
       schemaVersion: 1,
       name: "focus edge",
@@ -242,22 +275,39 @@ describe("focusTarget scale/pan coupling", () => {
       durationMs: 6000,
       layers: [
         { id: "bg", type: "background", variant: { variant: "solid", color: "#000" } },
-        { id: "logo", type: "card", at: 0, position: { xPct: 50, yPct: 0 }, variant: { variant: "glassCard", title: "T" } },
+        {
+          id: "logo",
+          type: "card",
+          at: 0,
+          position: { xPct: 50, yPct: 0 },
+          variant: { variant: "glassCard", title: "T" },
+        },
       ],
       camera: {
         keyframes: [{ at: 0, scale: 1 }],
         moves: [{ move: "focusTarget", at: 1000, durationMs: 1200, targetLayerId: "logo", strength: 1 }],
       },
     } as SceneSpecInput);
-    const { rig, anchors } = rigFixture();
-    anchors.set("logo", { xPct: 50, yPct: 0 });
+    const anchors = new Map<string, LayerAnchor>([["logo", { xPct: 50, yPct: 0 }]]);
+    const pose = composeCameraAt(scene, 1.6, ctxOf(anchors));
+    const x = translationForLookAt(pose.scale, pose.xPct);
+    const y = translationForLookAt(pose.scale, pose.yPct);
+    expect(voidFree(pose.scale, x, y)).toBe(true);
+    // the zoom is capped, so the move does not run away
+    expect(pose.scale).toBeLessThanOrEqual(1 + FOCUS_SCALE_DELTA + 1e-6);
+  });
+
+  it("reports the reframed look-at so a limited focus is never silent", () => {
+    const scene = focusScene(1);
+    const anchors = new Map<string, LayerAnchor>([["logo", { xPct: 50, yPct: 25 }]]);
+    const { rig } = rigFixture();
     const tl = buildCamera(scene, rig, anchors);
     tl.seek(1.6, false);
-    const scale = Number(gsap.getProperty(rig, "scale"));
-    const y = Number(gsap.getProperty(rig, "yPercent"));
-    expect(voidFree(scale, 0, y)).toBe(true);
-    // the zoom is capped, so the move does not run away
-    expect(scale).toBeLessThanOrEqual(FOCUS_MAX_SCALE + 1e-6);
+    const state = cameraStateFromRig(rig);
+    // the target is NOT centred, and the metadata says so
+    expect(state.clampedVoid).toBe(true);
+    expect(state.unclampedYPct).toBeCloseTo(25, 1);
+    expect(state.yPct).toBeGreaterThan(25);
   });
 
   it("returns the camera to its pre-move pose when the move ends", () => {
@@ -294,9 +344,8 @@ describe("whipPan transition", () => {
       const { rig, anchors } = rigFixture();
       const tl = gsap.timeline({ paused: true });
       tl.to({}, { duration: scene.durationMs / 1000 }, 0);
-      applyCamera(tl, scene, rig, anchors);
+      applyCamera(tl, scene, rig, ctxOf(anchors));
       applyTransitions(tl, scene, rig);
-      applyViewportClamp(tl, rig, scene);
 
       tl.seek(0.5, false);
       const before = {
@@ -320,9 +369,8 @@ describe("whipPan transition", () => {
     const { rig, anchors } = rigFixture();
     const tl = gsap.timeline({ paused: true });
     tl.to({}, { duration: scene.durationMs / 1000 }, 0);
-    applyCamera(tl, scene, rig, anchors);
+    applyCamera(tl, scene, rig, ctxOf(anchors));
     applyTransitions(tl, scene, rig);
-    applyViewportClamp(tl, rig, scene);
 
     for (let t = 1; t <= 1.5; t += 0.02) {
       tl.seek(t, false);
@@ -330,5 +378,29 @@ describe("whipPan transition", () => {
       const x = Number(gsap.getProperty(rig, "xPercent"));
       expect(voidFree(scale, x, 0), `void at t=${t.toFixed(2)}s (scale ${scale}, x ${x}%)`).toBe(true);
     }
+  });
+
+  it("builds no rig tweens at all — the camera has exactly one writer", () => {
+    const scene = whipScene("left");
+    const { rig, anchors } = rigFixture();
+    const tl = gsap.timeline({ paused: true });
+    tl.to({}, { duration: scene.durationMs / 1000 }, 0);
+    applyCamera(tl, scene, rig, ctxOf(anchors));
+    const before = tl.getChildren().length;
+    applyTransitions(tl, scene, rig);
+
+    // every child the transitions add animates the OVERLAY, never the rig:
+    // a second writer is exactly what produced the double-pump and the stranded
+    // poses this architecture exists to remove.
+    const rigTargets: string[] = [];
+    for (const child of tl.getChildren(false, true, true)) {
+      const tween = child as unknown as { targets?: () => unknown[] };
+      if (typeof tween.targets !== "function") continue;
+      for (const target of tween.targets()) {
+        if (target === rig) rigTargets.push("rig");
+      }
+    }
+    expect(rigTargets).toHaveLength(0);
+    expect(tl.getChildren().length).toBeGreaterThan(before);
   });
 });
