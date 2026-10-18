@@ -1,4 +1,5 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import solidPlugin from 'vite-plugin-solid';
 import { resolve } from 'path';
 
 export default defineConfig({
@@ -27,11 +28,15 @@ export default defineConfig({
     },
   },
   renderer: {
-    root: resolve(__dirname, '../../frontend'),
+    root: resolve(__dirname, '../studio'),
+    css: {
+      postcss: resolve(__dirname, '../studio/postcss.config.js'),
+    },
+    plugins: [solidPlugin()],
     build: {
       rollupOptions: {
         input: {
-          index: resolve(__dirname, '../../frontend/index.html'),
+          index: resolve(__dirname, '../studio/index.html'),
         },
       },
     },

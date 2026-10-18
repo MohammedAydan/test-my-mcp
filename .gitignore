@@ -15,3 +15,5 @@ tmp/
 # unanchored `renders/` or `logs/` here would also swallow the client-job
 # template's renders/ and logs/ directories.
 /packages/core-engine/data/
+out/
+*.mfproj

@@ -532,9 +532,12 @@ async function createMainWindow(): Promise<void> {
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     const packagedHtml = path.resolve(__dirname, '../renderer/index.html');
+    const studioDistHtml = path.resolve(__dirname, '../../studio/dist/index.html');
     const localHtml = path.resolve(__dirname, '../../../frontend/index.html');
     if (existsSync(packagedHtml)) {
       await mainWindow.loadFile(packagedHtml);
+    } else if (existsSync(studioDistHtml)) {
+      await mainWindow.loadFile(studioDistHtml);
     } else if (existsSync(localHtml)) {
       await mainWindow.loadFile(localHtml);
     }

@@ -4,7 +4,7 @@
 MotionForge Studio is a desktop-class motion graphics web application for programmatic and visual authoring of video scenes. It connects to the MotionForge core-engine at `:4000`, enabling real-time previewing, timeline scrubbing, multi-layer inspection, dynamic keyframe rendering, asset vault management, and video generation.
 
 ## Current Status
-- Active feature: deep-diagnostic-and-verification (Completed & 22/22 Tests Passing)
+- Active feature: desktop-app (Commit 3: Solid.js Skeleton with Read-Only Parity)
 - Overall health: green
 - Last updated: 2026-10-18
 
