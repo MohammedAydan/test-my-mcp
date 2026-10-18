@@ -41,7 +41,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
-    "transform:translate(-50%,-50%)",
+    `transform:translate(-50%,-50%)${layer.rotation ? ` rotate(${layer.rotation}deg)` : ""}`,
   ].join(";");
 
   if (v.variant === "glassCard" || v.variant === "callout") {

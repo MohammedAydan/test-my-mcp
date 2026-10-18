@@ -31,5 +31,6 @@ declare global {
      * the pixels.
      */
     describeFrame?(timeMs: number): FrameDescription;
+    getLayerBounds?(): Record<string, { x: number; y: number; width: number; height: number; rotation: number }>;
   }
 }

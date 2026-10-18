@@ -13,6 +13,8 @@ export const layerBaseSchema = z.strictObject({
   z: z.number().int().min(0).max(999).optional(),
   at: msSchema.default(0),
   duration: msSchema.optional(),
+  /** Rotation in degrees (-360 to 360) around layer center */
+  rotation: z.number().min(-360).max(360).optional(),
   /**
    * Reading direction for this layer's own copy.
    *

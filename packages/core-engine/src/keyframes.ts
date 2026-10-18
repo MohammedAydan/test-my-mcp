@@ -211,3 +211,63 @@ async function capturePreview(
     await page.setViewportSize({ width, height }).catch(() => undefined);
   }
 }
+
+export interface LayerBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+}
+
+/**
+ * Extract layer bounding boxes on the server side via Playwright.
+ */
+export async function getFrameBounds(opts: {
+  scene: SceneSpec;
+  sceneId: string;
+  baseUrl: string;
+  frameIndex: number;
+}): Promise<Record<string, LayerBounds>> {
+  const browserRef = await browser();
+  const { width, height } = resolveCanvasSize(opts.scene.canvas);
+  const context = await browserRef.newContext({
+    viewport: { width, height },
+    deviceScaleFactor: 1,
+  });
+  try {
+    const page = await context.newPage();
+    await page.goto(
+      `${opts.baseUrl}/preview?scene=${encodeURIComponent(opts.sceneId)}&render=1&fps=60`,
+      { waitUntil: "networkidle" }
+    );
+    await page.waitForFunction(
+      () => {
+        const g = globalThis as unknown as { renderConfig?: object; seekToFrame?: unknown };
+        return typeof g.renderConfig === "object" && typeof g.seekToFrame === "function";
+      },
+      null,
+      { timeout: 30_000 }
+    );
+    await page.evaluate(() =>
+      (globalThis as unknown as { whenSceneReady?: () => Promise<unknown> }).whenSceneReady?.()
+    );
+
+    await page.evaluate((f) => {
+      return (globalThis as unknown as { seekToFrame(frame: number): Promise<void> }).seekToFrame(f);
+    }, opts.frameIndex);
+
+    const bounds = await page.evaluate(() => {
+      const g = globalThis as unknown as { getLayerBounds?: () => unknown };
+      if (typeof g.getLayerBounds === "function") {
+        return g.getLayerBounds();
+      }
+      return {};
+    });
+
+    return (bounds as Record<string, LayerBounds>) || {};
+  } finally {
+    await context.close();
+  }
+}
+

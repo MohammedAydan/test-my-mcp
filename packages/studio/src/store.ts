@@ -13,6 +13,10 @@ export interface StudioState {
   zoom: number;
   panOffset: number;
   snapEnabled: boolean;
+  viewportZoom: number;
+  viewportPan: { x: number; y: number };
+  activeTool: 'select' | 'hand';
+  layerBounds: Record<string, { x: number; y: number; width: number; height: number; rotation: number }>;
   openScenes: string[];
   recentScenes: Array<{ id: string; name: string; lastOpened: number }>;
   renderQueue: RenderJobStatus[];
@@ -67,6 +71,10 @@ const [state, setState] = createStore<StudioState>({
   zoom: 1,
   panOffset: 0,
   snapEnabled: true,
+  viewportZoom: 1,
+  viewportPan: { x: 0, y: 0 },
+  activeTool: 'select',
+  layerBounds: {},
   openScenes: initialOpenScenes,
   recentScenes: initialRecentScenes,
   renderQueue: initialRenderQueue,
@@ -267,6 +275,26 @@ export const store = {
       setState({ dirty: false, lastSaved: new Date() });
     }
     syncDesktopDirty();
+  },
+
+  setViewportZoom(zoom: number) {
+    setState('viewportZoom', Math.max(0.25, Math.min(4, zoom)));
+  },
+
+  setViewportPan(pan: { x: number; y: number } | ((prev: { x: number; y: number }) => { x: number; y: number })) {
+    if (typeof pan === 'function') {
+      setState('viewportPan', pan(state.viewportPan));
+    } else {
+      setState('viewportPan', pan);
+    }
+  },
+
+  setActiveTool(tool: 'select' | 'hand') {
+    setState('activeTool', tool);
+  },
+
+  setLayerBounds(bounds: Record<string, { x: number; y: number; width: number; height: number; rotation: number }>) {
+    setState('layerBounds', bounds);
   },
 
   setActiveModal(modal: string | null) {

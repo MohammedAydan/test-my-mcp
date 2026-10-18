@@ -1,6 +1,7 @@
 import { Component, Show, createEffect, onMount, onCleanup, createSignal } from 'solid-js';
 import { store } from '../store.js';
 import { api } from '../api.js';
+import { CanvasOverlay } from './CanvasOverlay.js';
 
 export function fmtTime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -18,6 +19,7 @@ interface PreviewProps {
 export const Preview: Component<PreviewProps> = (props) => {
   const state = store.state;
   let iframeRef: HTMLIFrameElement | undefined;
+  let stageContainerRef: HTMLDivElement | undefined;
   const [isFullscreen, setIsFullscreen] = createSignal(false);
   let pendingSeek: number | null = null;
   let rafSeekId: number | null = null;
@@ -78,10 +80,13 @@ export const Preview: Component<PreviewProps> = (props) => {
       if (!data || typeof data !== 'object') return;
       if (data.type === 'motionforge:ready') {
         console.log('[Preview] Runtime ready:', data);
+        iframeRef?.contentWindow?.postMessage({ type: 'getLayerBounds', frame: 0 }, '*');
       } else if (data.type === 'motionforge:frame') {
         if (state.playing && typeof data.atMs === 'number') {
           store.setPlayhead(data.atMs);
         }
+      } else if (data.type === 'layerBounds' && data.bounds) {
+        store.setLayerBounds(data.bounds);
       }
     };
 
@@ -141,7 +146,12 @@ export const Preview: Component<PreviewProps> = (props) => {
         </button>
       </div>
 
-      <div class={`preview-stage ${isFullscreen() ? 'preview-stage-fullscreen' : ''}`} id="preview-stage" tabindex="0">
+      <div
+        ref={stageContainerRef}
+        class={`preview-stage ${isFullscreen() ? 'preview-stage-fullscreen' : ''}`}
+        id="preview-stage"
+        tabindex="0"
+      >
         <Show
           when={Boolean(state.scene && state.sceneId)}
           fallback={
@@ -161,14 +171,24 @@ export const Preview: Component<PreviewProps> = (props) => {
             </div>
           }
         >
-          <iframe
-            ref={iframeRef}
-            id="preview-iframe"
-            class="preview-iframe"
-            title="Scene preview runtime"
-            sandbox="allow-scripts allow-same-origin"
-            src={previewSrc()}
-          />
+          <div class="relative w-full h-full flex items-center justify-center overflow-hidden">
+            <iframe
+              ref={iframeRef}
+              id="preview-iframe"
+              class="preview-iframe"
+              title="Scene preview runtime"
+              sandbox="allow-scripts allow-same-origin"
+              src={previewSrc()}
+              style={{
+                transform: `translate(${state.viewportPan.x}px, ${state.viewportPan.y}px) scale(${state.viewportZoom})`,
+                'transform-origin': 'center center',
+              }}
+            />
+            <CanvasOverlay
+              containerRef={() => stageContainerRef}
+              iframeRef={() => iframeRef}
+            />
+          </div>
         </Show>
       </div>
 

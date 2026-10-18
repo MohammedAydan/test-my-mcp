@@ -17,11 +17,11 @@
 - [x] 2.4 Commit 5: Remove vanilla UI, point desktop renderer to `packages/studio`
 
 ## Phase 3: Direct Canvas Manipulation (Phase A)
-- [ ] 3.1 Backend: Add `GET /api/scenes/:id/frame/:frameIndex/bounds` in `core-engine`
-- [ ] 3.2 Schema & Runtime: Add `rotation` to layer specs and GSAP renderers
-- [ ] 3.3 SVG Overlay: Implement 8 resize handles, 1 rotation handle, bounding boxes
-- [ ] 3.4 Snap Engine: Smart guides (`--snap-guide: #22d3ee`) with 5px threshold
-- [ ] 3.5 Canvas Navigation: Ctrl+Wheel zoom, Space+drag pan, Fit / 100% controls
+- [x] 3.1 Backend: Add `GET /api/scenes/:id/frame/:frameIndex/bounds` in `core-engine`
+- [x] 3.2 Schema & Runtime: Add `rotation` to layer specs and GSAP renderers
+- [x] 3.3 SVG Overlay: Implement 8 resize handles, 1 rotation handle, bounding boxes
+- [x] 3.4 Snap Engine: Smart guides (`--snap-guide: #22d3ee`) with 5px threshold
+- [x] 3.5 Canvas Navigation: Ctrl+Wheel zoom, Space+drag pan, Fit / 100% controls
 
 ## Phase 4: Timeline NLE (Phase B)
 - [ ] 4.1 Schema: Add `KeyframeTrack` and keyframe interpolator in `scene-spec` and `scene-runtime`

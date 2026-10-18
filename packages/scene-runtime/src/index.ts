@@ -122,6 +122,19 @@ async function boot(): Promise<void> {
       if (mounted) {
         mounted.tl.pause();
       }
+    } else if (data.type === "getLayerBounds" || data.type === "motionforge:getLayerBounds") {
+      if (typeof data.frame === "number" && window.seekToFrame) {
+        await window.seekToFrame(data.frame);
+      }
+      const bounds = computeLayerBounds();
+      window.parent?.postMessage(
+        {
+          type: "layerBounds",
+          frame: data.frame ?? 0,
+          bounds,
+        },
+        "*"
+      );
     }
   });
 
@@ -220,6 +233,7 @@ async function mountScene(
   };
   // numeric per-frame description for `inspect_scene_keyframes`
   window.describeFrame = describeFrame;
+  window.getLayerBounds = computeLayerBounds;
 
   if (renderMode) {
     // headless render entry: settle on frame 0, then signal readiness
@@ -229,12 +243,55 @@ async function mountScene(
   }
 }
 
+export function computeLayerBounds(): Record<
+  string,
+  { x: number; y: number; width: number; height: number; rotation: number }
+> {
+  if (!stage || !mounted) return {};
+  const stageBox = stage.stage.getBoundingClientRect();
+  const designW = stage.width || 1;
+  const scale = stageBox.width / designW || 1;
+
+  const result: Record<
+    string,
+    { x: number; y: number; width: number; height: number; rotation: number }
+  > = {};
+  const sceneLayers = new Map(mounted.scene.layers.map((l) => [l.id, l]));
+
+  const layerElements = stage.content.querySelectorAll<HTMLElement>(".mf-layer[data-layer-id]");
+  for (const layerEl of Array.from(layerElements)) {
+    const id = layerEl.dataset.layerId;
+    if (!id) continue;
+    const layer = sceneLayers.get(id);
+    const rotation =
+      layer && "rotation" in layer && typeof layer.rotation === "number"
+        ? layer.rotation
+        : 0;
+
+    const exitWrapper = layerEl.querySelector<HTMLElement>(".mf-exit");
+    const content =
+      (exitWrapper?.firstElementChild as HTMLElement | null) ?? exitWrapper ?? layerEl;
+
+    const rect = content.getBoundingClientRect();
+    result[id] = {
+      x: Math.round(((rect.left - stageBox.left) / scale) * 10) / 10,
+      y: Math.round(((rect.top - stageBox.top) / scale) * 10) / 10,
+      width: Math.round((rect.width / scale) * 10) / 10,
+      height: Math.round((rect.height / scale) * 10) / 10,
+      rotation,
+    };
+  }
+
+  return result;
+}
+
 function unmountScene(): void {
   if (!mounted || !stage) return;
   mounted.ui?.dispose();
   mounted.tl.kill();
   mounted.lifecycle.clear();
   window.describeFrame = undefined;
+  window.getLayerBounds = undefined;
   resetStage(stage);
   mounted = null;
 }
