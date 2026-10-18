@@ -21,11 +21,10 @@
  */
 import { gsap } from "gsap";
 
+import { FINAL_ACT_HOLD_MS } from "@motionforge/scene-spec";
+
 /** Fraction of the effect window spent ramping up from identity (and down to it). */
 export const ENVELOPE_RAMP_FRACTION = 0.2;
-
-/** Guard band, in ms, before a layer's own end where an auto-exit fade may start. */
-export const AUTO_EXIT_TAIL_GUARD_MS = 50;
 
 /** Length of the implicit fade applied to a bounded layer that declares no exit. */
 export const AUTO_EXIT_FADE_MS = 220;
@@ -395,6 +394,10 @@ export function clampCameraPan(scale: number, xPct: number, yPct: number): Clamp
  * True when a layer's own window ends early in the scene and no `exit` preset
  * was authored. Without this guard the lifecycle registry hides the layer at its
  * end time, which paints a one-frame pop instead of a fade.
+ *
+ * A layer ending inside {@link FINAL_ACT_HOLD_MS} of the scene end is NOT
+ * eligible: it is the closing brand frame, and `isFinalActHold` (in
+ * `scene-spec`) extends it to the final frame instead.
  */
 export function needsAutoExit(
   layer: { at: number; duration?: number; exit?: unknown },
@@ -403,7 +406,7 @@ export function needsAutoExit(
   if (layer.exit) return false;
   if (layer.duration === undefined) return false;
   const endMs = layer.at + layer.duration;
-  return endMs < sceneDurationMs - AUTO_EXIT_TAIL_GUARD_MS;
+  return endMs < sceneDurationMs - FINAL_ACT_HOLD_MS;
 }
 
 /** Where the implicit fade sits, in ms, relative to the layer's own window. */

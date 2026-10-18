@@ -13,6 +13,15 @@ export const layerBaseSchema = z.strictObject({
   z: z.number().int().min(0).max(999).optional(),
   at: msSchema.default(0),
   duration: msSchema.optional(),
+  /**
+   * Reading direction for this layer's own copy.
+   *
+   * Arabic/Hebrew layers set `"rtl"`; the runtime ALSO infers it from the text
+   * itself (Arabic script anywhere in the layer's copy), so a card lays out
+   * right-to-left without the author having to remember. Inline numerals stay
+   * LTR automatically — that is the bidi algorithm's job, not this flag's.
+   */
+  direction: z.enum(["ltr", "rtl"]).default("ltr"),
   entrance: presetRefSchema.optional(),
   emphasis: presetRefSchema.optional(),
   exit: presetRefSchema.optional(),

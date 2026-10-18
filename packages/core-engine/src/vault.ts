@@ -24,10 +24,11 @@ export function mimeFor(filename: string): string {
   return MIME_BY_EXT[path.extname(filename).toLowerCase()] ?? "application/octet-stream";
 }
 
-/** Vault filenames are opaque slugs — reject path separators/traversal. */
+/** Vault filenames are opaque slugs — reject path traversal but allow subdirectories. */
 export function sanitizeVaultName(name: string): string | null {
   const trimmed = name.trim();
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(trimmed) || trimmed.includes("..")) return null;
+  // Allow subdirectories (a/b/c) but no traversal (..)
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(trimmed) || trimmed.includes("..")) return null;
   return trimmed;
 }
 

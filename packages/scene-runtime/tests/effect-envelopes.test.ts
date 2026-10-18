@@ -950,9 +950,12 @@ describe("layer auto-exit guard", () => {
     expect(needsAutoExit({ ...base }, 10000)).toBe(false);
   });
 
-  it("ignores a tail within the 50 ms guard band (nothing to fade)", () => {
+  it("ignores a tail within the final-act hold (the closing frame stays put)", () => {
+    // 500 ms before the scene end a layer IS the closing brand frame: it is
+    // held to the final frame rather than faded out under it
     expect(needsAutoExit({ ...base, duration: 9970 }, 10000)).toBe(false);
-    expect(needsAutoExit({ ...base, duration: 9940 }, 10000)).toBe(true);
+    expect(needsAutoExit({ ...base, duration: 9940 }, 10000)).toBe(false);
+    expect(needsAutoExit({ ...base, duration: 9400 }, 10000)).toBe(true);
   });
 
   it("places the fade in the tail of the layer's own window", () => {

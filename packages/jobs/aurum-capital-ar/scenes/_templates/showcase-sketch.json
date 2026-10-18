@@ -1,0 +1,250 @@
+{
+  "schemaVersion": 1,
+  "name": "Showcase Sketch",
+  "canvas": {
+    "shape": "16:9",
+    "scale": 1080
+  },
+  "durationMs": 10000,
+  "fonts": [
+    {
+      "role": "hero",
+      "family": "Cairo",
+      "provider": "google",
+      "weights": [
+        700,
+        900
+      ]
+    }
+  ],
+  "layers": [
+    {
+      "id": "bg",
+      "type": "background",
+      "variant": {
+        "variant": "meshGradient",
+        "base": "#05070d",
+        "blobs": [
+          {
+            "color": "#3b1f7a",
+            "xPct": 20,
+            "yPct": 28,
+            "radiusPct": 62,
+            "drift": 0.45
+          },
+          {
+            "color": "#1b3a80",
+            "xPct": 80,
+            "yPct": 36,
+            "radiusPct": 55,
+            "drift": 0.3
+          }
+        ]
+      }
+    },
+    {
+      "id": "headline-ar",
+      "type": "kineticText",
+      "at": 600,
+      "text": "أهلاً بك في موشن فورج",
+      "direction": "rtl",
+      "role": "hero",
+      "googleFamily": "Cairo",
+      "sizePx": 96,
+      "position": {
+        "xPct": 50,
+        "yPct": 45
+      },
+      "fill": {
+        "type": "linear",
+        "angleDeg": 120,
+        "stops": [
+          {
+            "color": "#ffffff",
+            "at": 0
+          },
+          {
+            "color": "#a5f3fc",
+            "at": 100
+          }
+        ]
+      },
+      "animateBy": "word",
+      "entrance": {
+        "name": "blurFadeIn",
+        "staggerMs": 140
+      },
+      "sfx": [
+        {
+          "sfx": "whoosh",
+          "offsetMs": 0
+        }
+      ]
+    },
+    {
+      "id": "headline-en",
+      "type": "kineticText",
+      "at": 1600,
+      "text": "Motion, engineered.",
+      "sizePx": 44,
+      "position": {
+        "xPct": 50,
+        "yPct": 60
+      },
+      "fill": "#93c5fd",
+      "entrance": {
+        "name": "smoothSlideUp",
+        "staggerMs": 90
+      }
+    },
+    {
+      "id": "card",
+      "type": "card",
+      "at": 3200,
+      "position": {
+        "xPct": 50,
+        "yPct": 32
+      },
+      "variant": {
+        "variant": "glassCard",
+        "title": "Deterministic Pipeline",
+        "body": "Every frame seeked, captured and piped."
+      },
+      "entrance": {
+        "name": "3dFlipIn"
+      },
+      "sfx": [
+        {
+          "sfx": "subImpact",
+          "offsetMs": 0
+        }
+      ]
+    },
+    {
+      "id": "bar",
+      "type": "card",
+      "at": 5400,
+      "position": {
+        "xPct": 50,
+        "yPct": 62
+      },
+      "variant": {
+        "variant": "progressBar",
+        "label": "Encoding pipeline",
+        "value": 94,
+        "fill": {
+          "type": "linear",
+          "angleDeg": 90,
+          "stops": [
+            {
+              "color": "#22d3ee",
+              "at": 0
+            },
+            {
+              "color": "#a78bfa",
+              "at": 100
+            }
+          ]
+        },
+        "showPercentage": true,
+        "widthPx": 640
+      },
+      "entrance": {
+        "name": "maskRevealWipe"
+      },
+      "sfx": [
+        {
+          "sfx": "riser",
+          "offsetMs": 0
+        }
+      ]
+    },
+    {
+      "id": "counter",
+      "type": "card",
+      "at": 7200,
+      "position": {
+        "xPct": 50,
+        "yPct": 40
+      },
+      "variant": {
+        "variant": "counter",
+        "from": 0,
+        "to": 87,
+        "suffix": "%",
+        "sizePx": 140
+      },
+      "entrance": {
+        "name": "springPop"
+      }
+    },
+    {
+      "id": "fgx",
+      "type": "foregroundFX",
+      "effects": [
+        {
+          "kind": "vignette",
+          "strength": 0.5
+        },
+        {
+          "kind": "filmGrain",
+          "opacity": 0.06
+        },
+        {
+          "kind": "colorGrade",
+          "contrast": 0.06,
+          "saturation": 0.08,
+          "warmth": 0.12
+        }
+      ]
+    }
+  ],
+  "camera": {
+    "keyframes": [
+      {
+        "at": 0,
+        "scale": 1
+      },
+      {
+        "at": 9000,
+        "scale": 1.28,
+        "ease": "power3.inOut"
+      }
+    ],
+    "drift": {
+      "amplitudePct": 0.5,
+      "periodMs": 5200
+    },
+    "moves": [
+      {
+        "move": "slowPushIn",
+        "at": 3000,
+        "durationMs": 2200,
+        "strength": 0.9
+      }
+    ]
+  },
+  "transitions": [
+    {
+      "kind": "wipe",
+      "at": 2800,
+      "direction": "left",
+      "durationMs": 700,
+      "color": "#0b1020",
+      "featherPx": 90
+    },
+    {
+      "kind": "morph",
+      "at": 9400,
+      "durationMs": 600
+    }
+  ],
+  "audio": {
+    "cues": [
+      {
+        "at": 2000,
+        "sfx": "click"
+      }
+    ]
+  }
+}

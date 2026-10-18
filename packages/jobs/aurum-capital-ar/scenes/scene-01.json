@@ -1,0 +1,570 @@
+{
+  "schemaVersion": 1,
+  "name": "aurum-capital-ar-showcase",
+  "canvas": {
+    "shape": "16:9",
+    "scale": 1080
+  },
+  "durationMs": 16000,
+  "assets": [
+    {
+      "id": "aurum-crest",
+      "kind": "image",
+      "src": "vault:brand/logo/aurum-crest.svg",
+      "mime": "image/svg+xml"
+    }
+  ],
+  "fonts": [
+    {
+      "role": "hero",
+      "family": "Cairo",
+      "provider": "google",
+      "weights": [
+        400,
+        600,
+        800
+      ]
+    },
+    {
+      "role": "headline",
+      "family": "Cairo",
+      "provider": "google",
+      "weights": [
+        400,
+        700,
+        800
+      ]
+    },
+    {
+      "role": "body",
+      "family": "Cairo",
+      "provider": "google",
+      "weights": [
+        400,
+        600
+      ]
+    },
+    {
+      "role": "metric",
+      "family": "Inter",
+      "provider": "google",
+      "weights": [
+        400,
+        600,
+        800
+      ]
+    },
+    {
+      "role": "accent",
+      "family": "Inter",
+      "provider": "google",
+      "weights": [
+        400,
+        600,
+        800
+      ]
+    }
+  ],
+  "layers": [
+    {
+      "id": "bg-mesh",
+      "type": "background",
+      "at": 0,
+      "variant": {
+        "variant": "meshGradient",
+        "base": "#07090e",
+        "blobs": [
+          {
+            "color": "#78350f",
+            "xPct": 15,
+            "yPct": 20,
+            "radiusPct": 45,
+            "drift": 0.25
+          },
+          {
+            "color": "#f59e0b",
+            "xPct": 85,
+            "yPct": 15,
+            "radiusPct": 35,
+            "drift": 0.3
+          },
+          {
+            "color": "#064e3b",
+            "xPct": 20,
+            "yPct": 80,
+            "radiusPct": 40,
+            "drift": 0.2
+          },
+          {
+            "color": "#0f172a",
+            "xPct": 75,
+            "yPct": 70,
+            "radiusPct": 50,
+            "drift": 0.35
+          }
+        ]
+      }
+    },
+    {
+      "id": "bg-particles",
+      "type": "background",
+      "at": 0,
+      "variant": {
+        "variant": "particles",
+        "count": 180,
+        "color": "#fbbf24",
+        "sizePx": 1.8,
+        "speed": 0.7,
+        "direction": "up"
+      }
+    },
+    {
+      "id": "fx-grade",
+      "type": "foregroundFX",
+      "at": 0,
+      "effects": [
+        {
+          "kind": "vignette",
+          "strength": 0.35,
+          "color": "#07090e"
+        },
+        {
+          "kind": "filmGrain",
+          "opacity": 0.045,
+          "sizePx": 1.5
+        }
+      ]
+    },
+    {
+      "id": "logo",
+      "type": "imageLogo",
+      "at": 200,
+      "duration": 15800,
+      "assetId": "aurum-crest",
+      "widthPx": 280,
+      "heightPx": 280,
+      "position": {
+        "xPct": 50,
+        "yPct": 33
+      },
+      "mask": "squircle",
+      "glass": {
+        "blurPx": 18,
+        "tintColor": "#fbbf24",
+        "tintOpacity": 0.06
+      },
+      "entrance": {
+        "name": "springPop",
+        "durationMs": 550
+      },
+      "emphasis": {
+        "name": "lightSweep",
+        "durationMs": 1600,
+        "strength": 1
+      }
+    },
+    {
+      "id": "headline-ar",
+      "type": "kineticText",
+      "at": 400,
+      "duration": 15600,
+      "text": "أوروم كابيتال — ثروتك برؤية ذكية",
+      "direction": "rtl",
+      "role": "headline",
+      "googleFamily": "Cairo",
+      "sizePx": 88,
+      "lineHeight": 1.2,
+      "letterSpacingPx": 1,
+      "position": {
+        "xPct": 50,
+        "yPct": 64
+      },
+      "fill": "#f8fafc",
+      "entrance": {
+        "name": "blurFadeIn",
+        "durationMs": 600,
+        "staggerMs": 90
+      },
+      "highlight": {
+        "color": "#f59e0b",
+        "radiusPx": 14,
+        "paddingPx": 10
+      }
+    },
+    {
+      "id": "sub-caption",
+      "type": "kineticText",
+      "at": 800,
+      "duration": 15200,
+      "text": "AURUM CAPITAL · PRIVATE WEALTH ENGINE",
+      "direction": "ltr",
+      "role": "accent",
+      "googleFamily": "Inter",
+      "sizePx": 28,
+      "lineHeight": 1.1,
+      "letterSpacingPx": 6,
+      "position": {
+        "xPct": 50,
+        "yPct": 78
+      },
+      "fill": "rgba(248,250,252,0.72)",
+      "entrance": {
+        "name": "smoothSlideUp",
+        "durationMs": 700,
+        "delayMs": 200
+      }
+    },
+    {
+      "id": "act2-title",
+      "type": "kineticText",
+      "at": 4000,
+      "duration": 4000,
+      "text": "أداء استثنائي في الأسواق العالمية",
+      "direction": "rtl",
+      "role": "headline",
+      "googleFamily": "Cairo",
+      "sizePx": 54,
+      "lineHeight": 1.25,
+      "position": {
+        "xPct": 50,
+        "yPct": 18
+      },
+      "fill": "#f8fafc",
+      "entrance": {
+        "name": "smoothSlideUp",
+        "durationMs": 550,
+        "staggerMs": 70
+      }
+    },
+    {
+      "id": "metric-return",
+      "type": "card",
+      "at": 4000,
+      "duration": 4000,
+      "position": {
+        "xPct": 30,
+        "yPct": 50
+      },
+      "variant": {
+        "variant": "counter",
+        "from": 0,
+        "to": 42.8,
+        "decimals": 1,
+        "suffix": "%",
+        "role": "metric",
+        "sizePx": 96,
+        "locale": "ar-EG"
+      },
+      "entrance": {
+        "name": "elasticScale",
+        "durationMs": 700
+      },
+      "emphasis": {
+        "name": "pulseGlow",
+        "durationMs": 1200,
+        "strength": 0.8
+      }
+    },
+    {
+      "id": "glass-risk",
+      "type": "card",
+      "at": 4000,
+      "duration": 4000,
+      "position": {
+        "xPct": 70,
+        "yPct": 50
+      },
+      "variant": {
+        "variant": "glassCard",
+        "title": "تحليل مخاطر فوري",
+        "body": "خوارزميات توازن تلقائي على مدار الساعة",
+        "widthPx": 380,
+        "paddingPx": 28,
+        "radiusPx": 24,
+        "glass": {
+          "blurPx": 28,
+          "tintColor": "#0f172a",
+          "tintOpacity": 0.38
+        },
+        "borderOpacity": 0.22
+      },
+      "entrance": {
+        "name": "3dFlipIn",
+        "durationMs": 800
+      },
+      "emphasis": {
+        "name": "floatIdle",
+        "durationMs": 3000,
+        "strength": 0.5
+      }
+    },
+    {
+      "id": "progress-hedge",
+      "type": "card",
+      "at": 8000,
+      "duration": 4000,
+      "position": {
+        "xPct": 50,
+        "yPct": 38
+      },
+      "variant": {
+        "variant": "progressBar",
+        "label": "كفاءة التحوط والأمان السيبراني",
+        "value": 98,
+        "trackColor": "rgba(255,255,255,0.1)",
+        "fill": {
+          "type": "linear",
+          "angleDeg": 90,
+          "stops": [
+            {
+              "color": "#10b981",
+              "at": 0
+            },
+            {
+              "color": "#34d399",
+              "at": 100
+            }
+          ]
+        },
+        "heightPx": 22,
+        "radiusPx": 11,
+        "widthPx": 560,
+        "showPercentage": true
+      },
+      "entrance": {
+        "name": "smoothSlideUp",
+        "durationMs": 600
+      },
+      "emphasis": {
+        "name": "lightSweep",
+        "durationMs": 1200,
+        "strength": 1
+      }
+    },
+    {
+      "id": "callout-security",
+      "type": "card",
+      "at": 8000,
+      "duration": 4000,
+      "position": {
+        "xPct": 50,
+        "yPct": 68
+      },
+      "variant": {
+        "variant": "callout",
+        "accentSide": "right",
+        "accentColor": "#10b981",
+        "title": "حماية أصول مؤسسية",
+        "body": "تشفير متعدد الطبقات وتنفيذ أوامر في أجزاء من المللي ثانية",
+        "widthPx": 520,
+        "paddingPx": 26,
+        "radiusPx": 22,
+        "glass": {
+          "blurPx": 26,
+          "tintColor": "#0f172a",
+          "tintOpacity": 0.35
+        }
+      },
+      "entrance": {
+        "name": "springPop",
+        "durationMs": 550
+      }
+    },
+    {
+      "id": "closing-ar",
+      "type": "kineticText",
+      "at": 12000,
+      "duration": 4000,
+      "text": "أوروم كابيتال — حيث الرؤية تصنع الثروة",
+      "direction": "rtl",
+      "role": "headline",
+      "googleFamily": "Cairo",
+      "sizePx": 72,
+      "lineHeight": 1.3,
+      "position": {
+        "xPct": 50,
+        "yPct": 48
+      },
+      "fill": "#f8fafc",
+      "entrance": {
+        "name": "blurFadeIn",
+        "durationMs": 500,
+        "staggerMs": 80
+      },
+      "highlight": {
+        "color": "#f59e0b",
+        "radiusPx": 16,
+        "paddingPx": 12
+      }
+    },
+    {
+      "id": "closing-tagline",
+      "type": "kineticText",
+      "at": 12500,
+      "duration": 3500,
+      "text": "AURUM CAPITAL · VISION DRIVEN WEALTH",
+      "direction": "ltr",
+      "role": "accent",
+      "googleFamily": "Inter",
+      "sizePx": 24,
+      "lineHeight": 1.1,
+      "letterSpacingPx": 8,
+      "position": {
+        "xPct": 50,
+        "yPct": 62
+      },
+      "fill": "rgba(245,158,11,0.85)",
+      "entrance": {
+        "name": "smoothSlideUp",
+        "durationMs": 550
+      }
+    }
+  ],
+  "camera": {
+    "perspective": 1200,
+    "drift": {
+      "amplitudePct": 0.4,
+      "periodMs": 8000,
+      "seed": 42
+    },
+    "keyframes": [
+      {
+        "at": 0,
+        "scale": 1.0,
+        "xPct": 50,
+        "yPct": 50
+      },
+      {
+        "at": 4000,
+        "scale": 1.08,
+        "xPct": 50,
+        "yPct": 48
+      },
+      {
+        "at": 8000,
+        "scale": 1.12,
+        "xPct": 50,
+        "yPct": 46
+      },
+      {
+        "at": 12000,
+        "scale": 1.04,
+        "xPct": 50,
+        "yPct": 50
+      },
+      {
+        "at": 16000,
+        "scale": 1.0,
+        "xPct": 50,
+        "yPct": 50
+      }
+    ],
+    "moves": [
+      {
+        "move": "focusTarget",
+        "at": 600,
+        "durationMs": 1200,
+        "targetLayerId": "logo",
+        "strength": 0.9
+      },
+      {
+        "move": "slowPushIn",
+        "at": 4200,
+        "durationMs": 3600,
+        "strength": 0.7
+      },
+      {
+        "move": "focusTarget",
+        "at": 8200,
+        "durationMs": 1000,
+        "targetLayerId": "progress-hedge",
+        "strength": 0.85
+      },
+      {
+        "move": "slowPushIn",
+        "at": 12200,
+        "durationMs": 3600,
+        "strength": 0.6
+      }
+    ]
+  },
+  "transitions": [
+    {
+      "kind": "whipPan",
+      "at": 4000,
+      "durationMs": 600,
+      "direction": "left"
+    },
+    {
+      "kind": "wipe",
+      "at": 8000,
+      "durationMs": 550,
+      "direction": "left",
+      "color": "#f59e0b"
+    },
+    {
+      "kind": "whipPan",
+      "at": 12000,
+      "durationMs": 600,
+      "direction": "right"
+    }
+  ],
+  "audio": {
+    "cues": [
+      {
+        "at": 100,
+        "sfx": "subImpact",
+        "gain": 1,
+        "pan": 0
+      },
+      {
+        "at": 1200,
+        "sfx": "shimmer",
+        "gain": 1,
+        "pan": 0.3
+      },
+      {
+        "at": 4000,
+        "sfx": "whoosh",
+        "gain": 1.2,
+        "pan": -0.5
+      },
+      {
+        "at": 4200,
+        "sfx": "pop",
+        "gain": 1,
+        "pan": -0.4
+      },
+      {
+        "at": 4450,
+        "sfx": "click",
+        "gain": 1,
+        "pan": 0.4
+      },
+      {
+        "at": 8000,
+        "sfx": "whoosh",
+        "gain": 1.2,
+        "pan": 0.5
+      },
+      {
+        "at": 8200,
+        "sfx": "riser",
+        "gain": 1,
+        "pan": 0
+      },
+      {
+        "at": 12000,
+        "sfx": "whoosh",
+        "gain": 1.2,
+        "pan": 0.5
+      },
+      {
+        "at": 12200,
+        "sfx": "shimmer",
+        "gain": 1,
+        "pan": -0.3
+      }
+    ]
+  }
+}

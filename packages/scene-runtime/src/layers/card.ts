@@ -4,6 +4,24 @@ import { SAFE_IMG_CSS } from "./image-logo.js";
 import { fontFamilyFor } from "../fonts.js";
 import type { LayerContext } from "./context.js";
 
+/** True when the string contains any Arabic script (U+0600–U+06FF). */
+function hasArabic(text: string): boolean {
+  return /[\u0600-\u06FF]/.test(text);
+}
+
+/** Returns "rtl" when the layer should be laid out right-to-left. */
+function resolveDirection(layer: CardLayer): "ltr" | "rtl" {
+  if (layer.direction === "rtl") return "rtl";
+  const texts = [
+    layer.variant.variant === "progressBar" ? layer.variant.label : undefined,
+    layer.variant.variant === "glassCard" || layer.variant.variant === "callout"
+      ? [layer.variant.title, layer.variant.body]
+      : [],
+    layer.variant.variant === "counter" ? [layer.variant.prefix, layer.variant.suffix] : [],
+  ].flat();
+  return texts.some((t): t is string => typeof t === "string" && hasArabic(t)) ? "rtl" : "ltr";
+}
+
 function glassCss(blurPx: number, tintColor: string, tintOpacity: number, borderOpacity: number): string {
   return [
     `backdrop-filter:blur(${blurPx}px)`,
@@ -17,6 +35,7 @@ function glassCss(blurPx: number, tintColor: string, tintOpacity: number, border
 
 export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTMLElement } {
   const v = layer.variant;
+  const isRTL = resolveDirection(layer) === "rtl";
   const host = document.createElement("div");
   host.style.cssText = [
     "position:absolute",
@@ -27,6 +46,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
 
   if (v.variant === "glassCard" || v.variant === "callout") {
     const card = document.createElement("div");
+    card.dir = isRTL ? "rtl" : "ltr";
     card.style.cssText = [
       "position:relative",
       `width:${v.widthPx ? `${v.widthPx}px` : "max-content"}`,
@@ -42,14 +62,17 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
       bar.style.cssText = [
         "position:absolute",
         `top:0;bottom:0`,
-        v.accentSide === "left" ? "left:0" : "right:0",
+        isRTL ? (v.accentSide === "left" ? "right:0" : "left:0") : (v.accentSide === "left" ? "left:0" : "right:0"),
         "width:6px",
         `border-radius:999px`,
         `background:${v.accentColor}`,
       ].join(";");
       card.appendChild(bar);
-      if (v.accentSide === "left") card.style.paddingLeft = `${v.paddingPx + 14}px`;
-      else card.style.paddingRight = `${v.paddingPx + 14}px`;
+      if ((v.accentSide === "left" && !isRTL) || (v.accentSide === "right" && isRTL)) {
+        card.style.paddingLeft = `${v.paddingPx + 14}px`;
+      } else {
+        card.style.paddingRight = `${v.paddingPx + 14}px`;
+      }
     }
 
     if (v.variant === "glassCard" && v.iconAssetId) {
@@ -59,16 +82,17 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
       card.appendChild(icon);
     }
 
+    const textAlign = isRTL ? "right" : "left";
     if (v.title) {
       const title = document.createElement("div");
       title.textContent = v.title;
-      title.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "headline")};font-weight:800;font-size:34px;color:#fff;margin-bottom:10px;${CRISP_TEXT_CSS};`;
+      title.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "headline")};font-weight:800;font-size:34px;color:#fff;margin-bottom:10px;text-align:${textAlign};${CRISP_TEXT_CSS};`;
       card.appendChild(title);
     }
     if (v.body) {
       const body = document.createElement("div");
       body.textContent = v.body;
-      body.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:400;font-size:22px;line-height:1.45;color:rgba(255,255,255,0.82);${CRISP_TEXT_CSS};`;
+      body.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:400;font-size:22px;line-height:1.45;color:rgba(255,255,255,0.82);text-align:${textAlign};${CRISP_TEXT_CSS};`;
       card.appendChild(body);
     }
   } else if (v.variant === "progressBar") {
@@ -77,10 +101,9 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     host.appendChild(col);
 
     // Header row: the label and the live percentage share one flex line pinned
-    // to the card width. Previously the percentage was a separate block below
-    // the track with `text-align:right`, which pushed it past the right edge of
-    // the bar — and any camera zoom cropped it off-screen mid-count.
+    // to the card width.
     const header = document.createElement("div");
+    header.dir = isRTL ? "rtl" : "ltr";
     header.style.cssText = [
       "display:flex",
       "align-items:baseline",
@@ -105,6 +128,9 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
 
     const fill = document.createElement("div");
     fill.style.cssText = "position:absolute;inset:0;width:0%;";
+    if (isRTL) {
+      fill.style.transformOrigin = "right center";
+    }
     applyPaintBackground(fill, v.fill);
     track.appendChild(fill);
 
@@ -115,7 +141,6 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     }, ctx.layerAtSec + 0.15);
 
     if (v.showPercentage) {
-      // inside the header row, opposite the title, so it can never escape the card box
       const pctText = document.createElement("div");
       pctText.style.cssText = [
         `font-family:${fontFamilyFor(ctx.fonts, "metric")}`,
@@ -143,6 +168,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     const v2 = v.variant === "counter" ? v : undefined;
     if (!v2) throw new Error("unreachable card variant");
     const num = document.createElement("div");
+    num.dir = isRTL ? "rtl" : "ltr";
     num.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, v2.role)};font-weight:800;font-size:${v2.sizePx}px;color:#fff;font-variant-numeric:tabular-nums;${CRISP_TEXT_CSS};`;
     host.appendChild(num);
 

@@ -295,14 +295,40 @@ export function applyTransitions(
 
 // --- wipe -------------------------------------------------------------------
 
+/** Angle of the studio shutter's slanted leading edge, in degrees. */
+export const WIPE_SKEW_DEG = -10;
+
 /**
- * A CRISP ACCENT BAR, not a flat slab.
+ * How much wider (or taller) than the canvas the shutter is drawn.
  *
- * The cover is the scene's own colour with a hard leading edge and a luminous
- * accent band riding the front. On a dark scene a same-colour slab is literally
- * a black rectangle — indistinguishable from the dead frame it replaced — so
- * the bar is built to read as a light sweep crossing the frame, and it always
- * reaches full coverage at the seam midpoint where the acts swap.
+ * `skewX` pushes the top edge left and the bottom edge right by
+ * `tan(|skew|) · height / 2` — ~95 px each way on a 1920×1080 canvas. A curtain
+ * at exactly 100% width therefore leaves an unpainted sliver at two corners, and
+ * a hard 90° edge never reads as a studio graphic. 1.18 buys comfortably more
+ * than the skew consumes.
+ */
+export const WIPE_SPAN_FACTOR = 1.18;
+
+/**
+ * An ANGLED MULTI-RIBBON STUDIO SHUTTER.
+ *
+ * THE DEFECT THIS FIXES (field audit of `scene-01`, 00:08.000): `wipe` was one
+ * flat rectangle in the scene's own background colour with a hard 90° vertical
+ * edge — on a dark scene that is literally a black box sliding across a black
+ * screen, which reads as a rendering fault rather than as a cut.
+ *
+ * It is now built as a broadcast graphic:
+ *
+ *   - the body is skewed ({@link WIPE_SKEW_DEG}) and over-wide
+ *     ({@link WIPE_SPAN_FACTOR}), so the leading edge is a clean diagonal that
+ *     covers the corners at full extent;
+ *   - the body is a deep slate → accent-tinted gradient (never a flat fill)
+ *     edged by a crisp 2px luminous accent line;
+ *   - the leading edge carries a vibrant accent ribbon with a soft 40px glow,
+ *     plus a thinner echo behind it for the multi-ribbon read.
+ *
+ * The cover reaches full extent exactly at the seam midpoint — the same instant
+ * `SEAM_INCOMING_FRACTION` reveals the incoming act underneath it.
  */
 function buildWipe(
   rig: HTMLElement,
@@ -315,14 +341,22 @@ function buildWipe(
 ): void {
   const vertical = tr.direction === "up" || tr.direction === "down";
   const along = vertical ? "0deg" : "90deg";
+  const accent = tr.color;
+  // the diagonal leans away from the direction of travel
+  const skew = vertical
+    ? `skewY(${WIPE_SKEW_DEG}deg) scaleY(${WIPE_SPAN_FACTOR})`
+    : `skewX(${WIPE_SKEW_DEG}deg) scaleX(${WIPE_SPAN_FACTOR})`;
 
-  // layered body: accent-tinted core, deepening to the authored colour at the
-  // trailing edge — a bar with an interior, never a uniform block
+  // ---- core shutter body ----------------------------------------------------
   const cover = mk([
     "z-index:900;",
-    `background:linear-gradient(${along}, ${tr.color} 0%, ${tr.color} 62%, ` +
-      `color-mix(in srgb, ${tr.color} 72%, #7dd3fc) 100%);`,
-    "box-shadow:inset 0 0 0 1px rgba(255,255,255,0.14);",
+    "transform-origin:center center;",
+    `transform:${skew};`,
+    // deep rich slate, tinted toward the accent as the head reaches full cover
+    `background:linear-gradient(${along}, #0b1120 0%, color-mix(in srgb, ${accent} 26%, #0b1120) 40%, ` +
+      `color-mix(in srgb, ${accent} 62%, #0b1120) 74%, ${accent} 100%);`,
+    // the crisp luminous accent line, and the soft studio glow around the shutter
+    `box-shadow:inset 0 0 0 2px ${accent}, 0 0 40px ${accent};`,
   ]);
   rig.appendChild(cover);
   if (tr.featherPx > 0) {
@@ -337,18 +371,42 @@ function buildWipe(
     cover.style.webkitMaskImage = gradient;
   }
 
-  // the leading edge: a narrow luminous accent that rides the curtain front
+  // ---- leading edge: vibrant accent ribbon + a thinner echo behind it --------
+  const leadingAtStart = tr.direction === "left" || tr.direction === "up";
+  const edgeBox = vertical
+    ? leadingAtStart
+      ? "left:-4%;right:-4%;top:0;height:26%;"
+      : "left:-4%;right:-4%;bottom:0;height:26%;"
+    : leadingAtStart
+      ? "top:-4%;bottom:-4%;left:0;width:26%;"
+      : "top:-4%;bottom:-4%;right:0;width:26%;";
+  const edgeGrad = vertical
+    ? leadingAtStart
+      ? `linear-gradient(0deg, ${accent} 0%, ${accent} 30%, rgba(255,255,255,0) 100%)`
+      : `linear-gradient(180deg, ${accent} 0%, ${accent} 30%, rgba(255,255,255,0) 100%)`
+    : leadingAtStart
+      ? `linear-gradient(90deg, ${accent} 0%, ${accent} 30%, rgba(255,255,255,0) 100%)`
+      : `linear-gradient(270deg, ${accent} 0%, ${accent} 30%, rgba(255,255,255,0) 100%)`;
+
   const edge = mk([
     "z-index:901;",
-    vertical
-      ? "left:0;right:0;top:0;height:16%;background:linear-gradient(0deg, rgba(255,255,255,0.62), rgba(255,255,255,0));"
-      : "top:0;bottom:0;left:0;width:16%;background:linear-gradient(90deg, rgba(255,255,255,0.62), rgba(255,255,255,0));",
+    edgeBox,
+    `background:${edgeGrad};`,
+    `box-shadow:0 0 40px ${accent};`,
   ]);
   cover.appendChild(edge);
+
+  const echo = mk([
+    "z-index:901;",
+    edgeBox,
+    vertical ? "height:9%;" : "width:9%;",
+    `background:${edgeGrad};`,
+  ]);
+  cover.appendChild(echo);
+
   prepare(tl, cover, at, inSec + holdSec + outSec);
 
   const { entering, full, leaving } = wipeClips(tr.direction);
-  const growing = tr.direction === "left" || tr.direction === "up";
 
   // phase in: cover grows from the leading edge to full frame
   tl.fromTo(cover, { clipPath: entering, autoAlpha: 1 }, { clipPath: full, duration: inSec, ease: "expo.in", immediateRender: false }, at);
@@ -357,15 +415,17 @@ function buildWipe(
   // phase out: cover retracts past the same edge, back to exact identity
   tl.to(cover, { clipPath: leaving, duration: outSec, ease: "expo.out" }, at + inSec + holdSec);
   tl.set(cover, { clipPath: full }, at + inSec + holdSec + outSec);
-  // the accent front tracks the curtain and dies with it
-  tl.fromTo(
-    edge,
-    vertical ? { yPercent: growing ? 700 : -700, autoAlpha: 0.9 } : { xPercent: growing ? 700 : -700, autoAlpha: 0.9 },
-    vertical ? { yPercent: 0, autoAlpha: 0.55, duration: inSec, ease: "expo.in", immediateRender: false }
-            : { xPercent: 0, autoAlpha: 0.55, duration: inSec, ease: "expo.in", immediateRender: false },
-    at
-  );
-  tl.to(edge, { autoAlpha: 0, duration: outSec, ease: "expo.out" }, at + inSec + holdSec);
+
+  // the ribbons ignite with the curtain and die with it, so the shutter never
+  // shows a bare rectangle at either end of the window
+  for (const [ribbon, peak] of [
+    [edge, 1],
+    [echo, 0.6],
+  ] as const) {
+    tl.fromTo(ribbon, { autoAlpha: peak * 0.25 }, { autoAlpha: peak, duration: inSec, ease: "expo.in", immediateRender: false }, at);
+    tl.to(ribbon, { autoAlpha: 0, duration: outSec, ease: "expo.out" }, at + inSec + holdSec);
+    tl.set(ribbon, { autoAlpha: 0 }, at + inSec + holdSec + outSec);
+  }
 }
 
 // --- whipPan ----------------------------------------------------------------

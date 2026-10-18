@@ -1,0 +1,53 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="40%" stop-color="#f59e0b"/>
+      <stop offset="70%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="emeraldGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#047857"/>
+      <stop offset="50%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Outer diamond frame -->
+  <g transform="translate(256,256) rotate(45)">
+    <rect x="-120" y="-120" width="240" height="240" fill="none" stroke="url(#goldGrad)" stroke-width="3" rx="12"/>
+    <rect x="-110" y="-110" width="220" height="220" fill="none" stroke="url(#emeraldGrad)" stroke-width="1.5" rx="8"/>
+  </g>
+  <!-- Central crown monogram -->
+  <g filter="url(#softGlow)">
+    <!-- Crown base -->
+    <path d="M256,340 L210,340 L210,280 L180,280 L220,220 L256,180 L292,220 L332,280 L302,280 L302,340 Z" fill="url(#goldGrad)"/>
+    <!-- Crown jewels -->
+    <circle cx="256" cy="238" r="16" fill="url(#emeraldGrad)"/>
+    <circle cx="220" cy="262" r="10" fill="url(#emeraldGrad)" opacity="0.85"/>
+    <circle cx="292" cy="262" r="10" fill="url(#emeraldGrad)" opacity="0.85"/>
+    <circle cx="256" cy="286" r="8" fill="url(#emeraldGrad)" opacity="0.7"/>
+    <!-- Vertical accent bars -->
+    <rect x="250" y="210" width="12" height="50" fill="url(#goldGrad)" rx="3"/>
+    <rect x="226" y="230" width="8" height="30" fill="url(#emeraldGrad)" rx="2"/>
+    <rect x="278" y="230" width="8" height="30" fill="url(#emeraldGrad)" rx="2"/>
+    <!-- Lower accent -->
+    <ellipse cx="256" cy="370" rx="60" ry="6" fill="url(#goldGrad)" opacity="0.6"/>
+    <ellipse cx="256" cy="380" rx="45" ry="4" fill="url(#emeraldGrad)" opacity="0.4"/>
+  </g>
+  <!-- Corner accents -->
+  <g transform="translate(256,256)">
+    <g transform="rotate(-45) translate(0,-160)">
+      <rect x="-8" y="-8" width="16" height="16" fill="url(#goldGrad)" rx="2" opacity="0.7"/>
+    </g>
+    <g transform="rotate(135) translate(0,-160)">
+      <rect x="-8" y="-8" width="16" height="16" fill="url(#emeraldGrad)" rx="2" opacity="0.7"/>
+    </g>
+  </g>
+</svg>

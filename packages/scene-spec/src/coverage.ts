@@ -35,6 +35,23 @@ export const SEAM_LOOKBEHIND_MS = 300;
 export const SEAM_LOOKAHEAD_MS = 300;
 
 /**
+ * How far into a transition's window an incoming act is pulled back to.
+ *
+ * THE DEFECT THIS FIXES (field audit of `scene-01`, 00:08.250): the incoming act
+ * started at the transition's midpoint, i.e. exactly when the curtain began to
+ * retract — so for a frame the stage was empty and the new act was still at
+ * opacity 0. Pulling it back to 42% puts its entrance *under the cover*, so as
+ * the curtain uncovers the stage during `50% → 100%` the act is already there,
+ * being revealed rather than appearing.
+ *
+ * 42% is not arbitrary: for a 600 ms transition the cover is at full extent from
+ * `inEnd` (≈0.417) to `outStart` (≈0.583), so 42% lands the start just inside
+ * the fully-covered plateau. `earliestCoveredStartMs` clamps to `inEnd` so a
+ * longer transition — whose plateau starts later — is never exposed early.
+ */
+export const SEAM_INCOMING_FRACTION = 0.42;
+
+/**
  * The longest run of screen time allowed with no visible foreground content.
  *
  * A production cut may hide the stage for at most the transition's own peak
@@ -42,6 +59,34 @@ export const SEAM_LOOKAHEAD_MS = 300;
  * than as a transition.
  */
 export const MAX_DEAD_GAP_MS = 200;
+
+/**
+ * How close to the scene end a layer must finish to count as the closing frame.
+ *
+ * THE DEFECT THIS FIXES: a closing headline ending at 11750 ms in a 12000 ms
+ * scene was force-hidden by the lifecycle at 11750 ms — and the auto-exit fade
+ * started even earlier — so the last 250 ms of the MP4 was blank. A layer that
+ * ends within this band of the scene end, and declares no exit of its own, is
+ * held to the final frame instead: the closing brand frame stays rock-solid.
+ */
+export const FINAL_ACT_HOLD_MS = 500;
+
+/**
+ * True when a layer's own window ends close enough to the scene end that it IS
+ * the closing frame.
+ *
+ * Such a layer is extended to `sceneDurationMs` by `layerWindow`, and its
+ * auto-exit is suppressed by the runtime — see `needsAutoExit`.
+ */
+export function isFinalActHold(
+  layer: { at: number; duration?: number; exit?: unknown },
+  sceneDurationMs: number
+): boolean {
+  if (layer.exit) return false;
+  if (layer.duration === undefined) return false;
+  const endMs = layer.at + layer.duration;
+  return endMs >= sceneDurationMs - FINAL_ACT_HOLD_MS && endMs < sceneDurationMs;
+}
 
 /**
  * The zoom budget a `focusTarget` is allowed to spend.
@@ -114,13 +159,20 @@ export interface ActWindow {
  */
 export function layerWindow(layer: SceneSpec["layers"][number], sceneDurationMs: number): ActWindow {
   const rawEnd = layer.duration === undefined ? sceneDurationMs : layer.at + layer.duration;
-  const endMs = Math.min(Math.max(rawEnd, layer.at), sceneDurationMs);
-  return { startMs: layer.at, endMs };
+  // a closing layer is held to the final frame, never faded out mid-credits
+  const endMs = isFinalActHold(layer, sceneDurationMs) ? sceneDurationMs : rawEnd;
+  return { startMs: layer.at, endMs: Math.min(Math.max(endMs, layer.at), sceneDurationMs) };
 }
 
-/** Whether a layer's window is bounded (i.e. it can leave the screen at all). */
+/** Whether a layer's AUTHORED window is bounded (i.e. it can leave the screen at all).
+ *
+ * Uses the authored end, not the bridged/extended end — a closing layer that is
+ * held to the scene end still has an authored end and MUST be bridged on its
+ * start side so it appears under the cover.
+ */
 export function isBoundedLayer(layer: SceneSpec["layers"][number], sceneDurationMs: number): boolean {
-  return layerWindow(layer, sceneDurationMs).endMs < sceneDurationMs;
+  const rawEnd = layer.duration === undefined ? sceneDurationMs : layer.at + layer.duration;
+  return rawEnd < sceneDurationMs;
 }
 
 export interface Seam {
@@ -140,6 +192,21 @@ export function sceneSeams(scene: SceneSpec): Seam[] {
     durationMs: t.durationMs,
     midMs: t.at + t.durationMs / 2,
   }));
+}
+
+/**
+ * The earliest instant a transition is at FULL extent, in ms from the scene
+ * start — the first safe moment to reveal an incoming act underneath it.
+ *
+ * `transitionPeakWindow` reports the fully-covered plateau in normalized
+ * progress; scaling by the window length gives the wall-clock instant. The
+ * result is clamped up to {@link SEAM_INCOMING_FRACTION}: a transition whose
+ * plateau starts later (a long one) must not expose the incoming act early, and
+ * a short one should still pull it in on the authored schedule.
+ */
+export function earliestCoveredStartMs(seam: Seam): number {
+  const { inEnd } = transitionPeakWindow(seam.kind, seam.durationMs);
+  return seam.at + Math.max(SEAM_INCOMING_FRACTION, inEnd) * seam.durationMs;
 }
 
 export type SeamBridgeMode = "holdOutgoing" | "startIncoming";
@@ -177,15 +244,18 @@ export function planSeamBridges(scene: SceneSpec): SeamBridge[] {
 
       // outgoing: this act ends near the cut → hold it to the midpoint
       const holdEnd = w.endMs >= seam.at - SEAM_LOOKBEHIND_MS && w.endMs <= seam.midMs;
-      // incoming: this act begins near the cut → start it at the midpoint.
-      // The END is preserved: the author chose how long the act lives, and an
-      // outro must still be on screen when the scene ends.
+      // incoming: this act begins near the cut → start it UNDER THE COVER, at
+      // 42% of the transition window (see SEAM_INCOMING_FRACTION). The END is
+      // preserved: the author chose how long the act lives, and an outro must
+      // still be on screen when the scene ends.
       const startEarly =
         w.startMs >= seam.at && w.startMs <= seam.at + seam.durationMs + SEAM_LOOKAHEAD_MS;
       if (!holdEnd && !startEarly) continue;
 
       const existing = bridges.get(layer.id);
-      const startMs = startEarly ? Math.min(existing?.startMs ?? w.startMs, seam.midMs) : existing?.startMs ?? w.startMs;
+      const startMs = startEarly
+        ? Math.min(existing?.startMs ?? w.startMs, earliestCoveredStartMs(seam))
+        : existing?.startMs ?? w.startMs;
       const endMs = holdEnd ? Math.max(existing?.endMs ?? w.endMs, seam.midMs) : existing?.endMs ?? w.endMs;
       bridges.set(layer.id, {
         layerId: layer.id,

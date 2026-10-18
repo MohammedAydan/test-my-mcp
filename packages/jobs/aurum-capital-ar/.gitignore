@@ -1,0 +1,50 @@
+# --- MotionForge creative project ------------------------------------------
+# Scene JSON is the source of truth → always committed.
+# Renders, exports, logs and staging are outputs → large, reproducible, git-ignored.
+#
+# Outputs are ignored by FILE TYPE, never by directory. `dir/**` also matches
+# `dir` itself, and git refuses to re-include a file whose parent directory is
+# excluded — which is exactly how the template's own renders/ and logs/ folders
+# would silently vanish from version control.
+#
+# Patterns are anchored with a leading "/" so they apply to this project's root
+# only, never to a copy of this file nested inside another repository.
+
+/renders/**/*.mp4
+/renders/**/*.mov
+/renders/**/*.webm
+/renders/**/*.png
+/renders/**/*.jpg
+/renders/**/*.jpeg
+
+/exports/**/*.mp4
+/exports/**/*.mov
+/exports/**/*.webm
+/exports/**/*.png
+/exports/**/*.zip
+
+/logs/agent-sessions/*.md
+/logs/agent-sessions/*.txt
+
+/assets/_staging/**/*
+!/assets/_staging/.gitkeep
+!/assets/_staging/README.md
+
+# Engine/node noise
+/node_modules/
+/dist/
+/.tmp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+
+# --- secrets: never commit -------------------------------------------------
+.env
+.env.*
+*.pem
+*.key
+/secrets/
+**/*credential*
+**/*secret*

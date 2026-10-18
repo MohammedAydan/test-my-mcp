@@ -63,13 +63,14 @@ describe("act seams", () => {
     expect(bridgedWindow(scene, hero, bridges.get("hero")).endMs).toBe(4250);
   });
 
-  it("starts an incoming act at the transition midpoint and keeps its airtime", () => {
+  it("starts an incoming act UNDER THE COVER (42% of the transition window)", () => {
     const scene = bridgeScene([{ kind: "whipPan", at: 4000, durationMs: 500, direction: "left" }]);
     const bar = scene.layers[3]!;
     const note = scene.layers[4]!;
     const bridges = new Map(planSeamBridges(scene).map((b) => [b.layerId, b]));
-    expect(bridgedWindow(scene, bar, bridges.get("bar")).startMs).toBe(4250);
-    expect(bridgedWindow(scene, note, bridges.get("note")).startMs).toBe(4250);
+    // 42% of 500ms = 210ms → 4000 + 210 = 4210
+    expect(bridgedWindow(scene, bar, bridges.get("bar")).startMs).toBe(4210);
+    expect(bridgedWindow(scene, note, bridges.get("note")).startMs).toBe(4210);
     // the authored END is preserved: an act moved early still lives as long
     expect(bridgedWindow(scene, bar, bridges.get("bar")).endMs).toBe(7800);
   });

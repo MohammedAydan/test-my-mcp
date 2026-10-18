@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "name": "aurum-capital-ar",
+  "createdAt": "2026-10-18T14:40:33.548Z",
+  "engine": {
+    "url": "http://127.0.0.1:4000",
+    "preferredQuality": "draft"
+  },
+  "canvasDefault": {
+    "shape": "16:9",
+    "scale": 1080
+  },
+  "language": {
+    "primary": "ar",
+    "secondary": "en"
+  },
+  "brand": {
+    "colors": {
+      "bg": "#07090e",
+      "accent": "#f59e0b",
+      "text": "#f8fafc"
+    },
+    "logoAssetId": "aurum-crest"
+  },
+  "scenes": [
+    {
+      "id": "scene-01",
+      "file": "scenes/scene-01.json",
+      "status": "draft"
+    },
+    {
+      "id": "aurum-capital-ar-showcase",
+      "file": "scenes/aurum-capital-ar-showcase.json",
+      "status": "draft"
+    }
+  ],
+  "workflow": {
+    "requireInspectBeforeProduction": true,
+    "autoOpenPreview": true
+  }
+}

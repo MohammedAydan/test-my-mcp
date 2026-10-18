@@ -424,6 +424,7 @@ describe("motion slots", () => {
     id: "bg",
     type: "background",
     at: 0,
+    direction: "ltr",
     variant: { variant: "solid", color: "#000000" },
   };
 

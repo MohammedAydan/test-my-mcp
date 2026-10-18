@@ -17,7 +17,7 @@
  * Because the wrappers are nested, transforms compose instead of compete, and
  * no tween can ever clobber the lifecycle styles on `.mf-layer`.
  */
-import type { SceneSpec } from "@motionforge/scene-spec";
+import { isFinalActHold, type SceneSpec } from "@motionforge/scene-spec";
 
 import { PRESET_DEFAULTS } from "./presets.js";
 
@@ -79,7 +79,11 @@ export function planMotionSlots(
   window?: PlannedWindow
 ): MotionSlotPlan {
   const startMs = window?.startMs ?? layer.at;
-  const endMs = window?.endMs ?? (layer.duration !== undefined ? layer.at + layer.duration : sceneDurationMs);
+  const authoredEndMs = layer.duration !== undefined ? layer.at + layer.duration : sceneDurationMs;
+  // A closing layer is HELD to the final frame: it is the brand card, and
+  // ending it 250 ms early left the last frames of the MP4 blank.
+  const endMs =
+    window?.endMs ?? (isFinalActHold(layer, sceneDurationMs) ? sceneDurationMs : authoredEndMs);
   const suppressExit = window?.suppressExit === true;
 
   let cursor = startMs;
