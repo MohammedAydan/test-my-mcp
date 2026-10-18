@@ -1,0 +1,112 @@
+{
+  "2.1": {
+    "test": "Load Demo Scene",
+    "status": "PASS",
+    "evidence": "Layers: 4 (bgbackground👁🔓⎘×, titlekineticText👁🔓⎘×, subtitlekineticText👁🔓⎘×, cardcard👁🔓⎘×). SceneId: demo-mve6hed7. Saved to engine: true. Screenshot: screenshots/diagnostic-02-demo.png"
+  },
+  "2.2": {
+    "test": "Load Scene by ID",
+    "status": "PASS",
+    "evidence": "Active scene tab: \"demo-mve6hed7\". Expected: \"demo-mve6hed7\"."
+  },
+  "2.3": {
+    "test": "Layer Selection & Inspector",
+    "status": "PASS",
+    "evidence": "Inspector contains layer id: true. State selectedLayerId: true. Screenshot: screenshots/diagnostic-03-selection.png"
+  },
+  "2.4": {
+    "test": "Edit a Field",
+    "status": "PASS",
+    "evidence": "Engine sizePx via curl/fetch: 100 (expected 100). Screenshot: screenshots/diagnostic-04-edit-field.png"
+  },
+  "2.5": {
+    "test": "Undo / Redo",
+    "status": "PASS",
+    "evidence": "After Undo: 140 (expected 140). After Redo: 100 (expected 100)."
+  },
+  "2.6": {
+    "test": "Add Each Layer Type",
+    "status": "PASS",
+    "evidence": "{\"kineticText\":{\"toastError\":\"\",\"savedInEngine\":true,\"ok\":true},\"card\":{\"toastError\":\"\",\"savedInEngine\":true,\"ok\":true},\"background\":{\"toastError\":\"\",\"savedInEngine\":true,\"ok\":true},\"imageLogo\":{\"toastError\":\"\",\"savedInEngine\":true,\"ok\":true},\"lottie\":{\"toastError\":\"\",\"savedInEngine\":true,\"ok\":true},\"foregroundFX\":{\"toastError\":\"\",\"savedInEngine\":true,\"ok\":true}}"
+  },
+  "2.7": {
+    "test": "Timeline Scrub",
+    "status": "PASS",
+    "evidence": "Timecode: 00:00:03.000. Screenshot: screenshots/diagnostic-07-scrub.png"
+  },
+  "2.8": {
+    "test": "Play / Pause",
+    "status": "PASS",
+    "evidence": "Play state: true, Playhead advanced to: 3816ms. Pause state: false, Stopped at: 3850ms."
+  },
+  "2.9": {
+    "test": "Inspect Keyframes",
+    "status": "PASS",
+    "evidence": "Found 5 frames, broken: 0. Screenshot: screenshots/diagnostic-09-inspect.png"
+  },
+  "2.10": {
+    "test": "Render Draft",
+    "status": "PASS",
+    "evidence": "Success: true, ffprobe: {\"width\":1280,\"height\":720,\"duration\":\"8.000000\",\"nb_frames\":\"240\",\"side_data_list\":[{}]}"
+  },
+  "2.11": {
+    "test": "Render Production",
+    "status": "PASS",
+    "evidence": "Success: true, ffprobe: {\"width\":1920,\"height\":1080,\"duration\":\"8.000000\",\"nb_frames\":\"480\",\"side_data_list\":[{}]}"
+  },
+  "2.12": {
+    "test": "Command Palette",
+    "status": "PASS",
+    "evidence": "Found actions: ActionRender Production VideoCompile 60fps Full HD MP4Render | ActionRender Draft VideoFast preview 30fps MP4 | ActionOpen Render QueueView active rendering jobs and download history"
+  },
+  "2.13": {
+    "test": "Keyboard Shortcuts",
+    "status": "PASS",
+    "evidence": "Shortcuts modal open: true, Fullscreen trigger: true"
+  },
+  "2.14": {
+    "test": "Multi-Scene Tabs",
+    "status": "PASS",
+    "evidence": "Tabs count: 2 (demo-mve6hed7, scene-mve6ivb1)"
+  },
+  "2.15": {
+    "test": "Asset Vault",
+    "status": "PASS",
+    "evidence": "Uploaded vault:test-diag.png, verified via GET /api/assets/vault/test-diag.png: true"
+  },
+  "2.16": {
+    "test": "Export / Import",
+    "status": "PASS",
+    "evidence": "Exported scene name: \"Blank 16:9\", schemaVersion: 1"
+  },
+  "2.17": {
+    "test": "Persistence",
+    "status": "PASS",
+    "evidence": "Pre-reload id: scene-mve6ivb1, Post-reload id: scene-mve6ivb1"
+  },
+  "2.18": {
+    "test": "SSE Live Updates",
+    "status": "PASS",
+    "evidence": "EventSource connected to /api/scenes/scene-mve6ivb1/events: true"
+  },
+  "2.19": {
+    "test": "Error Handling",
+    "status": "PASS",
+    "evidence": "Handled 400 APIError: {\"status\":400,\"message\":\"invalid scene\",\"issues\":[\"schemaVersion: Invalid literal value, expected 1\",\"name: Required\",\"canvas: Required\",\"durationMs: Required\",\"layers: Required\",\"(root): Unrecognized key(s) in object: 'invalid'\"]}"
+  },
+  "2.20": {
+    "test": "MCP Server",
+    "status": "PASS",
+    "evidence": "TOOL_NAMES length: 6 (expected exactly 6 tools)"
+  },
+  "2.21": {
+    "test": "Empty States",
+    "status": "PASS",
+    "evidence": "Tour visible: true, Empty preview: true, Empty layers: true"
+  },
+  "2.22": {
+    "test": "Visual Regression",
+    "status": "PASS",
+    "evidence": "Captured screenshots at 1440x900, 1920x1080, and 2560x1440"
+  }
+}

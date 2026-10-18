@@ -1,0 +1,216 @@
+# AGENTS.md — MotionForge Monorepo
+
+Agent-facing operating manual for this repository. Read this before writing any code.
+Deep design documents live in [`docs/`](docs/).
+
+## What this repo is
+
+A production-grade **programmatic motion graphics & video engine** with a decoupled
+**MCP adapter**, organized as an npm-workspaces monorepo:
+
+```
+packages/
+  scene-spec/      @motionforge/scene-spec   — Zod SceneSpec schema + TS types (shared contract)
+  core-engine/     @motionforge/core-engine  — Fastify API, assets, Playwright frame renderer, FFmpeg encoder, SFX mixer
+  scene-runtime/   @motionforge/scene-runtime — Vite + TS + Tailwind + GSAP browser canvas (DOM/SVG/Lottie layers, camera rig, timeline UI)
+  mcp-server/      @motionforge/mcp-server   — Thin MCP wrapper exposing exactly 5 tools, talks to core-engine over HTTP
+```
+
+## Non-negotiable architectural rules
+
+1. **Dependency direction is one-way:**
+   `mcp-server → core-engine → scene-spec` and `scene-runtime → scene-spec`.
+   - `core-engine` and `scene-runtime` must have **ZERO knowledge of MCP**. No `@modelcontextprotocol/*` imports outside `packages/mcp-server`.
+   - `scene-spec` must have **zero runtime dependencies** except `zod`, and must never import from the other packages.
+2. **Declarative, not imperative.** Videos are described by a `SceneSpec` JSON + named
+   motion presets. Never hand-roll custom tween math when GSAP v3 already does it
+   (timelines, easing, stagger). Presets live in one registry, not scattered inline code.
+3. **Deterministic rendering.** The browser runtime exposes `window.renderConfig`,
+   `window.seekToFrame(n)`, and awaits `document.fonts.ready` + image decode before a
+   frame is considered capturable. No `Date.now()`/`performance.now()`-driven animation paths.
+4. **Frames never touch the disk.** Playwright captures JPEG/PNG buffers in memory and
+   pipes them into FFmpeg stdin (`-f image2pipe`). SFX are mixed with millisecond `adelay`.
+   (Keyframe *inspection* stills are written to disk — they are client deliverables, not
+   render frames.)
+5. **No placeholders.** No `TODO`, no stubbed return values, no mock data committed as
+   if functional. If a feature isn't built yet, it doesn't ship in that commit.
+6. **The LLM surface is exactly 6 tools** (`get_motion_capabilities`,
+   `init_creative_project`, `create_or_update_scene`, `inspect_scene_keyframes`,
+   `open_live_timeline_preview`, `render_video`). Do not add more without updating `docs/`.
+7. **Every temporary effect has an In/Out envelope.** Anything that runs over a bounded
+   window (emphasis presets, camera moves, transitions) must start at exact identity and
+   return to exact identity — see `packages/scene-runtime/src/envelope.ts`. A tween that
+   ends on a peak leaves the element stranded and the next frame cuts it.
+8. **Never animate layout on text.** `width`/`height` on a text or card element forces a
+   re-wrap every frame. Masks animate `clip-path` only.
+
+## Commands
+
+```bash
+npm install                      # install all workspaces
+npm run build -ws                # build every package
+npm run typecheck -ws            # tsc --noEmit everywhere
+npm test                         # vitest across packages
+npm run dev -w @motionforge/core-engine   # API on :4000
+npm run dev -w @motionforge/scene-runtime # Vite preview UI on :5173 (proxies to :4000)
+npm run doctor -w @motionforge/core-engine        # toolchain check (ffmpeg, chromium, sfx bank, runtime dist)
+npm run smoke -w @motionforge/core-engine         # tiny full-pipeline draft render + ffprobe assertions
+npm run demo -w @motionforge/core-engine          # showcase scene: keyframe inspection + draft render
+npm run start -w @motionforge/mcp-server          # MCP stdio server (MOTIONFORGE_ENGINE_URL, default :4000)
+```
+
+### Creative project kit (client jobs)
+
+```bash
+npm run init-project -- --name "client-reel" --path "../jobs/client-reel"   # scaffold a client job
+npm run sync-scene   -- --project ../jobs/client-reel --file scenes/scene-01.json
+npm run pull-render  -- --project ../jobs/client-reel --jobId <id> --quality draft
+npm run sync-template-scenes   # regenerate templates/creative-project/scenes/*.json from scene-spec
+```
+
+`templates/creative-project/` is the job template, `skills/motionforge-creative-project/SKILL.md`
+is the agent skill, and `scripts/*.mjs` are the CLIs. **The project kit is CLI-only — it
+never adds a sixth MCP tool.**
+
+### MCP tool contract (6 tools)
+
+```
+get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
+                          →  inspect_scene_keyframes  →  open_live_timeline_preview
+                          →  render_video
+```
+
+| Order | Tool | Purpose |
+| --- | --- | --- |
+| 1 | `get_motion_capabilities` | the authoring contract (structure + vocabularies) |
+| 2 | `init_creative_project` | scaffold a complete client-job workspace (project disk sync enabled) |
+| 3 | `create_or_update_scene` | validate + store a SceneSpec; returns the scene id |
+| 4 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
+| 5 | `open_live_timeline_preview` | interactive scrubber; auto-refreshes on re-post |
+| 6 | `render_video` | `draft` while iterating, `production` once approved |
+
+**Autonomous project disk sync.** When `projectPath` is provided to `create_or_update_scene`,
+`inspect_scene_keyframes`, or `render_video`, the corresponding files are written to
+disk automatically: `scenes/<id>.json`, `renders/stills/*.png`,
+`renders/draft|production/*.mp4`, and `motionforge.project.json` all stay in sync
+without manual CLI commands.
+
+**Project assets resolve themselves.** A scene stored with a `projectPath` gets its
+`vault:` references resolved out of `<projectPath>/assets/{images,lottie,video,audio,…}/`
+and `<projectPath>/brand/logo/` automatically — the files are copied into the engine
+vault on first use. No manual upload step.
+
+**Scenes survive an engine restart.** `core-engine` persists every scene to
+`data/scenes/<sceneId>.json` (atomic temp-file + rename) and hydrates the store on
+boot. `create_or_update_scene` returns `{id, status, revision, hash, warnings, previewUrl}`.
+
+**Diagnostics, not guesswork.** `create_or_update_scene` returns non-blocking
+`warnings[]` (e.g. `CAMERA_VIEWPORT_EXCEEDS_CANVAS` — a camera that would expose black
+void, or a `focusTarget` whose zoom cannot reach its layer), and
+`inspect_scene_keyframes` returns a `framesMeta[]` sidecar per timestamp
+(camera pose, active transition phase, per-layer lifecycle/opacity/bbox/textOverflow).
+Read them before judging a frame.
+
+**Inspection responses must fit in a pipe.** MCP over stdio is a bounded pipe, not a
+socket: a twelve-frame inspection at full resolution is ~15 MB of base64, which
+overflows the buffer, closes the client end, and kills the server with an unhandled
+`write EPIPE`. So the *inline* copies are lightweight JPEG previews (≤960px wide, q75)
+and `includeInlineImages: false` drops them for a text-only pass — while the
+FULL-resolution PNGs and a `<sceneId>-frames-meta.json` sidecar are still written to
+`<projectPath>/renders/stills/`. Never put a full-resolution frame in a tool result.
+
+**The camera cannot show void.** The rig is `translate(xPercent%, yPercent%) scale(S)`,
+and because the scale is applied first, the canvas point at the viewport centre is
+`50 − xPercent/S`. Two invariants follow, and both are enforced:
+centring a point `c` needs `xPercent = (50 − c)·S`, and the frame stays covered only
+while `|xPercent| ≤ 50·(S − 1)` (equivalently, a look-at inside
+`[50 − 50(1−1/S), 50 + 50(1−1/S)]`). `focusTarget` therefore boosts its zoom until the
+target is reachable — or limits the pan when even the cap cannot reach it — and a final
+clamp runs on the timeline's own `onUpdate`, i.e. **after** every child tween, so it sees
+the pose that is actually rendered. When it has to intervene it sets
+`framesMeta.camera.clampedVoid` and reports the requested look-at as
+`unclampedXPct`/`unclampedYPct`.
+
+FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
+`npm run doctor -w @motionforge/core-engine` verifies the toolchain once implemented.
+
+## Conventions
+
+- **TypeScript strict, ESM only** (`"type": "module"`, `NodeNext` resolution → use `.js`
+  extensions in relative imports). Target ES2022, Node ≥ 20.
+- **Validation is Zod-first:** every external boundary (HTTP body, MCP tool args, scene
+  JSON from the preview) parses through a `scene-spec` schema. Unknown keys are rejected
+  (`strict()`), so hallucinated fields surface as errors instead of being silently dropped.
+- Files: `kebab-case.ts`; types `PascalCase`; schema objects `camelCase` ending in
+  `Schema`; inferred types exported with the same name minus `Schema`.
+- Errors: `Fastify` error codes for HTTP; zod `.flatten()` issues for scene validation.
+- Design-space convention: all layer geometry is authored against a **1920×1080** (or
+  1080×1920 for vertical) canvas and scaled uniformly to the render size.
+
+## Scene-authoring guidance (for LLM-driven scenes)
+
+- **Always start from `get_motion_capabilities().minimalValidScene`.** It is generated
+  from the schemas (`scene-spec/src/field-guide.ts`), guaranteed to validate, and is
+  the fastest path to a valid scene. Post it as-is if you just need a working baseline.
+  `fullShowcaseSketch` is the same idea with every asset-free feature exercised.
+- Do not guess structure from field names. Copy shapes from
+  `get_motion_capabilities().layerFieldGuide[...]` and read `nestedShapeNotes` — the
+  recurring failures are structural, not vocabulary: `background.variant`/`card.variant`
+  are **objects** discriminated by `variant`, motion is `entrance/emphasis/exit:
+  {name: <preset>}`, positions are `{xPct, yPct}`, sizes use `*Px` keys, times are ms.
+  The same guide is available offline as the MCP resource `motionforge://scenespec/v1`.
+- When `create_or_update_scene` rejects a scene, the response lists **every** field-level
+  issue (`layers.0.variant: Expected object, received string`). Fix exactly those paths
+  and re-post — never re-send the same scene hoping for a different result.
+- Pick presets from the registry only (`docs/02_SCENESPEC.md` lists all valid names).
+  Easing defaults are already professional; override only with intent.
+- Budget durations: one idea per 2–4 s; total scenes typically 8–30 s.
+- Arabic text: set `direction: "rtl"` on `kineticText` layers; keep numerals LTR inside.
+- Reference assets by `assetId`; declare them in `scene.assets`. SFX names come from the
+  fixed bank (`whoosh | pop | click | subImpact | shimmer | riser`).
+- Validate early and often via `create_or_update_scene`, then eyeball with
+  `inspect_scene_keyframes` before spending a production render.
+
+## Camera & transitions (the invariants)
+
+- **The camera has exactly ONE writer.** `composeCameraAt(scene, t, ctx)` in
+  `camera.ts` is a pure function — `Clamp(Keyframes ⊕ Moves ⊕ Drift ⊕ Stage)` — and
+  the timeline's `onUpdate` applies it with `gsap.quickSetter`. Never add a tween
+  that writes `rig` scale/translation/rotation: a competing writer is what produced
+  the "double-pump" zoom (hold at 1.47× → snap to 1.00 → back to 1.47×). Transitions
+  contribute through `stageOffsetAt`, not through rig tweens.
+- **`focusTarget` is a nudge, not a zoom solve.** Max `+0.14×` on the current scale
+  and a pan capped at 80% of the safe headroom. Use a camera keyframe to actually
+  reframe.
+- **A move holds its framing into the act cut.** When a transition midpoint falls
+  within 1 s after a move's window, the ramp-out is deferred to that midpoint — the
+  frame is covered while the release happens.
+- **At most one transition at a time** (schema-enforced) and a fully-covered peak
+  never longer than ~120 ms (`PEAK_HOLD_MS` = 100 ms target).
+- **Act seams are bridged automatically.** `planSeamBridges` holds an outgoing act
+  to the transition midpoint and starts an incoming act there. `framesMeta[].foreground`
+  lists the visible content layers per frame — an empty list outside a transition
+  peak is a defect, and `create_or_update_scene` warns with
+  `FOREGROUND_COVERAGE_GAP` when a hole exceeds 200 ms.
+- **Mask presets clip the LINE, never a word.** `maskRevealWipe`/`collapseMask`
+  drive a single directional clip-path per line container, so a multi-word Arabic
+  sentence is never sliced open mid-phrase.
+- **`highlight` is one pill per line**, borderless and rounded — not a bordered box
+  per word.
+
+## Where to look / where to add things
+
+| Task | Location |
+| --- | --- |
+| New layer type / preset / SFX name | `packages/scene-spec/src/**` first, then implement in runtime+engine; update `docs/02_SCENESPEC.md` |
+| Authoring guidance shown to LLMs (`layerFieldGuide`, `minimalValidScene`, …) | `packages/scene-spec/src/field-guide.ts` — typed as `SceneSpecInput` and drift-tested; regenerate nothing by hand |
+| Creative-project manifest schema | `packages/scene-spec/src/project-manifest.ts` (strict Zod; validated by `scripts/sync-scene.mjs`) |
+| Client-job scaffolding + CLI | `templates/creative-project/**` and `scripts/*.mjs` (`npm run init-project` / `sync-scene` / `pull-render`) |
+| Agent skill | `skills/motionforge-creative-project/SKILL.md` |
+| MCP tool wiring | `packages/mcp-server/src/**` (never drop engine `issues[]`; advertise `sceneShapeSchema`, not a cast raw shape) |
+| HTTP route, render pipeline, audio | `packages/core-engine/src/**` |
+| Visual layer rendering, timeline UI | `packages/scene-runtime/src/**` |
+
+Changing the `SceneSpec` schema is a **breaking contract change**: bump
+`schemaVersion`, keep the old version parsing (or migrate), and update the docs in the
+same commit.
