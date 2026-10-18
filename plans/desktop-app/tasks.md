@@ -24,11 +24,11 @@
 - [x] 3.5 Canvas Navigation: Ctrl+Wheel zoom, Space+drag pan, Fit / 100% controls
 
 ## Phase 4: Timeline NLE (Phase B)
-- [ ] 4.1 Schema: Add `KeyframeTrack` and keyframe interpolator in `scene-spec` and `scene-runtime`
-- [ ] 4.2 Multi-Track Canvas: Render layer bars and property sub-tracks with diamond keyframe markers
-- [ ] 4.3 Transport: JKL playback loop (1x/2x/4x, reverse, step)
-- [ ] 4.4 Editing Tools: Razor split (`Cmd+K`), trim handles, ripple delete, In/Out marks (`I`/`O`)
-- [ ] 4.5 Motion Presets: Dropdown/drag-and-drop to apply preset envelopes to layer segments
+- [x] 4.1 Schema: Add `KeyframeTrack` and keyframe interpolator in `scene-spec` and `scene-runtime`
+- [x] 4.2 Multi-Track Canvas: Render layer bars and property sub-tracks with diamond keyframe markers
+- [x] 4.3 Transport: JKL playback loop (1x/2x/4x, reverse, step)
+- [x] 4.4 Editing Tools: Razor split (`Cmd+K`), trim handles, ripple delete, In/Out marks (`I`/`O`)
+- [x] 4.5 Motion Presets: Dropdown/drag-and-drop to apply preset envelopes to layer segments
 
 ## Phase 5: Verification & Desktop Packaging
 - [ ] 5.1 Run 329 backend unit tests (`vitest`) and assert all pass

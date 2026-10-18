@@ -3,6 +3,19 @@ import { idSchema, msSchema } from "../common.js";
 import { presetRefSchema } from "../motion.js";
 import { sfxTriggerSchema } from "../audio.js";
 
+export const keyframeSchema = z.strictObject({
+  at: msSchema,
+  value: z.union([z.number(), z.string()]),
+  ease: z.string().optional(),
+});
+export type Keyframe = z.infer<typeof keyframeSchema>;
+
+export const keyframeTrackSchema = z.strictObject({
+  property: z.string().min(1).max(80),
+  keyframes: z.array(keyframeSchema).min(1),
+});
+export type KeyframeTrack = z.infer<typeof keyframeTrackSchema>;
+
 /**
  * Fields shared by every layer. Timing: a layer exists from `at` for `duration`
  * ms (default: until the end of the scene). SFX triggers fire relative to `at`.
@@ -15,6 +28,8 @@ export const layerBaseSchema = z.strictObject({
   duration: msSchema.optional(),
   /** Rotation in degrees (-360 to 360) around layer center */
   rotation: z.number().min(-360).max(360).optional(),
+  /** Optional keyframe property animation tracks */
+  tracks: z.array(keyframeTrackSchema).optional(),
   /**
    * Reading direction for this layer's own copy.
    *
