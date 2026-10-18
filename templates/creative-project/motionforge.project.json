@@ -6,10 +6,10 @@
     "url": "{{ENGINE_URL}}",
     "preferredQuality": "draft"
   },
-  "canvasDefault": { "shape": "16:9", "scale": 1080 },
+  "canvasDefault": { "shape": "{{CANVAS_SHAPE}}", "scale": {{CANVAS_SCALE}} },
   "language": { "primary": "{{LANG}}", "secondary": "en" },
   "brand": {
-    "colors": { "bg": "#05070d", "accent": "#38bdf8", "text": "#ffffff" },
+    "colors": { "bg": "{{BRAND_BG}}", "accent": "{{BRAND_ACCENT}}", "text": "{{BRAND_TEXT}}" },
     "logoAssetId": null
   },
   "scenes": [

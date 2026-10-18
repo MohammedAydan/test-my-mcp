@@ -127,6 +127,53 @@ workflow every session.
   end-to-end run (init → sync → draft render → pull) produced a valid MP4 in the
   generated project's `renders/draft/`.
 
+## Milestone 5 — Autonomous AI Project Workflow (MCP 6-Tool Contract)
+**Goal:** make the AI agent 100% self-sufficient through MCP from cold start to
+final project delivery. Promote project initialization to a 6th MCP tool and add
+seamless project disk auto-sync so `scenes/*.json`, `renders/draft|production/*.mp4`,
+`renders/stills/*.png`, and `motionforge.project.json` stay automatically synchronized
+on disk without manual CLI commands.
+
+- ✅ **Step 13 — `init_creative_project` MCP tool.** The 6th tool in the official
+  contract. Scaffolds a complete client-job workspace by copying
+  `templates/creative-project/`, substituting tokens (`{{PROJECT_NAME}}`,
+  `{{CREATED_AT}}`, `{{LANG}}`, `{{ENGINE_URL}}`, `{{CANVAS_SHAPE}}`,
+  `{{CANVAS_SCALE}}`, `{{BRAND_BG}}`, `{{BRAND_ACCENT}}`, `{{BRAND_TEXT}}`),
+  validating `motionforge.project.json` and `scenes/scene-01.json` with the
+  canonical Zod schemas, and optionally seeding the starter scene into core-engine
+  (`autoSeedScene: true`). Returns `projectPath`, validated manifest,
+  `initialSceneId`, `previewUrl`, `filesCreatedCount`, and an operational checklist.
+  *Acceptance:* ✅ `packages/mcp-server/tests/tools.test.ts` asserts exactly 6 tools,
+  tests `init_creative_project` end-to-end including `autoSeedScene: true` and
+  non-empty directory protection.
+- ✅ **Step 14 — Project disk auto-sync in MCP tools.** All three mutating MCP tools
+  gain an optional `projectPath` parameter:
+  - `create_or_update_scene`: writes `scenes/<sceneId>.json` + upserts manifest
+    `scenes[]` entry with status `"draft"`, returns `savedSceneFilePath`.
+  - `render_video`: files the finished MP4 to `renders/<quality>/<sceneId>-<timestamp>.mp4`
+    and `renders/<quality>/<sceneId>-latest.mp4`, updates manifest status to the
+    render quality, returns `projectRenderFilePath`.
+  - `inspect_scene_keyframes`: with `saveStills: true` (default when `projectPath` is
+    provided), writes PNGs to `renders/stills/<sceneId>-<atMs>ms.png`.
+  *Acceptance:* ✅ core-engine `project-workspace` module unit tests (40+ tests)
+  verify disk sync; HTTP routes `POST /projects/init` and `POST /projects/sync`
+  provide parity; MCP tool handlers tested with mocked disk operations.
+- ✅ **Step 15 — Single source of truth in `core-engine`.** The
+  `project-workspace.ts` module is the canonical implementation shared by the MCP
+  server (via HTTP to `/projects/init` and `/projects/sync`), the CLI scripts
+  (`init-project.mjs`, `sync-scene.mjs`, `pull-render.mjs`), and the HTTP routes.
+  No duplicated template-copying or token-replacement logic exists. `createHttpSeeder`
+  lets out-of-process callers seed scenes over HTTP.
+  *Acceptance:* ✅ CLI scripts refactored to delegate to the shared module; all
+  existing CLI integration tests still pass.
+- ✅ **Step 16 — Documentation & agent guidance.** Root `AGENTS.md`,
+  `templates/creative-project/AGENTS.md`, and `skills/motionforge-creative-project/SKILL.md`
+  updated to document the 6-tool contract and the `projectPath` auto-sync workflow.
+  `docs/00_PLAN.md` and `docs/01_ARCHITECTURE.md` updated with Milestone 5.
+  `README.md` quick-start updated.
+  *Acceptance:* ✅ all docs consistent with the 6-tool contract and autonomous
+  project workflow.
+
 ## Standing constraints (all milestones)
 - Zero MCP imports outside `mcp-server`; zero GSAP outside `scene-runtime`.
 - Frames stay in memory (no PNG-on-disk pipelines).

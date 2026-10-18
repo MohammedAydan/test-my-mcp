@@ -7,6 +7,7 @@ export {
   formatRenderSummary,
   handleGetMotionCapabilities,
   handleCreateOrUpdateScene,
+  handleInitCreativeProject,
   handleInspectSceneKeyframes,
   handleOpenLiveTimelinePreview,
   handleRenderVideo,

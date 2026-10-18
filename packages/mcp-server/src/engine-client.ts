@@ -23,6 +23,16 @@ export interface SceneUploadResult {
   id: string;
 }
 
+export interface ProjectInitResult {
+  projectPath: string;
+  manifest: Record<string, unknown>;
+  initialSceneId: string | null;
+  previewUrl: string | null;
+  filesCreatedCount: number;
+  seedError: string | null;
+  operationalChecklist: string[];
+}
+
 export interface KeyframeFrame {
   atMs: number;
   /** data:image/jpeg;base64,… */
@@ -84,6 +94,9 @@ export const engineClient = {
 
   putScene: (scene: unknown): Promise<SceneUploadResult> =>
     request("/api/scenes", { method: "POST", body: JSON.stringify(scene) }) as Promise<SceneUploadResult>,
+
+  initProject: (options: unknown): Promise<ProjectInitResult> =>
+    request("/projects/init", { method: "POST", body: JSON.stringify(options) }) as Promise<ProjectInitResult>,
 
   keyframes: (sceneId: string, at: number[]): Promise<{ frames: KeyframeFrame[] }> =>
     request(`/api/scenes/${encodeURIComponent(sceneId)}/keyframes`, {

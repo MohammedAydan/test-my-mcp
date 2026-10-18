@@ -55,24 +55,30 @@ Created: `{{CREATED_AT}}`.
 8. **Do not edit the engine monorepo** from a creative-project session unless
    you were explicitly asked to. Report engine problems instead.
 
-## 3. Tool map — the only five tools
+## 3. Tool map — the six tools
 
 ```
-get_motion_capabilities  →  create_or_update_scene  →  inspect_scene_keyframes
-                          →  open_live_timeline_preview  →  render_video
+get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
+                          →  inspect_scene_keyframes  →  open_live_timeline_preview
+                          →  render_video
 ```
 
 | Step | Tool | Notes |
 | --- | --- | --- |
 | 1 | `get_motion_capabilities` | returns `layerFieldGuide`, `nestedShapeNotes`, `minimalValidScene`, `fullShowcaseSketch` |
-| 2 | `create_or_update_scene` | validate + store; returns the engine's scene id |
-| 3 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
-| 4 | `open_live_timeline_preview` | scrub in a browser; auto-refreshes when you re-post |
-| 5 | `render_video` | `quality: "draft"` while iterating, `"production"` once approved |
+| 2 | `init_creative_project` | scaffold a complete client-job workspace (this folder is the result) |
+| 3 | `create_or_update_scene` | validate + store; returns the engine's scene id |
+| 4 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
+| 5 | `open_live_timeline_preview` | scrub in a browser; auto-refreshes when you re-post |
+| 6 | `render_video` | `quality: "draft"` while iterating, `"production"` once approved |
 
 **Disk synchronization.** `scenes/scene-XX.json` is the version-controlled copy.
-Sequence per scene:
+When `projectPath` is provided to `create_or_update_scene`, `inspect_scene_keyframes`,
+or `render_video`, the corresponding files are written to disk automatically:
+`scenes/<id>.json`, `renders/stills/*.png`, `renders/draft|production/*.mp4`,
+and `motionforge.project.json` all stay in sync without manual CLI commands.
 
+For manual CLI workflow:
 ```bash
 # after the MCP tool call succeeds
 npm run sync-scene -- --project . --file scenes/scene-01.json   # validate + push

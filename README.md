@@ -13,9 +13,9 @@ and three CLI tools that turn any folder into a self-contained client job.
 | Package | Role |
 | --- | --- |
 | [`@motionforge/scene-spec`](packages/scene-spec) | Zod schema + TS types for the SceneSpec contract, motion preset & SFX registries, authoring field guide, project manifest |
-| [`@motionforge/core-engine`](packages/core-engine) | Fastify service: validation, assets, Playwright frame renderer, FFmpeg encode, SFX mix |
+| [`@motionforge/core-engine`](packages/core-engine) | Fastify service: validation, assets, Playwright frame renderer, FFmpeg encode, SFX mix, **project workspace manager** |
 | [`@motionforge/scene-runtime`](packages/scene-runtime) | Browser canvas: layers, 2.5D camera rig, timeline scrubber (Vite + Tailwind + GSAP + Lottie) |
-| [`@motionforge/mcp-server`](packages/mcp-server) | Thin MCP adapter exposing exactly 5 tools |
+| [`@motionforge/mcp-server`](packages/mcp-server) | Thin MCP adapter exposing exactly **6 tools** |
 
 ## Quick start — engine development
 
@@ -57,6 +57,19 @@ npm run pull-render -- --project . --jobId <id> --quality draft
 Agents should read `AGENTS.md` in the new project and install the skill
 (`skills/motionforge-creative-project/SKILL.md`).
 
+## MCP tool contract (6 tools)
+
+```
+get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
+                          →  inspect_scene_keyframes  →  open_live_timeline_preview
+                          →  render_video
+```
+
+When `projectPath` is provided to `create_or_update_scene`, `inspect_scene_keyframes`,
+or `render_video`, the corresponding files are written to disk automatically:
+`scenes/<id>.json`, `renders/stills/*.png`, `renders/draft|production/*.mp4`,
+and `motionforge.project.json` all stay in sync without manual CLI commands.
+
 ## Documentation
 
 - [`AGENTS.md`](AGENTS.md) — operating manual for coding agents
@@ -68,5 +81,5 @@ Agents should read `AGENTS.md` in the new project and install the skill
 
 ## Status
 
-Milestones 0–4 are complete — see [`docs/00_PLAN.md`](docs/00_PLAN.md) for live
+Milestones 0–5 are complete — see [`docs/00_PLAN.md`](docs/00_PLAN.md) for live
 milestone status and measured acceptance results.

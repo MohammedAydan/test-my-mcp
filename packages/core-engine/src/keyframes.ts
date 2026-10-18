@@ -60,8 +60,10 @@ export async function inspectKeyframes(opts: {
       await page.evaluate((f) => {
         return (globalThis as unknown as { seekToFrame(frame: number): Promise<void> }).seekToFrame(f);
       }, frame);
-      const buffer = (await page.screenshot({ type: "jpeg", quality: 88 })) as Buffer;
-      frames.push({ atMs, image: `data:image/jpeg;base64,${buffer.toString("base64")}` });
+      // PNG (not JPEG): the stills are deliverable client assets — lossless, and
+      // `saveStillsToDisk` on the project path writes them as .png files.
+      const buffer = (await page.screenshot({ type: "png" })) as Buffer;
+      frames.push({ atMs, image: `data:image/png;base64,${buffer.toString("base64")}` });
     }
     return frames;
   } finally {

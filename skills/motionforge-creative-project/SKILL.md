@@ -4,7 +4,7 @@ description: >-
   Produce a MotionForge client video end to end. Use when the working folder is a
   MotionForge creative project (contains `motionforge.project.json`, `brief/`,
   `scenes/`, `renders/`) or when asked to create, update, inspect or render a
-  MotionForge scene/video. Authoring is done through the five MotionForge MCP
+  MotionForge scene/video. Authoring is done through the six MotionForge MCP
   tools; the workspace layout and CLI helpers are described below.
 ---
 
@@ -12,7 +12,7 @@ description: >-
 
 A MotionForge creative project is a **client job workspace**: brief, brand
 assets, SceneSpec JSON and renders. The engine is a separate program; you drive
-it through its five MCP tools and never by editing engine code.
+it through its six MCP tools and never by editing engine code.
 
 ## Startup (mandatory, before any tool call)
 
@@ -30,32 +30,39 @@ If any of these is missing, say so and stop — do not improvise a structure.
    fields. Copy shapes from `layerFieldGuide`, start from `minimalValidScene`, and
    read `nestedShapeNotes` for the structural rules (`variant` is an object,
    motion is `{ name: preset }`, positions are `{ xPct, yPct }`, times are ms).
-2. **Author `./scenes/scene-01.json` on disk**, then push it with
+2. **If starting a brand new project**, call `init_creative_project` with the
+   target folder. It scaffolds the workspace, validates everything, and optionally
+   seeds the starter scene into the engine.
+3. **Author `./scenes/scene-01.json` on disk**, then push it with
    `create_or_update_scene`. Disk JSON and engine state must stay 100% in sync —
-   after every successful tool call, write back the validated JSON.
+   after every successful tool call with `projectPath`, the files are written
+   automatically (`scenes/scene-XX.json`, `motionforge.project.json` updated,
+   renders filed).
    (Or use `npm run sync-scene -- --project . --file scenes/scene-01.json`, which
    validates locally with the same schema before POSTing.)
-3. **Call `inspect_scene_keyframes`** across at least four timestamps — entrance,
+4. **Call `inspect_scene_keyframes`** across at least four timestamps — entrance,
    mid-action, transition, outro. Verify: no clipped text, correct Arabic shaping,
-   no overlap, adequate contrast, nothing off-canvas.
-4. **Open `open_live_timeline_preview`** for the operator, then **render draft**:
-   `render_video(quality: "draft")`. File it with
-   `npm run pull-render -- --project . --jobId <id> --quality draft`.
-5. **On approval, render `production`**, file it under `renders/production/`, and
+   no overlap, adequate contrast, nothing off-canvas. Pass `projectPath` and
+   `saveStills: true` to auto-file the PNGs.
+5. **Open `open_live_timeline_preview`** for the operator, then **render draft**:
+   `render_video(quality: "draft")`. Pass `projectPath` to auto-file the MP4 into
+   `renders/draft/`.
+6. **On approval, render `production`**, file it under `renders/production/`, and
    copy the deliverable to `exports/client-delivery/`. Update the scene `status`
    in `motionforge.project.json`.
-6. **Update the manifest**: add each new scene to `scenes[]` with its file path
+7. **Update the manifest**: add each new scene to `scenes[]` with its file path
    and status, so the job stays self-describing.
 
-## Tool map (exactly five — there is no sixth)
+## Tool map (exactly six — there is no seventh)
 
 | Order | Tool | Purpose |
 | --- | --- | --- |
 | 1 | `get_motion_capabilities` | the authoring contract (structure + vocabularies) |
-| 2 | `create_or_update_scene` | validate + store a SceneSpec; returns the scene id |
-| 3 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
-| 4 | `open_live_timeline_preview` | interactive scrubber; auto-refreshes on re-post |
-| 5 | `render_video` | `draft` while iterating, `production` once approved |
+| 2 | `init_creative_project` | scaffold a complete client-job workspace (project disk sync enabled) |
+| 3 | `create_or_update_scene` | validate + store a SceneSpec; returns the scene id |
+| 4 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
+| 5 | `open_live_timeline_preview` | interactive scrubber; auto-refreshes on re-post |
+| 6 | `render_video` | `draft` while iterating, `production` once approved |
 
 `get_motion_capabilities` also serves as the offline guide
 (`motionforge://scenespec/v1`) when the engine is unreachable.

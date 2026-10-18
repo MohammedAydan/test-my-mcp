@@ -24,7 +24,7 @@ export type ProjectQuality = (typeof PROJECT_QUALITIES)[number];
 export const PROJECT_LANGUAGES = ["ar", "en", "both"] as const;
 export type ProjectLanguage = (typeof PROJECT_LANGUAGES)[number];
 
-export const PROJECT_SCENE_STATUSES = ["draft", "approved", "delivered"] as const;
+export const PROJECT_SCENE_STATUSES = ["draft", "approved", "delivered", "production"] as const;
 export type ProjectSceneStatus = (typeof PROJECT_SCENE_STATUSES)[number];
 
 const isoTimestamp = z
@@ -122,6 +122,36 @@ export function validateProjectManifest(
   };
 }
 
+// ---------------------------------------------------------------------------
+// init_creative_project tool arguments
+// ---------------------------------------------------------------------------
+
+const hexColor = z
+  .string()
+  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/, "must be a hex color like #38bdf8");
+
+/**
+ * Arguments for the `init_creative_project` MCP tool (and the CLI wrapper).
+ * Reuses the canvas + language vocabularies above so there is exactly one
+ * definition of "a valid canvas" and "a valid language" in the system.
+ */
+export const initCreativeProjectSchema = z.strictObject({
+  name: z.string().min(1).max(80),
+  targetPath: z.string().min(1),
+  language: projectLanguageSchema.default({ primary: "ar" }),
+  canvasDefault: canvasShapeScaleSchema.optional(),
+  brandColors: z
+    .strictObject({
+      bg: hexColor.optional(),
+      accent: hexColor.optional(),
+      text: hexColor.optional(),
+    })
+    .optional(),
+  force: z.boolean().default(false),
+  autoSeedScene: z.boolean().default(true),
+});
+export type InitCreativeProjectOptions = z.infer<typeof initCreativeProjectSchema>;
+
 /** A minimal, valid manifest — the base `init-project` writes. */
 export function minimalProjectManifest(input: {
   name: string;
@@ -130,6 +160,7 @@ export function minimalProjectManifest(input: {
   canvas?: { shape: CanvasShape; scale: CanvasScale };
   language?: ProjectLanguage;
   preferredQuality?: ProjectQuality;
+  brandColors?: { bg?: string; accent?: string; text?: string };
 }): ProjectManifest {
   const parsed = projectManifestSchema.parse({
     schemaVersion: 1,
@@ -139,7 +170,11 @@ export function minimalProjectManifest(input: {
     canvasDefault: input.canvas ?? { shape: "16:9", scale: 1080 },
     language: { primary: input.language ?? "ar", secondary: "en" },
     brand: {
-      colors: { bg: "#05070d", accent: "#38bdf8", text: "#ffffff" },
+      colors: {
+        bg: input.brandColors?.bg ?? "#05070d",
+        accent: input.brandColors?.accent ?? "#38bdf8",
+        text: input.brandColors?.text ?? "#ffffff",
+      },
       logoAssetId: null,
     },
     scenes: [

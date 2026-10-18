@@ -16,6 +16,12 @@ import {
   vaultFileStream,
 } from "./vault.js";
 import { inspectKeyframes } from "./keyframes.js";
+import {
+  initCreativeProject,
+  ProjectWorkspaceError,
+  syncSceneToDisk,
+  type InitCreativeProjectOptions,
+} from "./project-workspace.js";
 import { SceneStore } from "./scene-store.js";
 import { ensureSfxBank } from "./sfx-bank.js";
 
@@ -23,6 +29,52 @@ export interface Engine {
   app: FastifyInstance;
   store: SceneStore;
   runner: RenderRunner;
+}
+
+/**
+ * Creative-project routes — HTTP parity for the `init_creative_project` MCP
+ * tool and the project-kit CLI. All workspace logic lives in
+ * `project-workspace.ts`; these routes only adapt HTTP ↔ that module.
+ */
+export async function registerProjectRoutes(
+  app: FastifyInstance,
+  opts: { store: SceneStore; port: number }
+): Promise<void> {
+  const { store } = opts;
+  const seedScene = (scene: Parameters<typeof store.upsert>[0]) => Promise.resolve(store.upsert(scene).id);
+
+  app.post("/projects/init", async (req, reply) => {
+    try {
+      const result = await initCreativeProject(req.body as InitCreativeProjectOptions, {
+        // the in-process store IS the seeder — no HTTP hop, no serialization gap
+        seedScene,
+        engineBaseUrl: `http://127.0.0.1:${opts.port}`,
+      });
+      return reply.code(201).send(result);
+    } catch (error) {
+      if (error instanceof ProjectWorkspaceError) {
+        if (/is not empty/.test(error.message)) {
+          return reply.code(409).send({ error: error.message });
+        }
+        // other validation errors (empty name, invalid canvas, etc.) -> 400
+        return reply.code(400).send({ error: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/projects/sync", async (req, reply) => {
+    const { scene, projectPath } = (req.body ?? {}) as { scene?: unknown; projectPath?: string };
+    const validation: SceneValidation = validateScene(scene);
+    if (!validation.ok) {
+      return reply.code(400).send({ error: "invalid scene", issues: validation.issues });
+    }
+    const { id } = store.upsert(validation.scene);
+    if (!projectPath) return reply.code(201).send({ id, scene: validation.scene });
+    // same code path as the MCP tool's disk auto-sync
+    const sync = await syncSceneToDisk(projectPath, validation.scene);
+    return reply.code(201).send({ id, scene: validation.scene, disk: sync });
+  });
 }
 
 export interface StartEngineOptions {
@@ -106,6 +158,12 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
     if (!found) return reply.code(404).send({ error: `unknown scene "${id}"` });
     return found.scene;
   });
+
+  // -------------------------------------------------------------------------
+  // creative projects — HTTP parity for the init_creative_project MCP tool and
+  // the project-kit CLI. The shared logic lives in project-workspace.ts.
+  // -------------------------------------------------------------------------
+  await registerProjectRoutes(app, { store, port: config.port });
 
   app.get("/api/scenes/:id/events", async (req, reply) => {
     const { id } = req.params as { id: string };

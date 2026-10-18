@@ -90,7 +90,12 @@ describe("creative-project template manifest", () => {
       .replaceAll("{{PROJECT_NAME}}", "client-reel")
       .replaceAll("{{CREATED_AT}}", "2026-01-31T09:00:00.000Z")
       .replaceAll("{{LANG}}", "ar")
-      .replaceAll("{{ENGINE_URL}}", "http://127.0.0.1:4000");
+      .replaceAll("{{ENGINE_URL}}", "http://127.0.0.1:4000")
+      .replaceAll("{{CANVAS_SHAPE}}", "16:9")
+      .replaceAll("{{CANVAS_SCALE}}", "1080")
+      .replaceAll("{{BRAND_BG}}", "#05070d")
+      .replaceAll("{{BRAND_ACCENT}}", "#38bdf8")
+      .replaceAll("{{BRAND_TEXT}}", "#ffffff");
     const result = validateProjectManifest(JSON.parse(substituted));
     if (!result.ok) throw new Error(`manifest invalid:\n  ${result.issues.join("\n  ")}`);
     expect(result.manifest.name).toBe("client-reel");

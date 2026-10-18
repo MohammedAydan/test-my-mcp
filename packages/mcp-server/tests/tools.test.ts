@@ -10,6 +10,7 @@ import {
   engineMessage,
   handleCreateOrUpdateScene,
   handleGetMotionCapabilities,
+  handleInitCreativeProject,
   registerAuthoringResource,
   registerTools,
   SCENESPEC_RESOURCE_URI,
@@ -91,11 +92,11 @@ async function connect(): Promise<Client> {
 }
 
 describe("MCP contract over a live client session", () => {
-  it("exposes EXACTLY the 5 protocol tools — no more, no fewer", async () => {
+  it("exposes EXACTLY the 6 protocol tools — no more, no fewer", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
-    expect(tools).toHaveLength(5);
+    expect(tools).toHaveLength(6);
   });
 
   it("advertises the REAL SceneSpec schema, not an opaque bag", async () => {
@@ -164,8 +165,70 @@ describe("MCP contract over a live client session", () => {
     expect(parsed.minimalValidScene).toBeDefined();
     expect(parsed.nestedShapeNotes).toBeDefined();
 
-    // …and the tool count is still exactly 5
+    // …and the tool count is still exactly 6
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(5);
+    expect(tools).toHaveLength(6);
+  });
+});
+
+describe("init_creative_project tool", () => {
+  it("creates a project and auto-seeds the starter scene", async () => {
+    vi.spyOn(engineClient, "initProject").mockResolvedValue({
+      projectPath: "/tmp/test-project",
+      manifest: { name: "test-project" },
+      initialSceneId: "scene-01",
+      previewUrl: "http://127.0.0.1:4000/preview/?scene=scene-01",
+      filesCreatedCount: 53,
+      seedError: null,
+      operationalChecklist: ["start engine", "read brief"],
+    });
+
+    const result = await handleInitCreativeProject({
+      name: "test-project",
+      targetPath: "/tmp/test-project",
+      autoSeedScene: true,
+    });
+
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(result.isError).toBeUndefined();
+    expect(text).toContain("project created: /tmp/test-project");
+    expect(text).toContain("initialSceneId: scene-01");
+    expect(text).toContain("preview: http://127.0.0.1:4000/preview/?scene=scene-01");
+    expect(text).toContain("files: 53");
+  });
+
+  it("reports seed failures without failing the project", async () => {
+    vi.spyOn(engineClient, "initProject").mockResolvedValue({
+      projectPath: "/tmp/test-project",
+      manifest: { name: "test-project" },
+      initialSceneId: null,
+      previewUrl: null,
+      filesCreatedCount: 53,
+      seedError: "connection refused",
+      operationalChecklist: ["start engine", "push scene manually"],
+    });
+
+    const result = await handleInitCreativeProject({
+      name: "test-project",
+      targetPath: "/tmp/test-project",
+      autoSeedScene: true,
+    });
+
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(result.isError).toBeUndefined();
+    expect(text).toContain("seedError: connection refused");
+  });
+
+  it("refuses invalid options", async () => {
+    vi.spyOn(engineClient, "initProject").mockRejectedValue(
+      new EngineError(400, "invalid init_creative_project options", ["name: String must contain at least 1 character(s)"])
+    );
+    const result = await handleInitCreativeProject({
+      name: "",
+      targetPath: "/tmp/test-project",
+      autoSeedScene: false,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("invalid init_creative_project options");
   });
 });

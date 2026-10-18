@@ -32,9 +32,9 @@ packages/
    pipes them into FFmpeg stdin (`-f image2pipe`). SFX are mixed with millisecond `adelay`.
 5. **No placeholders.** No `TODO`, no stubbed return values, no mock data committed as
    if functional. If a feature isn't built yet, it doesn't ship in that commit.
-6. **The LLM surface is exactly 5 tools** (`get_motion_capabilities`,
-   `create_or_update_scene`, `inspect_scene_keyframes`, `open_live_timeline_preview`,
-   `render_video`). Do not add more without updating `docs/`.
+6. **The LLM surface is exactly 6 tools** (`get_motion_capabilities`,
+   `init_creative_project`, `create_or_update_scene`, `inspect_scene_keyframes`,
+   `open_live_timeline_preview`, `render_video`). Do not add more without updating `docs/`.
 
 ## Commands
 
@@ -63,6 +63,29 @@ npm run sync-template-scenes   # regenerate templates/creative-project/scenes/*.
 `templates/creative-project/` is the job template, `skills/motionforge-creative-project/SKILL.md`
 is the agent skill, and `scripts/*.mjs` are the CLIs. **The project kit is CLI-only — it
 never adds a sixth MCP tool.**
+
+### MCP tool contract (6 tools)
+
+```
+get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
+                          →  inspect_scene_keyframes  →  open_live_timeline_preview
+                          →  render_video
+```
+
+| Order | Tool | Purpose |
+| --- | --- | --- |
+| 1 | `get_motion_capabilities` | the authoring contract (structure + vocabularies) |
+| 2 | `init_creative_project` | scaffold a complete client-job workspace (project disk sync enabled) |
+| 3 | `create_or_update_scene` | validate + store a SceneSpec; returns the scene id |
+| 4 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
+| 5 | `open_live_timeline_preview` | interactive scrubber; auto-refreshes on re-post |
+| 6 | `render_video` | `draft` while iterating, `production` once approved |
+
+**Autonomous project disk sync.** When `projectPath` is provided to `create_or_update_scene`,
+`inspect_scene_keyframes`, or `render_video`, the corresponding files are written to
+disk automatically: `scenes/<id>.json`, `renders/stills/*.png`,
+`renders/draft|production/*.mp4`, and `motionforge.project.json` all stay in sync
+without manual CLI commands.
 
 FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 `npm run doctor -w @motionforge/core-engine` verifies the toolchain once implemented.

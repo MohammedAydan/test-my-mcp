@@ -252,8 +252,8 @@ async function main(): Promise<void> {
   if (!kf.ok) throw new Error(`keyframes failed: ${kf.status}`);
   const inspected = (await kf.json()) as { frames: Array<{ atMs: number; image: string }> };
   for (const f of inspected.frames) {
-    const bytes = Buffer.from(f.image.replace(/^data:image\/jpeg;base64,/, ""), "base64").length;
-    console.log(`demo: keyframe ${f.atMs}ms → ${(bytes / 1024).toFixed(0)} KiB jpeg`);
+    const bytes = Buffer.from(f.image.replace(/^data:image\/(?:jpeg|png);base64,/, ""), "base64").length;
+    console.log(`demo: keyframe ${f.atMs}ms → ${(bytes / 1024).toFixed(0)} KiB ${f.image.includes("png") ? "png" : "jpeg"}`);
   }
 
   // 4. draft render through the full pipeline

@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "id": "scene-01",
   "name": "{{PROJECT_NAME}} — scene 01",
   "canvas": {
     "shape": "16:9",

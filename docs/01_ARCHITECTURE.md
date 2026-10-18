@@ -179,7 +179,7 @@ separate:
 | Example | this repo | a folder created by `npm run init-project` |
 | Contains | `packages/*` source, tests, docs | brief, brand, `scenes/*.json`, renders |
 | Owns | the SceneSpec contract, render pipeline | one client job and its deliverables |
-| Talks to the engine | is the engine | over HTTP (the 5 MCP tools / REST API) |
+| Talks to the engine | is the engine | over HTTP (the 6 MCP tools / REST API) |
 | Changes the schema | yes, with a `schemaVersion` bump | never |
 
 The monorepo ships the **contract** (`@motionforge/scene-spec`), the **engine**,
@@ -195,11 +195,55 @@ one validator, not two).
 - The monorepo never imports anything from a creative project.
 - A creative project never imports engine internals; it talks HTTP or uses the
   MCP tools.
-- Project-kit helpers are **CLI scripts**, never a sixth MCP tool. The 5-tool
-  contract is fixed by `TOOL_NAMES` and by a contract test.
+- Project-kit helpers are **CLI scripts**; the 6th MCP tool is `init_creative_project`,
+  which delegates to the same shared implementation in `core-engine`. The contract
+  is fixed by `TOOL_NAMES` and a contract test.
 - `.psd` / `.aep` / `.ai` / Figma files stay in `design/`; they are masters for
   humans. Only exported PNG/SVG/WebP/Lottie in `assets/` may appear in a
   SceneSpec.
+
+## 9. The 6-tool MCP contract & autonomous project disk sync
+
+The official MCP surface is **exactly 6 tools**:
+
+1. `get_motion_capabilities` — authoring contract (structure + vocabularies)
+2. `init_creative_project` — scaffold a complete client-job workspace
+3. `create_or_update_scene` — validate + store a SceneSpec
+4. `inspect_scene_keyframes` — images at exact ms — the quality gate
+5. `open_live_timeline_preview` — interactive scrubber; auto-refreshes on re-post
+6. `render_video` — `draft` while iterating, `production` once approved
+
+**Autonomous project disk sync.** When the agent provides `projectPath` (the
+directory containing `motionforge.project.json`):
+
+- `create_or_update_scene` writes `scenes/<sceneId>.json` and upserts the manifest
+  `scenes[]` entry (status `"draft"`). Response includes `savedSceneFilePath`.
+- `render_video` files the MP4 to `renders/<quality>/<sceneId>-<timestamp>.mp4`
+  and `renders/<quality>/<sceneId>-latest.mp4`, updates manifest status to the
+  render quality. Response includes `projectRenderFilePath`.
+- `inspect_scene_keyframes` with `saveStills: true` (default when `projectPath`
+  is provided) writes PNGs to `renders/stills/<sceneId>-<atMs>ms.png`.
+
+All three tools delegate to `packages/core-engine/src/project-workspace.ts`,
+which is also used by the CLI scripts (`scripts/*.mjs`) and the HTTP routes
+`POST /projects/init` and `POST /projects/sync`. There is exactly one
+implementation of template copying, token substitution, manifest validation, and
+disk sync — zero duplication between CLI and MCP.
+
+**Shared implementation.** `packages/core-engine/src/project-workspace.ts`
+exports:
+- `initCreativeProject(options, deps)` — scaffold + validate + optional seed
+- `syncSceneToDisk(projectPath, scene)` — write scene JSON + upsert manifest
+- `saveRenderToDisk(projectPath, sceneId, quality, mp4)` — timestamped + latest
+- `saveStillsToDisk(projectPath, sceneId, frames)` — PNGs to renders/stills/
+- `createHttpSeeder(engineUrl)` — HTTP seeder for out-of-process callers
+
+The Fastify routes in `core-engine/src/server.ts`:
+- `POST /projects/init` — uses the in-process store as seeder
+- `POST /projects/sync` — validates + stores + optional disk sync
+
+Both MCP tools and CLI scripts call the same functions via `createHttpSeeder`
+when running outside the engine process.
 
 ## 8. Deterministic frame settlement (Milestone 4)
 

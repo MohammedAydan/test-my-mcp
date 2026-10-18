@@ -37,6 +37,9 @@ const USAGE = `init-project — scaffold a MotionForge creative project
   --engine-url <url>     core-engine base URL           [default: http://127.0.0.1:4000]
   --shape <16:9|9:16|1:1|4:5>                                 [default: 16:9]
   --scale <720|1080|1440|2160>                                 [default: 1080]
+  --brand-bg <#rrggbb>   background colour token               [default: #05070d]
+  --brand-accent <#rrggbb>  accent colour token                [default: #38bdf8]
+  --brand-text <#rrggbb>  text colour token                    [default: #ffffff]
   --force                overwrite a non-empty target directory
   --help                 show this message
 `;
@@ -87,6 +90,11 @@ const tokens = {
   CREATED_AT: new Date().toISOString(),
   LANG: lang,
   ENGINE_URL: engineUrl.replace(/\/+$/, ""),
+  CANVAS_SHAPE: shape,
+  CANVAS_SCALE: String(scale),
+  BRAND_BG: args["brand-bg"] ?? "#05070d",
+  BRAND_ACCENT: args["brand-accent"] ?? "#38bdf8",
+  BRAND_TEXT: args["brand-text"] ?? "#ffffff",
 };
 
 const files = await listFiles(TEMPLATE_DIR);
@@ -124,6 +132,11 @@ const manifest = minimalProjectManifest({
   engineUrl: tokens.ENGINE_URL,
   canvas: { shape, scale },
   language: lang,
+  brandColors: {
+    bg: tokens.BRAND_BG,
+    accent: tokens.BRAND_ACCENT,
+    text: tokens.BRAND_TEXT,
+  },
 });
 const validation = validateProjectManifest(manifest);
 if (!validation.ok) {

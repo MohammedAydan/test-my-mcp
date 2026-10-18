@@ -1,5 +1,6 @@
 export * from "./config.js";
 export * from "./capabilities.js";
+export * from "./project-workspace.js";
 export { startEngine, type Engine } from "./server.js";
 export { SceneStore } from "./scene-store.js";
 export { ensureSfxBank, SFX_BANK } from "./sfx-bank.js";
