@@ -42,6 +42,7 @@ export const Timeline: Component = () => {
   let dragInitialAt = 0;
   let dragInitialDuration = 0;
   let dragKeyframeInfo: { layerId: string; property: string; index: number; initialAt: number } | null = null;
+  let hasDragged = false;
   const edgeHoverZone = 6;
 
   // Standard keyframable properties per layer type
@@ -608,6 +609,7 @@ export const Timeline: Component = () => {
                 const kfX = timeToX(kf.at);
                 if (Math.abs(x - kfX) < 8) {
                   store.setSelectedKeyframe({ layerId: layer.id, property: sub.property, index: kfIdx });
+                  hasDragged = false;
                   dragMode = 'keyframe';
                   dragKeyframeInfo = {
                     layerId: layer.id,
@@ -629,6 +631,7 @@ export const Timeline: Component = () => {
             const isMulti = e.shiftKey || e.ctrlKey || e.metaKey;
             store.selectLayer(layer.id, isMulti);
 
+            hasDragged = false;
             dragLayer = layer;
             dragStartMouseX = e.clientX;
             dragInitialAt = layer.at || 0;
@@ -675,6 +678,13 @@ export const Timeline: Component = () => {
 
       if (dragMode && dragLayer) {
         const dx = e.clientX - dragStartMouseX;
+
+        if (!hasDragged) {
+          if (Math.abs(dx) < 2) return;
+          hasDragged = true;
+          store.pushHistory(`Timeline edit: ${dragMode}`);
+        }
+
         const w = canvasRef.clientWidth;
         const pxPerMs = (w * state.zoom) / totalDuration();
         const deltaMs = Math.round(dx / pxPerMs);
@@ -729,6 +739,13 @@ export const Timeline: Component = () => {
 
       if (dragMode === 'keyframe' && dragKeyframeInfo) {
         const dx = e.clientX - dragStartMouseX;
+
+        if (!hasDragged) {
+          if (Math.abs(dx) < 2) return;
+          hasDragged = true;
+          store.pushHistory('Timeline edit: keyframe');
+        }
+
         const w = canvasRef.clientWidth;
         const pxPerMs = (w * state.zoom) / totalDuration();
         const deltaMs = Math.round(dx / pxPerMs);
@@ -778,12 +795,12 @@ export const Timeline: Component = () => {
     };
 
     const onMouseUp = () => {
-      if (dragMode) {
-        store.pushHistory(`Timeline edit: ${dragMode}`);
+      if (hasDragged && dragMode) {
         store.setState('dirty', true);
         store.syncDesktopDirty();
         store.executeSave();
       }
+      hasDragged = false;
       isDraggingPlayhead = false;
       isPanning = false;
       dragMode = null;

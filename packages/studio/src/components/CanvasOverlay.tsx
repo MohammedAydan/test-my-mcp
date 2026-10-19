@@ -35,6 +35,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
   let dragStartCanvas: Point = { x: 0, y: 0 };
   let initialLayerProps: Record<string, any> = {};
   let isSpacePressed = false;
+  let hasDragged = false;
+  let pendingHistoryDescription: string | null = null;
 
   // Logical canvas dimensions
   const canvasWidth = () => {
@@ -319,7 +321,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
           sizePx: (sel as any).sizePx,
           rotation: box.rotation,
         };
-        store.pushHistory(`Transform layer: ${sel.name || sel.id}`);
+        hasDragged = false;
+        pendingHistoryDescription = `Transform layer: ${sel.name || sel.id}`;
         if (handleType === 'rotate') {
           setDragMode('rotate');
         } else {
@@ -360,7 +363,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
           store.selectLayer(hitLayer.id, isMulti);
         }
 
-        store.pushHistory(`Move layer: ${hitLayer.name || hitLayer.id}`);
+        hasDragged = false;
+        pendingHistoryDescription = `Move layer: ${hitLayer.name || hitLayer.id}`;
         setDragMode('move');
         const box = getLayerBox(hitLayer);
         initialLayerProps = {
@@ -381,6 +385,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
     if (!e.shiftKey) {
       store.selectLayer(null);
     }
+    hasDragged = false;
+    pendingHistoryDescription = null;
     setDragMode('marquee');
     setMarqueeRect({ x: dragStartCanvas.x, y: dragStartCanvas.y, width: 0, height: 0 });
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -433,6 +439,12 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
       if (e.shiftKey) {
         if (Math.abs(dx) > Math.abs(dy)) dy = 0;
         else dx = 0;
+      }
+
+      if (!hasDragged) {
+        if (Math.hypot(dx, dy) < 2) return;
+        hasDragged = true;
+        store.pushHistory(pendingHistoryDescription || 'Move layer');
       }
 
       const layerId = initialLayerProps.layerId;
@@ -498,6 +510,13 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
 
       const dx = currentCanvas.x - dragStartCanvas.x;
       const dy = currentCanvas.y - dragStartCanvas.y;
+
+      if (!hasDragged) {
+        if (Math.hypot(dx, dy) < 2) return;
+        hasDragged = true;
+        store.pushHistory(pendingHistoryDescription || 'Transform layer');
+      }
+
       const initW = initialLayerProps.width;
       const initH = initialLayerProps.height;
 
@@ -538,6 +557,15 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
     if (mode === 'rotate') {
       const sel = primarySelectedLayer();
       if (!sel) return;
+
+      const dx = currentCanvas.x - dragStartCanvas.x;
+      const dy = currentCanvas.y - dragStartCanvas.y;
+
+      if (!hasDragged) {
+        if (Math.hypot(dx, dy) < 2) return;
+        hasDragged = true;
+        store.pushHistory(pendingHistoryDescription || 'Rotate layer');
+      }
 
       const box = getLayerBox(sel);
       const centerX = box.x + box.width / 2;
@@ -584,7 +612,7 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
 
   const handlePointerUp = () => {
     const mode = dragMode();
-    if (mode === 'move' || mode === 'resize' || mode === 'rotate') {
+    if (hasDragged && (mode === 'move' || mode === 'resize' || mode === 'rotate')) {
       store.setState('dirty', true);
       store.syncDesktopDirty();
       store.executeSave();
@@ -608,6 +636,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
       }
     }
 
+    hasDragged = false;
+    pendingHistoryDescription = null;
     setDragMode('none');
     setResizeHandle(null);
     setActiveGuides([]);

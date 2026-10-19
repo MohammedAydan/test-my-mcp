@@ -1,3 +1,4 @@
+import { createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { api } from './api.js';
 import type { StudioScene, CapabilitiesResponse, RenderJobStatus, AssetVaultItem } from './types.js';
@@ -155,6 +156,12 @@ const redoStack: Array<{
 }> = [];
 const maxHistory = 50;
 
+const [historyCount, setHistoryCount] = createSignal({ undo: 0, redo: 0 });
+
+function updateHistoryCount() {
+  setHistoryCount({ undo: undoStack.length, redo: redoStack.length });
+}
+
 function syncDesktopDirty() {
   const mf = (window as unknown as { motionforge?: { setDirty?: (d: boolean) => void } }).motionforge;
   if (mf?.setDirty) {
@@ -180,14 +187,15 @@ export const store = {
       undoStack.shift();
     }
     redoStack.length = 0;
+    updateHistoryCount();
   },
 
   canUndo() {
-    return undoStack.length > 0;
+    return historyCount().undo > 0;
   },
 
   canRedo() {
-    return redoStack.length > 0;
+    return historyCount().redo > 0;
   },
 
   undo(): string | null {
@@ -208,8 +216,10 @@ export const store = {
       dirty: true,
       saveStatus: 'unsaved',
     });
+    updateHistoryCount();
     syncDesktopDirty();
     this.executeSave();
+    this.addToast(`Undo: ${prev.description}`, 'info');
     return prev.description;
   },
 
@@ -231,8 +241,10 @@ export const store = {
       dirty: true,
       saveStatus: 'unsaved',
     });
+    updateHistoryCount();
     syncDesktopDirty();
     this.executeSave();
+    this.addToast(`Redo: ${next.description}`, 'info');
     return next.description;
   },
 
@@ -278,6 +290,7 @@ export const store = {
     });
     undoStack.length = 0;
     redoStack.length = 0;
+    updateHistoryCount();
     syncDesktopDirty();
 
     if (sId) {
