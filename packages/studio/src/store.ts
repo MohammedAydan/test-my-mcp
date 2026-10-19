@@ -12,6 +12,7 @@ export interface StudioState {
   playing: boolean;
   zoom: number;
   panOffset: number;
+  timelineScrollY: number;
   snapEnabled: boolean;
   viewportZoom: number;
   viewportPan: { x: number; y: number };
@@ -75,6 +76,7 @@ const [state, setState] = createStore<StudioState>({
   playing: false,
   zoom: 1,
   panOffset: 0,
+  timelineScrollY: 0,
   snapEnabled: true,
   viewportZoom: 1,
   viewportPan: { x: 0, y: 0 },
@@ -197,6 +199,7 @@ export const store = {
       sceneId: sId,
       selectedLayerId: selLayer,
       selectedLayerIds: selLayer ? [selLayer] : [],
+      timelineScrollY: 0,
       dirty: false,
       saveStatus: 'saved',
       lastSaved: new Date(),
@@ -265,6 +268,10 @@ export const store = {
 
   setPanOffset(offset: number) {
     setState('panOffset', offset);
+  },
+
+  setTimelineScrollY(y: number) {
+    setState('timelineScrollY', Math.max(0, Math.round(y)));
   },
 
   setSnapEnabled(snap: boolean) {

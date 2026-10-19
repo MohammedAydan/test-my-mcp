@@ -13,7 +13,22 @@ export const Timeline: Component = () => {
   const state = store.state;
   let canvasRef: HTMLCanvasElement | undefined;
   let tracksScrollRef: HTMLDivElement | undefined;
+  let verticalScrollbarRef: HTMLDivElement | undefined;
   let ctx: CanvasRenderingContext2D | null = null;
+
+  const onTracksScroll = (e: Event) => {
+    const target = e.currentTarget as HTMLElement;
+    if (Math.abs(state.timelineScrollY - target.scrollTop) > 0.5) {
+      store.setTimelineScrollY(target.scrollTop);
+    }
+  };
+
+  const onVerticalScrollbarScroll = (e: Event) => {
+    const target = e.currentTarget as HTMLElement;
+    if (Math.abs(state.timelineScrollY - target.scrollTop) > 0.5) {
+      store.setTimelineScrollY(target.scrollTop);
+    }
+  };
 
   // Interaction state
   let isDraggingPlayhead = false;
@@ -162,7 +177,13 @@ export const Timeline: Component = () => {
       ctx.fillRect(outX, RULER_H, w - outX, h - RULER_H);
     }
 
-    // 3. Track Rows & Keyframes
+    // 3. Track Rows & Keyframes (clipped below ruler and translated by timelineScrollY)
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, RULER_H, w, Math.max(0, h - RULER_H));
+    ctx.clip();
+    ctx.translate(0, -state.timelineScrollY);
+
     for (const item of layout) {
       const layer = item.layer;
       const x1 = timeToX(layer.at || 0);
@@ -248,6 +269,7 @@ export const Timeline: Component = () => {
         }
       }
     }
+    ctx.restore();
 
     // 4. Ruler Header (pinned on top)
     ctx.fillStyle = '#101017';
@@ -313,6 +335,7 @@ export const Timeline: Component = () => {
     state.playhead;
     state.zoom;
     state.panOffset;
+    state.timelineScrollY;
     state.scene;
     state.selectedLayerId;
     state.selectedLayerIds.length;
@@ -321,6 +344,16 @@ export const Timeline: Component = () => {
     state.inPoint;
     state.outPoint;
     requestAnimationFrame(draw);
+  });
+
+  createEffect(() => {
+    const scrollY = state.timelineScrollY;
+    if (tracksScrollRef && Math.abs(tracksScrollRef.scrollTop - scrollY) > 0.5) {
+      tracksScrollRef.scrollTop = scrollY;
+    }
+    if (verticalScrollbarRef && Math.abs(verticalScrollbarRef.scrollTop - scrollY) > 0.5) {
+      verticalScrollbarRef.scrollTop = scrollY;
+    }
   });
 
   const resize = () => {
@@ -337,13 +370,6 @@ export const Timeline: Component = () => {
   onMount(() => {
     resize();
     window.addEventListener('resize', resize);
-
-    // Synchronize tracks list vertical scroll with canvas
-    if (tracksScrollRef && canvasRef) {
-      tracksScrollRef.addEventListener('scroll', () => {
-        draw();
-      });
-    }
 
     // Global JKL Transport & Shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -440,6 +466,7 @@ export const Timeline: Component = () => {
       }
 
       // 3. Check hit testing on keyframes and layer bars
+      const unshiftedY = y + state.timelineScrollY;
       const { layout } = computeTrackLayout();
 
       for (const item of layout) {
@@ -450,7 +477,7 @@ export const Timeline: Component = () => {
 
         // Check keyframe diamond hits in property sub-tracks
         for (const sub of item.subtracks) {
-          if (y >= sub.y && y <= sub.y + sub.h) {
+          if (unshiftedY >= sub.y && unshiftedY <= sub.y + sub.h) {
             const track = (layer.tracks as any[])?.find((t) => t.property === sub.property);
             if (track && track.keyframes) {
               for (let kfIdx = 0; kfIdx < track.keyframes.length; kfIdx++) {
@@ -474,7 +501,7 @@ export const Timeline: Component = () => {
         }
 
         // Check layer bar hit
-        if (y >= item.y && y <= item.y + item.h) {
+        if (unshiftedY >= item.y && unshiftedY <= item.y + item.h) {
           if (x >= x1 - edgeHoverZone && x <= x2 + edgeHoverZone) {
             const isMulti = e.shiftKey || e.ctrlKey || e.metaKey;
             store.selectLayer(layer.id, isMulti);
@@ -573,11 +600,12 @@ export const Timeline: Component = () => {
         return;
       }
 
+      const unshiftedY = y + state.timelineScrollY;
       const { layout } = computeTrackLayout();
       let hoveredCursor = 'crosshair';
 
       for (const item of layout) {
-        if (y >= item.y && y <= item.y + item.h) {
+        if (unshiftedY >= item.y && unshiftedY <= item.y + item.h) {
           const x1 = timeToX(item.layer.at || 0);
           const layerDur = item.layer.duration || totalDuration() - (item.layer.at || 0);
           const x2 = timeToX((item.layer.at || 0) + layerDur);
@@ -619,9 +647,17 @@ export const Timeline: Component = () => {
         store.setZoom(nextZoom);
         const newXAtTime = timeToX(timeAtMouse);
         store.setPanOffset(state.panOffset + (mouseX - newXAtTime));
-      } else {
+      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
         e.preventDefault();
-        store.setPanOffset(state.panOffset - (e.deltaX || (e.shiftKey ? e.deltaY : 0)));
+        store.setPanOffset(state.panOffset - (e.deltaX || e.deltaY));
+      } else {
+        // Vertical scrolling
+        e.preventDefault();
+        const { totalHeight } = computeTrackLayout();
+        const visibleH = (canvasRef?.clientHeight || 200) - RULER_H;
+        const maxScroll = Math.max(0, totalHeight - visibleH);
+        const nextScroll = Math.max(0, Math.min(maxScroll, state.timelineScrollY + e.deltaY));
+        store.setTimelineScrollY(nextScroll);
       }
     };
 
@@ -730,8 +766,10 @@ export const Timeline: Component = () => {
         {/* LEFT TRACK HEADERS PANEL (220px) */}
         <div
           ref={tracksScrollRef}
+          id="timeline-tracks-scroll"
           class="w-[220px] flex-none bg-[#0e0e15] border-r border-[#1f1f2e] overflow-y-auto overflow-x-hidden select-none"
           style={{ 'padding-top': `${RULER_H}px` }}
+          onScroll={onTracksScroll}
         >
           <For each={state.scene?.layers || []}>
             {(layer) => {
@@ -741,7 +779,11 @@ export const Timeline: Component = () => {
               const props = () => (isExpanded() ? getLayerAnimatableProps(layer) : []);
 
               return (
-                <div class="border-b border-[#181824]/60">
+                <div
+                  class="border-b border-[#181824]/60"
+                  data-layer-id={layer.id}
+                  style={{ 'margin-bottom': `${TRACK_GAP}px` }}
+                >
                   {/* MAIN LAYER HEADER */}
                   <div
                     class={`flex items-center gap-1 px-2 h-[28px] cursor-pointer hover:bg-[#181824] ${
@@ -770,7 +812,7 @@ export const Timeline: Component = () => {
 
                   {/* EXPANDED PROPERTY TRACKS */}
                   <Show when={isExpanded()}>
-                    <div class="bg-[#08080c] py-0.5">
+                    <div class="bg-[#08080c]">
                       <For each={props()}>
                         {(prop) => {
                           const track = (layer.tracks as any[])?.find((t) => t.property === prop);
@@ -825,6 +867,15 @@ export const Timeline: Component = () => {
             aria-valuemax={totalDuration()}
             aria-valuenow={state.playhead}
           />
+          {/* Vertical scrollbar for canvas tracks */}
+          <div
+            ref={verticalScrollbarRef}
+            id="timeline-vertical-scrollbar"
+            class="absolute top-[28px] right-0 bottom-0 w-2.5 overflow-y-auto overflow-x-hidden z-10 select-none"
+            onScroll={onVerticalScrollbarScroll}
+          >
+            <div style={{ height: `${Math.max(1, computeTrackLayout().totalHeight - RULER_H)}px`, width: '1px' }} />
+          </div>
         </div>
       </div>
     </section>
