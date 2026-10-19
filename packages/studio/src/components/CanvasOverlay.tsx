@@ -639,6 +639,169 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
     };
   };
 
+  // Drag-and-drop ingestion from Asset Vault or OS file explorer
+  const [isDragOver, setIsDragOver] = createSignal(false);
+
+  const handleDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleDragEnter = (e: DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: DragEvent) => {
+    if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+
+    if (!state.scene) {
+      store.addToast('Load or create a scene before dropping assets', 'warning');
+      return;
+    }
+
+    const container = props.containerRef();
+    if (!container) return;
+    const cRect = container.getBoundingClientRect();
+    const screenX = e.clientX - cRect.left;
+    const screenY = e.clientY - cRect.top;
+
+    const m = getMetrics();
+    const canvasPt = screenToCanvas({ x: screenX, y: screenY });
+    const xPct = Math.max(5, Math.min(95, Math.round((canvasPt.x / m.cW) * 1000) / 10));
+    const yPct = Math.max(5, Math.min(95, Math.round((canvasPt.y / m.cH) * 1000) / 10));
+
+    let assetData: { assetId?: string; kind?: string; src?: string; name?: string } | null = null;
+    const jsonStr = e.dataTransfer?.getData('application/json');
+    if (jsonStr) {
+      try {
+        assetData = JSON.parse(jsonStr);
+      } catch {}
+    }
+    if (!assetData) {
+      const textId = e.dataTransfer?.getData('text/plain');
+      if (textId) {
+        const found = state.scene.assets?.find((a) => a.id === textId);
+        if (found) {
+          assetData = { assetId: found.id, kind: found.kind, src: found.src, name: found.name };
+        } else {
+          assetData = { assetId: textId };
+        }
+      }
+    }
+
+    // Check for native OS file drop (image file from desktop explorer)
+    if (!assetData && e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+      const file = e.dataTransfer.files[0];
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (readEvt) => {
+          const dataUrl = readEvt.target?.result as string;
+          const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const assetId = `img_${cleanName}_${Math.random().toString(36).slice(2, 6)}`;
+          const layerId = `layer_${cleanName}_${Math.random().toString(36).slice(2, 6)}`;
+
+          store.mutateScene((sc) => {
+            if (!sc.assets) sc.assets = [];
+            sc.assets.push({
+              id: assetId,
+              kind: 'image',
+              src: dataUrl,
+              name: file.name,
+            });
+            sc.layers.push({
+              id: layerId,
+              name: file.name,
+              type: 'imageLogo',
+              assetId: assetId,
+              widthPx: 300,
+              position: { xPct, yPct },
+              at: state.playhead,
+              duration: 3000,
+            });
+          }, `Dropped image file ${file.name}`);
+
+          store.selectLayer(layerId);
+          store.executeSave();
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+    }
+
+    if (!assetData) {
+      store.addToast('Unrecognized asset dropped onto canvas', 'warning');
+      return;
+    }
+
+    const assetId = assetData.assetId || 'logo';
+    const kind = assetData.kind || 'image';
+    const newLayerId = `${kind}-${Math.random().toString(36).slice(2, 7)}`;
+
+    store.mutateScene((sc) => {
+      if (!sc.assets) sc.assets = [];
+      if (!sc.assets.some((a) => a.id === assetId)) {
+        sc.assets.push({
+          id: assetId,
+          kind: (kind as any) || 'image',
+          src: assetData?.src || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PGNpcmNsZSBjeD0iNTAiIGN5PSI1MCIgcj0iNDAiIGZpbGw9IiNmNTllMGIiLz48L3N2Zz4=',
+          name: assetData?.name || assetId,
+        });
+      }
+
+      if (kind === 'audio') {
+        if (!sc.audio) sc.audio = { cues: [] };
+        if (!sc.audio.cues) sc.audio.cues = [];
+        const validSfx = ['whoosh', 'pop', 'click', 'subImpact', 'shimmer', 'riser'];
+        const sfxName = validSfx.includes(assetId) ? assetId : 'pop';
+        sc.audio.cues.push({
+          id: `cue-${Math.random().toString(36).slice(2, 7)}`,
+          at: state.playhead,
+          sfx: sfxName as any,
+          gain: 1,
+          pan: 0,
+        });
+        store.addToast(`Added audio cue at ${state.playhead}ms`, 'success');
+      } else if (kind === 'lottie') {
+        sc.layers.push({
+          id: newLayerId,
+          name: assetData?.name || `Lottie ${assetId}`,
+          type: 'lottie',
+          assetId,
+          position: { xPct, yPct },
+          at: state.playhead,
+          duration: 3000,
+        });
+        store.selectLayer(newLayerId);
+        store.addToast(`Created Lottie layer at (${xPct}%, ${yPct}%)`, 'success');
+      } else {
+        sc.layers.push({
+          id: newLayerId,
+          name: assetData?.name || `Image ${assetId}`,
+          type: 'imageLogo',
+          assetId,
+          widthPx: 300,
+          position: { xPct, yPct },
+          at: state.playhead,
+          duration: 3000,
+        });
+        store.selectLayer(newLayerId);
+        store.addToast(`Created Image layer at (${xPct}%, ${yPct}%)`, 'success');
+      }
+    }, `Dropped asset ${assetId} onto canvas`);
+
+    store.executeSave();
+  };
+
   const cursorClass = () => {
     if (state.activeTool === 'hand' || isSpacePressed) {
       return dragMode() === 'pan' ? 'cursor-grabbing' : 'cursor-grab';
@@ -648,13 +811,30 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
 
   return (
     <div
-      class={`absolute inset-0 select-none ${cursorClass()}`}
+      id="canvas-overlay-container"
+      class={`absolute inset-0 select-none ${cursorClass()} ${
+        isDragOver() ? 'ring-2 ring-[#f59e0b] bg-[#f59e0b]/5' : ''
+      }`}
       style={{ 'pointer-events': 'auto' }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onWheel={handleWheel}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
     >
+      {/* DRAG-OVER DROP ZONE OVERLAY HINT */}
+      <Show when={isDragOver()}>
+        <div class="absolute inset-4 rounded-xl border-2 border-dashed border-[#f59e0b] bg-[#f59e0b]/10 pointer-events-none flex items-center justify-center z-40 backdrop-blur-[2px]">
+          <div class="px-4 py-2 rounded-lg bg-[#14141c]/90 border border-[#f59e0b] text-[#f59e0b] font-medium text-sm flex items-center gap-2 shadow-2xl">
+            <span>✨</span>
+            <span>Drop Asset onto Canvas to Position</span>
+          </div>
+        </div>
+      </Show>
+
       <svg class="w-full h-full overflow-visible pointer-events-none">
         {/* SNAP GUIDES */}
         <For each={activeGuides()}>

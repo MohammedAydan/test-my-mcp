@@ -834,6 +834,132 @@ export const Timeline: Component = () => {
     });
   });
 
+  const [isTimelineDragOver, setIsTimelineDragOver] = createSignal(false);
+  const [dragOverTime, setDragOverTime] = createSignal<number | null>(null);
+
+  const handleTimelineDragOver = (e: DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'copy';
+    }
+    if (canvasRef) {
+      const rect = canvasRef.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      setDragOverTime(Math.max(0, Math.min(totalDuration(), Math.round(xToTime(x)))));
+    }
+  };
+
+  const handleTimelineDragEnter = (e: DragEvent) => {
+    e.preventDefault();
+    setIsTimelineDragOver(true);
+  };
+
+  const handleTimelineDragLeave = (e: DragEvent) => {
+    if (e.currentTarget === e.target || !e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsTimelineDragOver(false);
+      setDragOverTime(null);
+    }
+  };
+
+  const handleTimelineDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setIsTimelineDragOver(false);
+    setDragOverTime(null);
+
+    if (!state.scene) {
+      store.addToast('Load or create a scene before dropping assets', 'warning');
+      return;
+    }
+
+    if (!canvasRef) return;
+    const rect = canvasRef.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const dropTime = Math.max(0, Math.min(totalDuration(), Math.round(xToTime(x))));
+
+    let assetData: { assetId?: string; kind?: string; src?: string; name?: string } | null = null;
+    const jsonStr = e.dataTransfer?.getData('application/json');
+    if (jsonStr) {
+      try {
+        assetData = JSON.parse(jsonStr);
+      } catch {}
+    }
+    if (!assetData) {
+      const textId = e.dataTransfer?.getData('text/plain');
+      if (textId) {
+        const found = state.scene.assets?.find((a) => a.id === textId);
+        if (found) {
+          assetData = { assetId: found.id, kind: found.kind, src: found.src, name: found.name };
+        } else {
+          assetData = { assetId: textId };
+        }
+      }
+    }
+
+    if (!assetData) {
+      store.addToast('Unrecognized asset dropped onto timeline', 'warning');
+      return;
+    }
+
+    const assetId = assetData.assetId || 'logo';
+    const kind = assetData.kind || 'image';
+    const newLayerId = `${kind}-${Math.random().toString(36).slice(2, 7)}`;
+
+    store.mutateScene((sc) => {
+      if (!sc.assets) sc.assets = [];
+      if (!sc.assets.some((a) => a.id === assetId)) {
+        sc.assets.push({
+          id: assetId,
+          kind: (kind as any) || 'image',
+          src: assetData?.src || 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PGNpcmNsZSBjeD0iNTAiIGN5PSI1MCIgcj0iNDAiIGZpbGw9IiNmNTllMGIiLz48L3N2Zz4=',
+          name: assetData?.name || assetId,
+        });
+      }
+
+      if (kind === 'audio') {
+        if (!sc.audio) sc.audio = { cues: [] };
+        if (!sc.audio.cues) sc.audio.cues = [];
+        const validSfx = ['whoosh', 'pop', 'click', 'subImpact', 'shimmer', 'riser'];
+        const sfxName = validSfx.includes(assetId) ? assetId : 'pop';
+        sc.audio.cues.push({
+          id: `cue-${Math.random().toString(36).slice(2, 7)}`,
+          at: dropTime,
+          sfx: sfxName as any,
+          gain: 1,
+          pan: 0,
+        });
+        store.addToast(`Added audio cue "${sfxName}" at ${dropTime}ms`, 'success');
+      } else if (kind === 'lottie') {
+        sc.layers.push({
+          id: newLayerId,
+          name: assetData?.name || `Lottie ${assetId}`,
+          type: 'lottie',
+          assetId,
+          position: { xPct: 50, yPct: 50 },
+          at: dropTime,
+          duration: 3000,
+        });
+        store.selectLayer(newLayerId);
+        store.addToast(`Added Lottie layer at ${dropTime}ms`, 'success');
+      } else {
+        sc.layers.push({
+          id: newLayerId,
+          name: assetData?.name || `Image ${assetId}`,
+          type: 'imageLogo',
+          assetId,
+          widthPx: 300,
+          position: { xPct: 50, yPct: 50 },
+          at: dropTime,
+          duration: 3000,
+        });
+        store.selectLayer(newLayerId);
+        store.addToast(`Added Image layer at ${dropTime}ms`, 'success');
+      }
+    }, `Dropped asset ${assetId} onto timeline`);
+
+    store.setPlayhead(dropTime);
+    store.executeSave();
+  };
+
   const timelineInfo = () => {
     const dur = totalDuration();
     const visibleDur = (dur / state.zoom / 1000).toFixed(1);
@@ -1049,7 +1175,28 @@ export const Timeline: Component = () => {
         </div>
 
         {/* RIGHT CANVAS TIMELINE AREA */}
-        <div class="flex-1 h-full overflow-hidden relative">
+        <div
+          id="timeline-canvas-container"
+          class={`flex-1 h-full overflow-hidden relative ${
+            isTimelineDragOver() ? 'ring-2 ring-inset ring-[#22d3ee] bg-[#22d3ee]/5' : ''
+          }`}
+          onDragOver={handleTimelineDragOver}
+          onDragEnter={handleTimelineDragEnter}
+          onDragLeave={handleTimelineDragLeave}
+          onDrop={handleTimelineDrop}
+        >
+          {/* DRAG-OVER DROP TIME GUIDE */}
+          <Show when={isTimelineDragOver() && dragOverTime() !== null}>
+            <div
+              class="absolute top-0 bottom-0 w-0.5 bg-[#22d3ee] pointer-events-none z-30 shadow-[0_0_8px_#22d3ee]"
+              style={{ left: `${timeToX(dragOverTime()!)}px` }}
+            >
+              <div class="absolute top-1 left-1.5 px-1.5 py-0.5 rounded bg-[#0e1726] border border-[#22d3ee] text-[10px] font-mono text-[#22d3ee] whitespace-nowrap shadow-md">
+                + Drop at {(dragOverTime()! / 1000).toFixed(2)}s
+              </div>
+            </div>
+          </Show>
+
           <canvas
             ref={canvasRef}
             id="timeline-canvas"

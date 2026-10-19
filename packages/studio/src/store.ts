@@ -249,6 +249,20 @@ export const store = {
     syncDesktopDirty();
   },
 
+  addAsset(asset: { id: string; kind: 'image' | 'video' | 'audio' | 'lottie' | 'font'; src: string; name?: string }) {
+    if (!state.scene) return;
+    this.mutateScene((scene) => {
+      if (!scene.assets) scene.assets = [];
+      const idx = scene.assets.findIndex((a) => a.id === asset.id);
+      if (idx >= 0) {
+        scene.assets[idx] = asset;
+      } else {
+        scene.assets.push(asset);
+      }
+    }, `Added asset ${asset.id}`);
+    this.executeSave();
+  },
+
   setScene(scene: StudioScene | null, sceneId?: string) {
     const sId = sceneId || scene?.id || null;
     const selLayer = scene?.layers?.[0]?.id || null;

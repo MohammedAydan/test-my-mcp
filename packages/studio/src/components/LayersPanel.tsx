@@ -21,6 +21,47 @@ export const LayersPanel: Component<LayersPanelProps> = (props) => {
   const state = store.state;
   const [filterText, setFilterText] = createSignal('');
   let draggedIndex: number | null = null;
+  let fileInputRef: HTMLInputElement | undefined;
+
+  const handleAssetDragStart = (e: DragEvent, asset: { id: string; kind: string; src?: string; name?: string }) => {
+    if (!e.dataTransfer) return;
+    const payload = JSON.stringify({
+      assetId: asset.id,
+      kind: asset.kind,
+      src: asset.src,
+      name: asset.name || asset.id,
+    });
+    e.dataTransfer.setData('application/json', payload);
+    e.dataTransfer.setData('text/plain', asset.id);
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  const handleFileUpload = (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+    const reader = new FileReader();
+    reader.onload = (loadEvt) => {
+      const src = loadEvt.target?.result as string;
+      const cleanName = file.name.replace(/\.[^/.]+$/, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const kind = file.type.startsWith('audio/')
+        ? 'audio'
+        : file.name.endsWith('.json')
+        ? 'lottie'
+        : file.type.startsWith('video/')
+        ? 'video'
+        : 'image';
+      store.addAsset({
+        id: `${cleanName}_${Math.random().toString(36).slice(2, 6)}`,
+        kind: kind as any,
+        src,
+        name: file.name,
+      });
+      store.addToast(`Imported asset ${file.name}`, 'success');
+    };
+    reader.readAsDataURL(file);
+    input.value = '';
+  };
 
   const filteredLayers = () => {
     const list = state.scene?.layers || [];
@@ -270,10 +311,105 @@ export const LayersPanel: Component<LayersPanelProps> = (props) => {
       </div>
 
       {/* ASSETS TAB */}
-      <div class={`panel-content ${state.activeLeftTab === 'assets' ? '' : 'hidden'}`} data-panel="assets" role="tabpanel">
-        <div style="padding: 12px;">
-          <div class="empty-state-title" style="margin-bottom: 8px;">Asset Vault</div>
-          <div class="empty-state-hint">Manage project media, images, audio, and Lottie animations.</div>
+      <div class={`panel-content flex-1 overflow-y-auto ${state.activeLeftTab === 'assets' ? '' : 'hidden'}`} data-panel="assets" role="tabpanel">
+        <div class="p-3 flex flex-col gap-3">
+          <div class="flex items-center justify-between border-b border-[#242436] pb-2">
+            <div>
+              <div class="text-xs font-semibold text-[#e4e4e7]">Asset Vault</div>
+              <div class="text-[11px] text-[#71717a]">{state.scene?.assets?.length || 0} project assets</div>
+            </div>
+            <button
+              class="px-2 py-1 text-xs rounded bg-[#252538] hover:bg-[#34344d] text-[#e4e4e7] border border-[#3f3f58] flex items-center gap-1 font-medium"
+              onClick={() => fileInputRef?.click()}
+              title="Import local media file into Vault"
+            >
+              + Import
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              class="hidden"
+              accept="image/*,audio/*,.json"
+              onChange={handleFileUpload}
+            />
+          </div>
+
+          {/* PROJECT ASSETS */}
+          <div class="flex flex-col gap-1.5">
+            <span class="text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa]">Project Media</span>
+            <Show
+              when={(state.scene?.assets?.length || 0) > 0}
+              fallback={
+                <div class="p-3 rounded border border-dashed border-[#27273a] text-center text-[11px] text-[#71717a]">
+                  No custom assets yet. Import images, logos, or Lottie JSON files.
+                </div>
+              }
+            >
+              <div class="grid grid-cols-1 gap-1.5">
+                <For each={state.scene?.assets || []}>
+                  {(asset) => (
+                    <div
+                      class="flex items-center gap-2 p-2 rounded bg-[#13131d] hover:bg-[#1c1c2b] border border-[#232334] cursor-grab active:cursor-grabbing transition-colors select-none group"
+                      draggable={true}
+                      data-asset-id={asset.id}
+                      data-asset-kind={asset.kind}
+                      onDragStart={(e) => handleAssetDragStart(e, asset)}
+                    >
+                      <div class="w-8 h-8 rounded bg-[#1f1f2e] border border-[#2e2e42] flex items-center justify-center flex-none overflow-hidden text-xs">
+                        {asset.kind === 'image' && asset.src?.startsWith('data:') ? (
+                          <img src={asset.src} alt={asset.name || asset.id} class="w-full h-full object-cover" />
+                        ) : asset.kind === 'lottie' ? (
+                          '✨'
+                        ) : asset.kind === 'audio' ? (
+                          '🔊'
+                        ) : (
+                          '🖼'
+                        )}
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <div class="text-xs text-[#e4e4e7] font-medium truncate group-hover:text-[#f59e0b]">
+                          {asset.name || asset.id}
+                        </div>
+                        <div class="text-[10px] text-[#71717a] font-mono flex items-center gap-1">
+                          <span class="px-1 py-0.2 bg-[#20202e] rounded text-[9px] uppercase">{asset.kind}</span>
+                          <span class="truncate">{asset.id}</span>
+                        </div>
+                      </div>
+                      <span class="text-[10px] text-[#52525b] group-hover:text-[#a1a1aa] flex-none">⠿</span>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+
+          {/* BUILT-IN SFX BANK */}
+          <div class="flex flex-col gap-1.5 pt-2 border-t border-[#1e1e2d]">
+            <span class="text-[10px] uppercase font-bold tracking-wider text-[#a1a1aa]">Built-in SFX Bank</span>
+            <div class="grid grid-cols-2 gap-1.5">
+              <For each={['whoosh', 'pop', 'click', 'subImpact', 'shimmer', 'riser']}>
+                {(sfx) => (
+                  <div
+                    class="flex items-center gap-1.5 p-1.5 rounded bg-[#13131d] hover:bg-[#1c1c2b] border border-[#232334] cursor-grab active:cursor-grabbing text-xs text-[#d4d4d8] select-none group"
+                    draggable={true}
+                    data-asset-id={sfx}
+                    data-asset-kind="audio"
+                    onDragStart={(e) =>
+                      handleAssetDragStart(e, {
+                        id: sfx,
+                        kind: 'audio',
+                        name: `SFX: ${sfx}`,
+                      })
+                    }
+                  >
+                    <span class="text-[11px] text-[#10b981]">🔊</span>
+                    <span class="truncate flex-1 font-mono text-[11px] group-hover:text-[#10b981]">{sfx}</span>
+                    <span class="text-[9px] text-[#52525b]">⠿</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
         </div>
       </div>
     </aside>
