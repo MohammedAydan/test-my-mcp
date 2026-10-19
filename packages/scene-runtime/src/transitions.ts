@@ -268,7 +268,7 @@ export function applyTransitions(
 ): TransitionOverlay[] {
   const overlays: TransitionOverlay[] = [];
 
-  for (const tr of scene.transitions) {
+  for (const tr of (scene.transitions ?? [])) {
     const atSec = tr.at / 1000;
     const durSec = tr.durationMs / 1000;
     const { inEnd, outStart } = peakWindow(tr.kind, tr.durationMs);

@@ -124,6 +124,13 @@ export const Header: Component<HeaderProps> = (props) => {
         <button class="toolbar-btn" id="btn-shortcuts" data-tooltip="Keyboard shortcuts (?)" aria-label="Shortcuts" onClick={props.onShortcuts}>
           <span style="font-weight: 700; font-family: monospace;">?</span>
         </button>
+        <button class="toolbar-btn" id="btn-help" data-tooltip="Quickstart & Help" aria-label="Help" onClick={props.onShortcuts}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+            <line x1="12" y1="17" x2="12.01" y2="17" stroke-width="2" />
+          </svg>
+        </button>
       </div>
 
       <div class="titlebar-right">

@@ -1,6 +1,6 @@
 import "./style.css";
 import type { gsap } from "gsap";
-import { resolveCanvasSize, type SceneSpec } from "@motionforge/scene-spec";
+import { resolveCanvasSize, sceneSpecSchema, type Canvas, type SceneSpec } from "@motionforge/scene-spec";
 import { createStage, resetStage, type Stage } from "./stage.js";
 import { loadSceneFonts } from "./fonts.js";
 import { assetKindOf, fetchScene, preloadAssets, resolveAssetUrl } from "./api.js";
@@ -49,6 +49,39 @@ interface MountedScene {
 let stage: Stage | null = null;
 let mounted: MountedScene | null = null;
 
+/** Bounding box of every mounted layer, in design-space pixels. */
+export type LayerBounds = Record<
+  string,
+  { x: number; y: number; width: number; height: number; rotation: number }
+>;
+
+/** Canvas used before any scene is known (zero-port boot without an id). */
+const DEFAULT_CANVAS: Canvas = { shape: "16:9", scale: 1080 };
+
+/**
+ * Publish layer bounds to the host.
+ *
+ * Two event names are emitted for the same payload: `layerBounds` is the
+ * legacy name, `layerBoundsReport` the one the Studio UI listens for. Sending
+ * both keeps every listener working regardless of which name it expects.
+ */
+function postBoundsReport(bounds: LayerBounds, frame?: number): void {
+  const payload = frame === undefined ? { bounds } : { frame, bounds };
+  window.parent?.postMessage({ type: "layerBounds", ...payload }, "*");
+  window.parent?.postMessage({ type: "layerBoundsReport", ...payload }, "*");
+}
+
+/**
+ * one frame-index → one timeline-time mapping, independent of what was
+ * captured before; the engine drives it exclusively
+ */
+function installSeekToFrame(): void {
+  window.seekToFrame = async (frame: number): Promise<void> => {
+    if (!mounted) return;
+    await mounted.settle(clampFrame(frame, mounted.totalFrames) / mounted.fps);
+  };
+}
+
 async function boot(): Promise<void> {
   let readyResolve!: () => void;
   const ready = new Promise<void>((resolve) => {
@@ -61,51 +94,85 @@ async function boot(): Promise<void> {
   const sceneId = params.get("scene");
   const fps = Number(params.get("fps") ?? 60);
 
-  if (!sceneId) {
-    showError('Missing "?scene=<id>" — pass the id of a scene stored in core-engine.');
-    readyResolve();
-    return;
-  }
+  // A zero-port host has no engine HTTP origin to subscribe to — it pushes
+  // scene updates over postMessage instead (`motionforge:updateScene`).
+  //
+  // Reading a property off a cross-origin parent throws a SecurityError
+  // ("Blocked a frame with origin … from accessing a cross-origin frame"), so
+  // the probe is guarded: a Studio page may frame the runtime from an origin
+  // of its own, and the runtime must not die on the way in.
+  const isLocal = (() => {
+    if (typeof window === "undefined") return false;
+    if (window.location.protocol === "mf-runtime:" || window.location.protocol === "file:") {
+      return true;
+    }
+    try {
+      return Boolean((window.parent as unknown as { motionforgeEngine?: unknown })?.motionforgeEngine);
+    } catch {
+      // Cross-origin parent: no bridge to reach, but the host can still push
+      // the scene over postMessage.
+      return false;
+    }
+  })();
 
-  let scene: SceneSpec;
-  try {
-    scene = await fetchScene(sceneId);
-  } catch (error) {
-    showError(
-      `Could not load scene "${sceneId}": ${error instanceof Error ? error.message : String(error)}. ` +
-        "Is core-engine running (default http://localhost:4000)?"
-    );
-    readyResolve();
-    return;
-  }
+  if (sceneId) {
+    let scene: SceneSpec | null = null;
+    try {
+      scene = await fetchScene(sceneId);
+    } catch (error) {
+      if (isLocal) {
+        // A zero-port host owns the engine in-process: there is no HTTP
+        // origin to fetch the scene from, and a cross-origin parent cannot be
+        // reached over the bridge either. The host hands the scene down over
+        // postMessage (`motionforge:initScene` / `motionforge:updateScene`),
+        // so the scene is still on its way — this is not an error.
+        console.warn(
+          `[motionforge] scene "${sceneId}" is not reachable over HTTP — waiting for the host to push it`
+        );
+        // Announce readiness so a host that only pushes the scene once the
+        // runtime is up answers with it.
+        window.parent?.postMessage({ type: "motionforge:ready", fps, durationMs: 0 }, "*");
+      } else {
+        showError(
+          `Could not load scene "${sceneId}": ${error instanceof Error ? error.message : String(error)}. ` +
+            "Is core-engine running (default http://localhost:4000)?"
+        );
+      }
+    }
 
-  const { width, height } = resolveCanvasSize(scene.canvas);
-  stage = createStage(width, height);
+    if (scene) {
+      const { width, height } = resolveCanvasSize(scene.canvas);
+      stage = createStage(width, height);
+      installSeekToFrame();
 
-  // one frame-index → one timeline-time mapping, independent of what was
-  // captured before; the engine drives it exclusively
-  window.seekToFrame = async (frame: number): Promise<void> => {
-    if (!mounted) return;
-    await mounted.settle(clampFrame(frame, mounted.totalFrames) / mounted.fps);
-  };
-
-  try {
-    await mountScene(scene, sceneId, fps, renderMode);
+      try {
+        await mountScene(scene, sceneId, fps, renderMode);
+        readyResolve();
+        // Notify parent window that runtime is mounted and ready for sync
+        window.parent?.postMessage(
+          { type: "motionforge:ready", fps, durationMs: scene.durationMs },
+          "*"
+        );
+        postBoundsReport(computeLayerBounds(), 0);
+      } catch (error) {
+        showError(error instanceof Error ? error.message : String(error));
+        readyResolve();
+      }
+    } else {
+      readyResolve();
+    }
+  } else {
+    // Monolithic zero-port execution: the host owns the engine in-process and
+    // pushes the scene over postMessage (`motionforge:initScene`). Booting
+    // without an id is a valid state — not an error — so the stage is prepared
+    // and the host is told we are ready to receive a scene.
+    if (!stage) {
+      const { width, height } = resolveCanvasSize(DEFAULT_CANVAS);
+      stage = createStage(width, height);
+    }
+    installSeekToFrame();
     readyResolve();
-    // Notify parent window that runtime is mounted and ready for sync
-    window.parent?.postMessage(
-      { type: "motionforge:ready", fps, durationMs: scene.durationMs },
-      "*"
-    );
-    const initialBounds = computeLayerBounds();
-    window.parent?.postMessage(
-      { type: "layerBounds", frame: 0, bounds: initialBounds },
-      "*"
-    );
-  } catch (error) {
-    showError(error instanceof Error ? error.message : String(error));
-    readyResolve();
-    return;
+    window.parent?.postMessage({ type: "motionforge:ready", fps, durationMs: 0 }, "*");
   }
 
   // Handle postMessage communication from MotionForge Studio UI
@@ -119,11 +186,7 @@ async function boot(): Promise<void> {
       if (window.seekToFrame) {
         await window.seekToFrame(targetFrame);
       }
-      const bounds = computeLayerBounds();
-      window.parent?.postMessage(
-        { type: "layerBounds", frame: targetFrame, bounds },
-        "*"
-      );
+      postBoundsReport(computeLayerBounds(), targetFrame);
     } else if (data.type === "motionforge:play") {
       if (mounted) {
         mounted.tl.play();
@@ -136,15 +199,7 @@ async function boot(): Promise<void> {
       if (typeof data.frame === "number" && window.seekToFrame) {
         await window.seekToFrame(data.frame);
       }
-      const bounds = computeLayerBounds();
-      window.parent?.postMessage(
-        {
-          type: "layerBounds",
-          frame: data.frame ?? 0,
-          bounds,
-        },
-        "*"
-      );
+      postBoundsReport(computeLayerBounds(), data.frame ?? 0);
     } else if (data.type === "ephemeralTransform" || data.type === "motionforge:ephemeralTransform") {
       const { layerId, xPct, yPct, rotation, widthPx, heightPx } = data;
       const layerEl = stage?.content.querySelector<HTMLElement>(`.mf-layer[data-layer-id="${layerId}"]`);
@@ -158,13 +213,35 @@ async function boot(): Promise<void> {
         if (typeof rotation === "number") {
           contentEl.style.transform = `translate(-50%, -50%)${rotation ? ` rotate(${rotation}deg)` : ""}`;
         }
+        postBoundsReport(computeLayerBounds());
+      }
+    } else if (
+      data.type === "motionforge:initScene" ||
+      data.type === "motionforge:updateScene"
+    ) {
+      if (data.scene) {
+        const nextScene = data.scene as SceneSpec;
+        const nextId = nextScene.id || sceneId || "scene";
+        if (!stage) {
+          const { width, height } = resolveCanvasSize(nextScene.canvas);
+          stage = createStage(width, height);
+        }
+        unmountScene();
+        await mountScene(nextScene, nextId, fps, false);
+        if (typeof data.atMs === "number" && window.seekToFrame) {
+          const activeFps = window.renderConfig?.fps ?? fps;
+          await window.seekToFrame(Math.round((data.atMs / 1000) * activeFps));
+        }
         const bounds = computeLayerBounds();
         window.parent?.postMessage({ type: "layerBounds", bounds }, "*");
+        window.parent?.postMessage({ type: "layerBoundsReport", bounds }, "*");
       }
     }
   });
 
-  if (!renderMode) {
+  // A zero-port host has no engine HTTP origin to subscribe to — it pushes
+  // scene updates over postMessage instead (`motionforge:updateScene`).
+  if (sceneId && !isLocal && !renderMode) {
     // Live preview: rebuild in place when the engine pushes an update. A full
     // page reload would drop the scrubber position and flash a blank stage;
     // more importantly, a rebuild MUST start from a clean stage or the previous
@@ -179,11 +256,17 @@ async function boot(): Promise<void> {
 }
 
 async function mountScene(
-  scene: SceneSpec,
+  rawScene: SceneSpec,
   sceneId: string,
   fps: number,
   renderMode: boolean
 ): Promise<void> {
+  let scene: SceneSpec;
+  try {
+    scene = sceneSpecSchema.parse(rawScene);
+  } catch {
+    scene = rawScene;
+  }
   if (!stage) throw new Error("stage not created");
 
   const { width, height } = resolveCanvasSize(scene.canvas);
@@ -192,7 +275,7 @@ async function mountScene(
   const { lottieJson, imageSizes } = await preloadAssets(scene);
   const fonts = await loadSceneFonts(scene);
   // assetId → engine URL (the LLM references ids; the runtime needs srcs)
-  const srcById = new Map(scene.assets.map((asset) => [asset.id, asset.src]));
+  const srcById = new Map((scene.assets ?? []).map((asset) => [asset.id, asset.src]));
 
   const seekables: Seekable[] = [];
   const { tl, lifecycle, describeFrame } = buildScene(scene, stage, {
@@ -269,19 +352,13 @@ async function mountScene(
   }
 }
 
-export function computeLayerBounds(): Record<
-  string,
-  { x: number; y: number; width: number; height: number; rotation: number }
-> {
+export function computeLayerBounds(): LayerBounds {
   if (!stage || !mounted) return {};
   const stageBox = stage.stage.getBoundingClientRect();
   const designW = stage.width || 1;
   const scale = stageBox.width / designW || 1;
 
-  const result: Record<
-    string,
-    { x: number; y: number; width: number; height: number; rotation: number }
-  > = {};
+  const result: LayerBounds = {};
   const sceneLayers = new Map(mounted.scene.layers.map((l) => [l.id, l]));
 
   const layerElements = stage.content.querySelectorAll<HTMLElement>(".mf-layer[data-layer-id]");

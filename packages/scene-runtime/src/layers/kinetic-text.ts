@@ -207,17 +207,21 @@ function buildHighlight(highlight: NonNullable<KineticTextLayer["highlight"]>): 
 }
 
 /** Solid color → color; gradient → background-clip:text gradient fill. */
-function applyTextPaint(el: HTMLElement, fill: Paint, stroke?: { color: string; widthPx: number }): void {
-  if (typeof fill === "string") {
+function applyTextPaint(el: HTMLElement, fill?: Paint, stroke?: { color: string; widthPx: number }): void {
+  if (!fill) {
+    el.style.color = "#ffffff";
+  } else if (typeof fill === "string") {
     el.style.color = fill;
-  } else {
-    const stops = fill.stops
-      .map((s) => `${rgbaOf(s.color, s.opacity ?? 1)} ${s.at}%`)
+  } else if (fill && Array.isArray((fill as any).stops)) {
+    const stops = (fill as any).stops
+      .map((s: any) => `${rgbaOf(s.color, s.opacity ?? 1)} ${s.at}%`)
       .join(", ");
-    el.style.backgroundImage = `linear-gradient(${fill.angleDeg}deg, ${stops})`;
+    el.style.backgroundImage = `linear-gradient(${(fill as any).angleDeg || 0}deg, ${stops})`;
     el.style.webkitBackgroundClip = "text";
     el.style.backgroundClip = "text";
     el.style.color = "transparent";
+  } else {
+    el.style.color = "#ffffff";
   }
   if (stroke) {
     el.style.webkitTextStroke = `${stroke.widthPx}px ${stroke.color}`;

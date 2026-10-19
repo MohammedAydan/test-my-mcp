@@ -261,6 +261,18 @@ export const store = {
     syncDesktopDirty();
   },
 
+  updateSceneWithoutHistory(mutatorFn: (scene: StudioScene) => void) {
+    if (!state.scene) return;
+    const cloned: StudioScene = JSON.parse(JSON.stringify(state.scene));
+    mutatorFn(cloned);
+    setState({
+      scene: cloned,
+      dirty: true,
+      saveStatus: 'unsaved',
+    });
+    syncDesktopDirty();
+  },
+
   addAsset(asset: { id: string; kind: 'image' | 'video' | 'audio' | 'lottie' | 'font'; src: string; name?: string }) {
     if (!state.scene) return;
     this.mutateScene((scene) => {

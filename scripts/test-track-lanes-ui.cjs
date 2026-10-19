@@ -11,7 +11,6 @@ async function testTrackLanesUI() {
     args: ['--no-sandbox', path.resolve(__dirname, '../packages/desktop/out/main/index.js')],
     env: {
       ...process.env,
-      MOTIONFORGE_ENGINE_URL: 'http://127.0.0.1:4000',
       MOTIONFORGE_TEST_MODE: '1',
     },
   });
@@ -89,16 +88,10 @@ async function testTrackLanesUI() {
     ],
   };
 
-  const seedRes = await fetch('http://127.0.0.1:4000/api/scenes', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(testScene),
-  });
-  if (!seedRes.ok) {
-    throw new Error(`Failed to seed test scene in engine: ${await seedRes.text()}`);
-  }
-
-  await window.evaluate((scene) => {
+  await window.evaluate(async (scene) => {
+    if (window.motionforgeEngine) {
+      await window.motionforgeEngine.invoke('saveScene', scene);
+    }
     window.store.setScene(scene, 'test-multiclip-scene');
     window.store.setZoom(1);
     window.store.setPanOffset(0);

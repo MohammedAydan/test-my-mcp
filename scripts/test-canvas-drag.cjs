@@ -40,20 +40,24 @@ async function testCanvasDrag() {
     args: ['--no-sandbox', path.resolve(__dirname, '../packages/desktop/out/main/index.js')],
     env: {
       ...process.env,
-      MOTIONFORGE_ENGINE_URL: 'http://127.0.0.1:4000',
       MOTIONFORGE_TEST_MODE: '1',
     },
   });
 
   const window = await app.firstWindow();
+  window.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
+  window.on('pageerror', (err) => console.log('PAGE ERR:', err));
   await window.waitForTimeout(2000);
 
   // 3. Dismiss tour & load test scene
   console.log('3. Loading test scene into Studio...');
-  await window.evaluate((sc) => {
+  await window.evaluate(async (sc) => {
     localStorage.setItem('motionforge_tour_seen', 'true');
     const tour = document.querySelector('.mf-tour-backdrop');
     if (tour) tour.remove();
+    if (window.motionforgeEngine) {
+      await window.motionforgeEngine.invoke('saveScene', sc);
+    }
     window.store.setScene(sc, sc.id);
   }, scenePayload);
   await window.waitForTimeout(1500);

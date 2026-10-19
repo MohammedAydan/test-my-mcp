@@ -91,7 +91,7 @@ MotionForge v2.0 transitions the architecture from a loosely-coupled HTTP micros
 - **Electron Custom Scheme `mf-vault://`:**
   Registered with `standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true`. Handled via `protocol.handle('mf-vault', ...)` backed by `net.fetch(pathToFileURL(...))` supporting HTTP 206 byte-range streaming for video/audio scrubber without network ports.
 - **Playwright Route Interception:**
-  Headless rendering and keyframe inspection serve runtime scripts and vault assets in memory via `page.route('**/*', ...)`.
+  Headless rendering and keyframe inspection serve runtime scripts and vault assets in memory via `context.route('**/*', ...)`, implemented in `packages/core-engine/src/renderer.ts` (`setupPlaywrightZeroPortRoutes`): `/preview` → the built runtime bundle, `/assets/*` → its hashed assets, `/api/scenes/:id` → the scene from memory, `/api/scenes/:id/events` → an SSE stream, `/api/assets/vault/*` → the vault file on disk. Every other request falls back to the network, so the HTTP-hosted mode keeps working unchanged.
 - **Dual-Transport Fallback:**
   In standalone browser mode (Vite dev or Playwright test runner), `packages/studio/src/api.ts` seamlessly falls back to local engine endpoints.
 
@@ -115,4 +115,5 @@ MotionForge v2.0 transitions the architecture from a loosely-coupled HTTP micros
 | **DA-005** (Multi-Clip Track Lanes & Collision Clamping) | **PASS** | `screenshots/track-lanes-multiclip.png` |
 | **DA-004** (Asset Vault Drag-and-Drop Ingestion) | **PASS** | `screenshots/drag-drop-vault.png` |
 | **DA-006** (Threshold Undo History & Reactive Toolbar Buttons) | **PASS** | `screenshots/undo-history.png` |
-| **Unit Test Suite** (All 18 packages) | **338/338 PASS** | `npm test` |
+| **BE-002** (Zero-Port Playwright Route Interception) | **PASS** | `packages/core-engine/tests/zero-port-routes.test.ts` |
+| **Unit Test Suite** (All 18 packages) | **350/350 PASS** | `npm test` |

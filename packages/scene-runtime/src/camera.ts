@@ -545,7 +545,7 @@ export function stageOffsetAt(
 ): { xPct: number; yPct: number; scale: number } {
   let xPct = 0;
   let scale = poseScale;
-  for (const tr of scene.transitions) {
+  for (const tr of (scene.transitions ?? [])) {
     const durSec = tr.durationMs / 1000;
     const elapsed = timeSec - tr.at / 1000;
     if (elapsed <= 0 || elapsed >= durSec || durSec <= 0) continue;
@@ -606,7 +606,8 @@ export function composeCameraAt(
   wantYPct: number;
 } {
   // 1. keyframes
-  const base = cameraStateAt(scene.camera.keyframes, Math.round(timeSec * 1000));
+  const keyframes = scene.camera?.keyframes ?? [];
+  const base = cameraStateAt(keyframes, Math.round(timeSec * 1000));
 
   // 2. moves — each weighted by its own envelope, then blended so overlapping
   //    moves lead with the strongest one instead of doubling the peak
@@ -614,7 +615,7 @@ export function composeCameraAt(
   const pansX: number[] = [];
   const pansY: number[] = [];
   const rolls: number[] = [];
-  for (const move of scene.camera.moves) {
+  for (const move of (scene.camera?.moves ?? [])) {
     const weight = moveWeightAt(planCameraMoveWindow(move, scene), timeSec);
     if (weight <= 0) continue;
     const contribution = moveContributionAtPeak(move, base, ctx);
@@ -629,7 +630,7 @@ export function composeCameraAt(
   const dRoll = blendDominant(rolls);
 
   // 3. drift (never touches scale, so it cannot perturb the zoom curve)
-  const drift = driftOffsetAt(scene.camera.drift, timeSec);
+  const drift = driftOffsetAt(scene.camera?.drift, timeSec);
 
   // 4. emphasis shakes (also scale/roll only, and they ring around the pose)
   let shakeScale = 0;
@@ -678,11 +679,11 @@ export function composeCameraAt(
 /** Where a move's own budget stopped short of the look-at it asked for. */
 export function focusClampsForScene(scene: SceneSpec, ctx: CameraContext): FocusClamp[] {
   const out: FocusClamp[] = [];
-  for (const move of scene.camera.moves) {
+  for (const move of (scene.camera?.moves ?? [])) {
     if (move.move !== "focusTarget") continue;
     const anchor = move.targetLayerId ? ctx.layerAnchors.get(move.targetLayerId) : undefined;
     if (!anchor) continue;
-    const base = cameraStateAt(scene.camera.keyframes, move.at);
+    const base = cameraStateAt(scene.camera?.keyframes ?? [], move.at);
     const contribution = moveContributionAtPeak(move, base, ctx);
     if (!contribution.requestedLookAt) continue;
     const window = planCameraMoveWindow(move, scene);
@@ -718,12 +719,12 @@ export function applyCamera(
   ctx: CameraContext
 ): CameraRuntimeInfo {
   const focusClamps = focusClampsForScene(scene, ctx);
-  const moveHolds = scene.camera.moves.map((move) => {
+  const moveHolds = (scene.camera?.moves ?? []).map((move) => {
     const window = planCameraMoveWindow(move, scene);
     return { holdToSec: window.holdToSec, seamMidSec: window.seamMidSec };
   });
 
-  rig.parentElement?.style.setProperty("perspective", `${scene.camera.perspective}px`);
+  rig.parentElement?.style.setProperty("perspective", `${scene.camera?.perspective ?? 1200}px`);
 
   const setScaleX = gsap.quickSetter(rig, "scaleX") as (value: number) => void;
   const setScaleY = gsap.quickSetter(rig, "scaleY") as (value: number) => void;

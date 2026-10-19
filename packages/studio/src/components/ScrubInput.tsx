@@ -4,6 +4,8 @@ export interface ScrubInputProps {
   label: string;
   value: number;
   onChange: (val: number) => void;
+  onCommit?: (val: number) => void;
+  onScrubStart?: () => void;
   min?: number;
   max?: number;
   step?: number;
@@ -19,6 +21,8 @@ export const ScrubInput: Component<ScrubInputProps> = (props) => {
 
   let startX = 0;
   let startVal = 0;
+  let currentVal = 0;
+  let hasMoved = false;
   let inputEl: HTMLInputElement | undefined;
 
   const step = () => props.step ?? 1;
@@ -36,6 +40,8 @@ export const ScrubInput: Component<ScrubInputProps> = (props) => {
 
     startX = e.clientX;
     startVal = Number(props.value) || 0;
+    currentVal = startVal;
+    hasMoved = false;
     setIsScrubbing(true);
 
     const target = e.currentTarget as HTMLElement;
@@ -43,6 +49,11 @@ export const ScrubInput: Component<ScrubInputProps> = (props) => {
 
     const onPointerMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX;
+      if (Math.abs(dx) >= 1 && !hasMoved) {
+        hasMoved = true;
+        props.onScrubStart?.();
+      }
+
       let multiplier = 1;
       if (ev.shiftKey) multiplier = 10;
       if (ev.altKey) multiplier = 0.1;
@@ -57,6 +68,7 @@ export const ScrubInput: Component<ScrubInputProps> = (props) => {
       }
 
       nextVal = clamp(nextVal);
+      currentVal = nextVal;
       setLocalText(String(nextVal));
       props.onChange(nextVal);
     };
@@ -66,6 +78,10 @@ export const ScrubInput: Component<ScrubInputProps> = (props) => {
       target.releasePointerCapture?.(ev.pointerId);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+
+      if (hasMoved) {
+        props.onCommit?.(currentVal);
+      }
     };
 
     window.addEventListener('pointermove', onPointerMove);
@@ -78,7 +94,9 @@ export const ScrubInput: Component<ScrubInputProps> = (props) => {
     if (!isNaN(parsed)) {
       const clamped = clamp(parsed);
       setLocalText(String(clamped));
+      props.onScrubStart?.();
       props.onChange(clamped);
+      props.onCommit?.(clamped);
     } else {
       setLocalText(String(props.value));
     }

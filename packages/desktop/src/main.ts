@@ -22,6 +22,16 @@ protocol.registerSchemesAsPrivileged([
       corsEnabled: true,
     },
   },
+  {
+    scheme: 'mf-runtime',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
 ]);
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,10 +39,8 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let previewWindow: BrowserWindow | null = null;
-let engineProcess: ChildProcess | null = null;
 let engineCore: EngineCore | null = null;
-let enginePort = 4000;
-let engineUrl = 'http://127.0.0.1:4000';
+let engineUrl = 'in-process';
 let activeProjectPath: string | null = null;
 let isDirty = false;
 let isQuitting = false;
@@ -68,94 +76,6 @@ function addRecentProject(p: string): void {
   recentProjects = [p, ...recentProjects.filter((x) => x !== p)].slice(0, 10);
   saveRecentProjects();
   buildAppMenu();
-}
-
-export async function findFreePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      if (!addr || typeof addr === 'string') {
-        srv.close(() => reject(new Error('Failed to obtain server address')));
-        return;
-      }
-      const port = addr.port;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
-async function waitForEngine(url: string, timeoutMs = 20000): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    try {
-      const res = await fetch(`${url}/api/capabilities`);
-      if (res.ok) return true;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return false;
-}
-
-async function spawnCoreEngine(): Promise<void> {
-  // If explicitly overridden via env var, use it
-  if (process.env.MOTIONFORGE_ENGINE_URL) {
-    engineUrl = process.env.MOTIONFORGE_ENGINE_URL.replace(/\/$/, '');
-    console.log(`[desktop] Using external MOTIONFORGE_ENGINE_URL: ${engineUrl}`);
-    return;
-  }
-
-  // Check if port 4000 is already active and healthy in development
-  try {
-    const res = await fetch('http://127.0.0.1:4000/api/capabilities');
-    if (res.ok) {
-      engineUrl = 'http://127.0.0.1:4000';
-      enginePort = 4000;
-      console.log('[desktop] Reusing already running core-engine at port 4000');
-      return;
-    }
-  } catch {}
-
-  enginePort = await findFreePort();
-  engineUrl = `http://127.0.0.1:${enginePort}`;
-  console.log(`[desktop] Spawning core-engine on dynamic port: ${enginePort}`);
-
-  const engineRoot = path.resolve(__dirname, '../../../packages/core-engine');
-  const engineMain = path.resolve(engineRoot, 'src/main.ts');
-
-  if (existsSync(engineMain)) {
-    // Development mode
-    engineProcess = spawn('node', ['--import', 'tsx', engineMain], {
-      cwd: engineRoot,
-      env: { ...process.env, PORT: String(enginePort) },
-      stdio: 'pipe',
-      shell: process.platform === 'win32',
-    });
-  } else {
-    // Packaged mode fallback: import entry or packaged bundle
-    const bundledEntry = path.resolve(__dirname, '../engine/main.js');
-    if (existsSync(bundledEntry)) {
-      engineProcess = spawn(process.execPath, [bundledEntry], {
-        env: { ...process.env, PORT: String(enginePort), ELECTRON_RUN_AS_NODE: '1' },
-        stdio: 'pipe',
-      });
-    }
-  }
-
-  if (engineProcess) {
-    engineProcess.stdout?.on('data', (d) => console.log(`[engine:stdout] ${d.toString().trim()}`));
-    engineProcess.stderr?.on('data', (d) => console.error(`[engine:stderr] ${d.toString().trim()}`));
-    engineProcess.on('exit', (code) => {
-      console.log(`[desktop] core-engine exited with code ${code}`);
-    });
-  }
-
-  const ready = await waitForEngine(engineUrl);
-  if (!ready) {
-    console.error(`[desktop] Timeout waiting for core-engine on ${engineUrl}`);
-  } else {
-    console.log(`[desktop] core-engine is ready on ${engineUrl}`);
-  }
 }
 
 function updateWindowTitle(): void {
@@ -392,8 +312,8 @@ function openPreviewWindow(sceneId?: string): void {
   });
 
   const targetUrl = sceneId
-    ? `${engineUrl}/preview/?scene=${encodeURIComponent(sceneId)}`
-    : `${engineUrl}/preview/`;
+    ? `mf-runtime://app/index.html?scene=${encodeURIComponent(sceneId)}`
+    : `mf-runtime://app/index.html`;
 
   previewWindow.loadURL(targetUrl);
   previewWindow.on('closed', () => {
@@ -479,9 +399,8 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('motionforge:get-frame-bounds', async (_event, args: { sceneId: string; frameIndex: number }) => {
     try {
-      const res = await fetch(`${engineUrl}/api/scenes/${args.sceneId}/frame/${args.frameIndex}/bounds`);
-      if (res.ok) {
-        return await res.json();
+      if (engineCore) {
+        return await engineCore.getLayerBounds(args.sceneId, args.frameIndex);
       }
       return {};
     } catch {
@@ -602,7 +521,7 @@ app.whenReady().then(async () => {
       const url = new URL(request.url);
       const host = url.hostname;
       const pathname = url.pathname.replace(/^\/+/, '');
-      const assetRel = decodeURIComponent(host ? `${host}/${pathname}` : pathname);
+      const assetRel = decodeURIComponent(host ? (pathname ? `${host}/${pathname}` : host) : pathname);
       const filePath = path.join(engineCore.paths.vaultDir, assetRel);
       if (!existsSync(filePath)) {
         return new Response('Asset not found in vault', { status: 404 });
@@ -616,11 +535,35 @@ app.whenReady().then(async () => {
     }
   });
 
-  await spawnCoreEngine();
+  protocol.handle('mf-runtime', async (request) => {
+    try {
+      const url = new URL(request.url);
+      let pathname = decodeURIComponent(url.pathname);
+      if (!pathname || pathname === '/' || pathname === '/index.html') {
+        pathname = '/index.html';
+      }
+      const candidates = [
+        path.resolve(__dirname, '../../../scene-runtime/dist'),
+        path.resolve(__dirname, '../../scene-runtime/dist'),
+        path.resolve(__dirname, '../runtime'),
+        path.resolve(process.cwd(), 'packages/scene-runtime/dist'),
+      ];
+      const baseDir = candidates.find((c) => existsSync(c)) || candidates[0];
+      const cleanPath = path.join(baseDir, pathname.replace(/^\/+/, ''));
+      if (!existsSync(cleanPath)) {
+        console.warn(`[mf-runtime] File not found: ${cleanPath}`);
+        return new Response('Runtime file not found', { status: 404 });
+      }
+      return electronNet.fetch(pathToFileURL(cleanPath).toString());
+    } catch (err) {
+      console.error('[mf-runtime] Error serving runtime:', err);
+      return new Response('Runtime error', { status: 500 });
+    }
+  });
 
   try {
-    engineCore = await createEngineCore({ port: enginePort });
-    console.log('[desktop] EngineCore in-process domain logic initialized');
+    engineCore = await createEngineCore({ enableWatcher: true });
+    console.log('[desktop] EngineCore in-process domain logic initialized (monolithic mode)');
 
     const forwardEvent = (eventName: string, payload: unknown) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -655,17 +598,6 @@ function terminateEngine(): void {
   if (engineCore) {
     engineCore.dispose().catch(() => undefined);
     engineCore = null;
-  }
-  if (engineProcess && !engineProcess.killed) {
-    console.log('[desktop] Terminating core-engine child process');
-    try {
-      if (process.platform === 'win32' && engineProcess.pid) {
-        spawn('taskkill', ['/pid', String(engineProcess.pid), '/f', '/t']);
-      } else {
-        engineProcess.kill('SIGKILL');
-      }
-    } catch {}
-    engineProcess = null;
   }
 }
 

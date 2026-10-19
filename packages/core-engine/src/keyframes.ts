@@ -1,6 +1,10 @@
 import { chromium, type Browser } from "playwright";
 import { resolveCanvasSize, type SceneSpec } from "@motionforge/scene-spec";
 
+import type { EnginePaths } from "./config.js";
+import { setupPlaywrightZeroPortRoutes } from "./renderer.js";
+import type { SceneStore } from "./scene-store.js";
+
 let browserPromise: Promise<Browser> | null = null;
 
 async function browser(): Promise<Browser> {
@@ -98,6 +102,13 @@ export async function inspectKeyframes(opts: {
    * only needed when the frames are about to be written to disk.
    */
   includeFullResolution?: boolean;
+  /**
+   * Engine paths. The zero-port routes serve the runtime bundle and the
+   * asset vault from disk, so an inspection needs no listening engine.
+   */
+  paths?: EnginePaths;
+  /** The scene store — the zero-port `/api/scenes/:id` route answers from it. */
+  store?: SceneStore;
 }): Promise<InspectedFrame[]> {
   const browserRef = await browser();
   const { width, height } = resolveCanvasSize(opts.scene.canvas);
@@ -106,6 +117,14 @@ export async function inspectKeyframes(opts: {
     deviceScaleFactor: 1,
   });
   try {
+    // Zero-port: the page, the scene and the vault are served from memory, so
+    // the inspection never depends on the engine's HTTP origin being up.
+    await setupPlaywrightZeroPortRoutes(context, {
+      sceneId: opts.sceneId,
+      scene: opts.scene,
+      ...(opts.store ? { store: opts.store } : {}),
+      ...(opts.paths ? { paths: opts.paths } : {}),
+    });
     const page = await context.newPage();
     await page.goto(
       `${opts.baseUrl}/preview?scene=${encodeURIComponent(opts.sceneId)}&render=1&fps=60`,
@@ -228,6 +247,13 @@ export async function getFrameBounds(opts: {
   sceneId: string;
   baseUrl: string;
   frameIndex: number;
+  /**
+   * Engine paths. The zero-port routes serve the runtime bundle and the
+   * asset vault from disk, so no listening engine is required.
+   */
+  paths?: EnginePaths;
+  /** The scene store — the zero-port `/api/scenes/:id` route answers from it. */
+  store?: SceneStore;
 }): Promise<Record<string, LayerBounds>> {
   const browserRef = await browser();
   const { width, height } = resolveCanvasSize(opts.scene.canvas);
@@ -236,6 +262,13 @@ export async function getFrameBounds(opts: {
     deviceScaleFactor: 1,
   });
   try {
+    // Zero-port: the page, the scene and the vault are served from memory.
+    await setupPlaywrightZeroPortRoutes(context, {
+      sceneId: opts.sceneId,
+      scene: opts.scene,
+      ...(opts.store ? { store: opts.store } : {}),
+      ...(opts.paths ? { paths: opts.paths } : {}),
+    });
     const page = await context.newPage();
     await page.goto(
       `${opts.baseUrl}/preview?scene=${encodeURIComponent(opts.sceneId)}&render=1&fps=60`,

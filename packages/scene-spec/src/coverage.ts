@@ -185,7 +185,7 @@ export interface Seam {
 }
 
 export function sceneSeams(scene: SceneSpec): Seam[] {
-  return scene.transitions.map((t, index) => ({
+  return (scene.transitions ?? []).map((t, index) => ({
     index,
     kind: t.kind,
     at: t.at,
@@ -402,7 +402,7 @@ export function transitionPeakOverflowMs(kind: TransitionKind, durationMs: numbe
  */
 export function findTransitionOverlaps(scene: SceneSpec): TransitionOverlap[] {
   const out: TransitionOverlap[] = [];
-  const sorted = scene.transitions
+  const sorted = (scene.transitions ?? [])
     .map((t, index) => ({ index, at: t.at, end: t.at + t.durationMs }))
     .sort((a, b) => a.at - b.at);
   for (let i = 1; i < sorted.length; i++) {

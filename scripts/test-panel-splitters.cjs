@@ -11,7 +11,6 @@ async function testPanelSplitters() {
     args: ['--no-sandbox', path.resolve(__dirname, '../packages/desktop/out/main/index.js')],
     env: {
       ...process.env,
-      MOTIONFORGE_ENGINE_URL: 'http://127.0.0.1:4000',
       MOTIONFORGE_TEST_MODE: '1',
     },
   });

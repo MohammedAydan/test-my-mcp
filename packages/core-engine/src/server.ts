@@ -231,6 +231,10 @@ export async function registerSceneRoutes(
       // the full-resolution PNG is only produced when the caller is going to
       // write it to disk — an inline caller gets the lightweight preview
       includeFullResolution: includeFullResolution === true,
+      // zero-port: the headless page, the scene and the vault are served from
+      // memory/disk — the inspection needs no listening engine
+      paths,
+      store,
     });
     // `frames[].meta` is the numeric sidecar (camera / transitions / per-layer
     // lifecycle + overflow) — the MCP tool renders it as `framesMeta`
@@ -491,6 +495,10 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
         sceneId: id,
         baseUrl: `http://127.0.0.1:${config.port}`,
         frameIndex: idx,
+        // zero-port: the headless page, the scene and the vault are served
+        // from memory/disk — the measurement needs no listening engine
+        paths: config.paths,
+        store,
       });
       return reply.send(bounds);
     } catch (err) {

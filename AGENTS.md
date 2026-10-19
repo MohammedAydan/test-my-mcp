@@ -210,6 +210,7 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 | MCP tool wiring | `packages/mcp-server/src/**` (never drop engine `issues[]`; advertise `sceneShapeSchema`, not a cast raw shape) |
 | HTTP route, render pipeline, audio | `packages/core-engine/src/**` |
 | Visual layer rendering, timeline UI | `packages/scene-runtime/src/**` |
+| Zero-port headless serving (preview bundle, scene, vault) | `packages/core-engine/src/renderer.ts` — `setupPlaywrightZeroPortRoutes` |
 
 Changing the `SceneSpec` schema is a **breaking contract change**: bump
 `schemaVersion`, keep the old version parsing (or migrate), and update the docs in the

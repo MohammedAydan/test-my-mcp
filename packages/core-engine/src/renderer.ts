@@ -1,12 +1,16 @@
 import { spawn } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
 import { resolveCanvasSize, type SceneSpec } from "@motionforge/scene-spec";
 
-import type { EngineConfig } from "./config.js";
+import type { EngineConfig, EnginePaths } from "./config.js";
+import { resolveEnginePaths } from "./config.js";
 import type { RenderProfile } from "./encoder.js";
 import { FfmpegError, encoderArgs, StdinWriter } from "./encoder.js";
+import type { SceneStore } from "./scene-store.js";
+import { mimeFor } from "./vault.js";
 
 // ---------------------------------------------------------------------------
 // Browser lifecycle
@@ -27,6 +31,12 @@ export class RendererPool {
     viewportWidth: number;
     viewportHeight: number;
     fit: boolean;
+    /** engine paths — the vault + runtime bundle the zero-port routes serve */
+    paths?: EnginePaths;
+    /** the scene store — lets the zero-port `/api/scenes/:id` route answer */
+    store?: SceneStore;
+    /** the scene being rendered — answered by the zero-port `/api/scenes/:id` route */
+    scene?: SceneSpec;
   }): Promise<IPage> {
     const browser = await chromium.launch({
       headless: true,
@@ -50,6 +60,16 @@ export class RendererPool {
       deviceScaleFactor: 1,
       reducedMotion: "no-preference",
       colorScheme: "dark",
+    });
+    // Zero-port: the page, the scene and the vault are served from memory, so
+    // the browser never needs the engine's HTTP origin to be up. Registered
+    // BEFORE the first navigation — otherwise the document request would race
+    // the route handler and hit a port that may not exist.
+    await setupPlaywrightZeroPortRoutes(context, {
+      sceneId: opts.sceneId,
+      ...(opts.scene ? { scene: opts.scene } : {}),
+      ...(opts.store ? { store: opts.store } : {}),
+      ...(opts.paths ? { paths: opts.paths } : {}),
     });
     const page = await context.newPage();
     const url =
@@ -82,6 +102,318 @@ export class RendererPool {
 export interface IPage {
   page: Page;
   close: () => Promise<unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Zero-port route interception
+// ---------------------------------------------------------------------------
+
+/**
+ * MIME types for the built runtime bundle.
+ *
+ * The bundle is served straight off disk, so the browser has to be told what
+ * it is looking at: a `.js` served as `text/plain` is refused by the module
+ * loader, and a `.css` served as `application/octet-stream` is ignored
+ * entirely (a silently unstyled frame is worse than a failed render).
+ */
+const RUNTIME_MIME: Record<string, string> = {
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".ogg": "audio/ogg",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+function mimeForRuntimeFile(file: string): string {
+  return RUNTIME_MIME[path.extname(file).toLowerCase()] ?? mimeFor(file);
+}
+
+/** Read a file, or `null` when it does not exist — a missing file is not fatal. */
+async function readFileOrNull(file: string): Promise<Buffer | null> {
+  try {
+    return await readFile(file);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Normalize a request path into a safe relative file name.
+ *
+ * Rejects absolute paths, `..` traversal and malformed percent-encoding: a
+ * served file must never escape the directory it was resolved against.
+ */
+function safeRelativePath(name: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(name);
+  } catch {
+    return null;
+  }
+  const cleaned = decoded.replace(/^\/+/, "");
+  if (!cleaned || cleaned.includes("..") || cleaned.includes("\0")) return null;
+  return cleaned;
+}
+
+/** True when `file` resolves inside `root` (or is `root` itself). */
+function insideRoot(root: string, file: string): boolean {
+  const resolvedRoot = path.resolve(root);
+  const resolvedFile = path.resolve(file);
+  return resolvedFile === resolvedRoot || resolvedFile.startsWith(resolvedRoot + path.sep);
+}
+
+/**
+ * Serve the headless page, the scene and the vault WITHOUT an HTTP origin.
+ *
+ * The zero-port architecture (see `docs/15_UNIFIED_ARCHITECTURE_BLUEPRINT.md`)
+ * removes the engine's listening socket: the domain logic lives in the host
+ * process, and the headless browser has to reach it somehow. Playwright's
+ * `context.route` is that bridge — every request the runtime makes is
+ * answered from memory/disk inside the engine process:
+ *
+ *   | request                              | answered with                        |
+ *   | ------------------------------------ | ------------------------------------ |
+ *   | `/preview`                           | `scene-runtime/dist/index.html`      |
+ *   | `/assets/*`                          | `scene-runtime/dist/assets/*`        |
+ *   | `/api/scenes/:id`                    | the scene (memory) as JSON           |
+ *   | `/api/scenes/:id/events`             | an open SSE stream (`:ok`)           |
+ *   | `/api/assets/vault/*`, `mf-vault://` | the vault file on disk               |
+ *   | anything else                        | `route.fallback()` — the network     |
+ *
+ * The last row matters: `fallback()` (rather than a synthetic 404) keeps the
+ * HTTP-hosted mode working. When the engine IS listening, an unmatched
+ * request still reaches the real server, and a vault file that is not on disk
+ * is served by the engine rather than failing the render.
+ */
+export async function setupPlaywrightZeroPortRoutes(
+  context: BrowserContext,
+  opts: {
+    sceneId: string;
+    scene?: SceneSpec;
+    store?: SceneStore;
+    paths?: EnginePaths;
+  }
+): Promise<void> {
+  // The engine's own resolution order (explicit paths → env vars → canonical
+  // home) — the same one `EngineCore` uses, so the vault the headless page
+  // reads is the vault the engine writes.
+  const paths = opts.paths ?? resolveEnginePaths();
+  const runtimeDistDir = paths.runtimeDistDir;
+  const vaultDir = paths.vaultDir;
+
+  /** The scene for a requested id: the caller's scene first, then the store. */
+  const sceneFor = (id: string): SceneSpec | undefined => {
+    if (id === opts.sceneId && opts.scene) return opts.scene;
+    const stored = opts.store?.get(id)?.scene;
+    if (stored) return stored;
+    return opts.scene;
+  };
+
+  await context.route("**/*", async (route: Route) => {
+    const url = route.request().url();
+
+    try {
+      // ------------------------------------------------------------------
+      // `mf-vault://` — the privileged scheme the zero-port host uses for
+      // vault files. `mf-vault://logo.png` puts the name in the host, and
+      // `mf-vault://_sfx/whoosh.ogg` splits it across host + path.
+      // ------------------------------------------------------------------
+      if (url.startsWith("mf-vault://")) {
+        const name = safeRelativePath(url.slice("mf-vault://".length));
+        if (!name) {
+          await route.fulfill({
+            status: 400,
+            contentType: "text/plain; charset=utf-8",
+            body: "invalid vault name",
+          });
+          return;
+        }
+        await serveVaultFile(route, vaultDir, name);
+        return;
+      }
+
+      let pathname: string;
+      try {
+        pathname = new URL(url).pathname;
+      } catch {
+        await route.fallback();
+        return;
+      }
+
+      // ------------------------------------------------------------------
+      // the runtime bundle
+      // ------------------------------------------------------------------
+      if (pathname === "/preview" || pathname === "/preview/") {
+        const html = await readFileOrNull(path.join(runtimeDistDir, "index.html"));
+        if (!html) {
+          await route.fulfill({
+            status: 500,
+            contentType: "text/plain; charset=utf-8",
+            body: `scene-runtime bundle not found at ${runtimeDistDir}`,
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "text/html; charset=utf-8",
+          body: html,
+        });
+        return;
+      }
+
+      // ------------------------------------------------------------------
+      // the scene — checked BEFORE the vault/assets rules, because
+      // `/api/assets/vault/…` also contains `/assets/`.
+      // ------------------------------------------------------------------
+      const eventsMatch = /^\/api\/scenes\/([^/]+)\/events\/?$/.exec(pathname);
+      if (eventsMatch) {
+        // The live-preview SSE channel. The headless page never subscribes
+        // (render mode skips it), but the route must exist so a preview page
+        // opened against the zero-port host gets a well-formed stream
+        // instead of a connection error.
+        await route.fulfill({
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream",
+            "cache-control": "no-cache",
+            "access-control-allow-origin": "*",
+          },
+          body: ":ok\n\n",
+        });
+        return;
+      }
+
+      const sceneMatch = /^\/api\/scenes\/([^/]+)\/?$/.exec(pathname);
+      if (sceneMatch) {
+        const id = safeRelativePath(sceneMatch[1] ?? "");
+        const scene = id ? sceneFor(id) : undefined;
+        if (!scene) {
+          // Nothing in memory — let the network have it (the engine serves it
+          // when it IS listening).
+          await route.fallback();
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json; charset=utf-8",
+          body: JSON.stringify(scene),
+        });
+        return;
+      }
+
+      // ------------------------------------------------------------------
+      // the asset vault
+      // ------------------------------------------------------------------
+      const vaultMatch = /^\/api\/assets\/vault\/(.+)$/.exec(pathname);
+      if (vaultMatch) {
+        const name = safeRelativePath(vaultMatch[1] ?? "");
+        if (!name) {
+          await route.fulfill({
+            status: 400,
+            contentType: "text/plain; charset=utf-8",
+            body: "invalid vault name",
+          });
+          return;
+        }
+        await serveVaultFile(route, vaultDir, name);
+        return;
+      }
+
+      // ------------------------------------------------------------------
+      // the runtime's own static assets (the hashed JS/CSS bundle)
+      //
+      // The page is served at `/preview`, so the bundle's relative
+      // `./assets/…` URLs resolve against the origin root — `/assets/…`.
+      // ------------------------------------------------------------------
+      if (pathname.startsWith("/assets/") || pathname.includes("/assets/")) {
+        const marker = "/assets/";
+        const index = pathname.indexOf(marker);
+        const relative = pathname.slice(index + marker.length);
+        const name = safeRelativePath(relative);
+        const assetsRoot = path.join(runtimeDistDir, "assets");
+        const file = name ? path.join(assetsRoot, name) : null;
+        if (!file || !insideRoot(assetsRoot, file)) {
+          await route.fallback();
+          return;
+        }
+        const body = await readFileOrNull(file);
+        if (!body) {
+          await route.fallback();
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: mimeForRuntimeFile(file),
+          body,
+        });
+        return;
+      }
+
+      // Anything under `/api/` that is not one of the routes above belongs
+      // to the engine — never to the runtime bundle directory.
+      if (pathname.startsWith("/api/")) {
+        await route.fallback();
+        return;
+      }
+
+      await route.fallback();
+    } catch (error) {
+      await route
+        .fulfill({
+          status: 500,
+          contentType: "text/plain; charset=utf-8",
+          body: error instanceof Error ? error.message : String(error),
+        })
+        .catch(() => undefined);
+    }
+  });
+}
+
+/**
+ * Answer a vault request from disk.
+ *
+ * A file that is not on disk is NOT an error here: the engine may be running
+ * with a different vault root, so the request is handed back to the network
+ * (`fallback`) and the engine's own route serves it.
+ */
+async function serveVaultFile(route: Route, vaultDir: string, name: string): Promise<void> {
+  const file = path.join(vaultDir, name);
+  if (!insideRoot(vaultDir, file)) {
+    await route.fulfill({
+      status: 400,
+      contentType: "text/plain; charset=utf-8",
+      body: "invalid vault path",
+    });
+    return;
+  }
+  const body = await readFileOrNull(file);
+  if (!body) {
+    await route.fallback();
+    return;
+  }
+  await route.fulfill({
+    status: 200,
+    contentType: mimeFor(name),
+    body,
+  });
 }
 
 /**
@@ -133,6 +465,10 @@ export async function renderFramesParallel(opts: {
   encoder: string;
   jobDir: string;
   config: EngineConfig;
+  /** engine paths — the zero-port routes serve the vault + runtime bundle */
+  paths?: EnginePaths;
+  /** the scene store — the zero-port `/api/scenes/:id` route answers from it */
+  store?: SceneStore;
   onProgress?: (framesDone: number) => void;
 }): Promise<ParallelRenderResult> {
   const { scene, profile, config } = opts;
@@ -157,6 +493,9 @@ export async function renderFramesParallel(opts: {
       fit,
       viewportWidth: profile.outWidth,
       viewportHeight: profile.outHeight,
+      scene,
+      ...(opts.paths ? { paths: opts.paths } : {}),
+      ...(opts.store ? { store: opts.store } : {}),
       onFrameDone: opts.onProgress,
     });
     return partPath;
@@ -178,6 +517,12 @@ async function renderFrameRange(opts: {
   fit: boolean;
   viewportWidth: number;
   viewportHeight: number;
+  /** the scene being rendered — served by the zero-port scene route */
+  scene?: SceneSpec;
+  /** engine paths — the zero-port routes serve the vault + runtime bundle */
+  paths?: EnginePaths;
+  /** the scene store — the zero-port `/api/scenes/:id` route answers from it */
+  store?: SceneStore;
   onFrameDone?: (framesDone: number) => void;
 }): Promise<void> {
   const { profile } = opts;
@@ -188,6 +533,9 @@ async function renderFrameRange(opts: {
     viewportWidth: opts.viewportWidth,
     viewportHeight: opts.viewportHeight,
     fit: opts.fit,
+    ...(opts.scene ? { scene: opts.scene } : {}),
+    ...(opts.paths ? { paths: opts.paths } : {}),
+    ...(opts.store ? { store: opts.store } : {}),
   });
   try {
     const proc = spawn("ffmpeg", [

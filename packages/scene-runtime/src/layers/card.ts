@@ -47,13 +47,17 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
   if (v.variant === "glassCard" || v.variant === "callout") {
     const card = document.createElement("div");
     card.dir = isRTL ? "rtl" : "ltr";
+    const glass = v.glass ?? { blurPx: 20, tintColor: "#000000", tintOpacity: 0.5 };
+    const paddingPx = v.paddingPx ?? 24;
+    const radiusPx = v.radiusPx ?? 16;
+    const borderOpacity = (v.variant === "glassCard" ? v.borderOpacity : 0.18) ?? 0.18;
     card.style.cssText = [
       "position:relative",
       `width:${v.widthPx ? `${v.widthPx}px` : "max-content"}`,
       "max-width:100%",
-      `padding:${v.paddingPx}px`,
-      `border-radius:${v.radiusPx}px`,
-      glassCss(v.glass.blurPx, v.glass.tintColor, v.glass.tintOpacity, v.variant === "glassCard" ? v.borderOpacity : 0.18),
+      `padding:${paddingPx}px`,
+      `border-radius:${radiusPx}px`,
+      glassCss(glass.blurPx ?? 20, glass.tintColor ?? "#000000", glass.tintOpacity ?? 0.5, borderOpacity),
     ].join(";");
     host.appendChild(card);
 

@@ -298,6 +298,10 @@ export class EngineCore extends EventEmitter {
       baseUrl: `http://127.0.0.1:${this.config.port}`,
       at: stamps,
       includeFullResolution: options.includeFullResolution === true,
+      // zero-port: the headless page, the scene and the vault are served from
+      // memory/disk — the inspection needs no listening engine
+      paths: this.paths,
+      store: this.store,
     });
     return { frames, framesMeta: frames.map((f) => f.meta ?? { atMs: f.atMs }) };
   }
@@ -309,6 +313,10 @@ export class EngineCore extends EventEmitter {
       sceneId,
       baseUrl: `http://127.0.0.1:${this.config.port}`,
       frameIndex,
+      // zero-port: the headless page, the scene and the vault are served from
+      // memory/disk — the measurement needs no listening engine
+      paths: this.paths,
+      store: this.store,
     });
   }
 

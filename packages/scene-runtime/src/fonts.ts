@@ -29,7 +29,7 @@ export async function loadSceneFonts(scene: SceneSpec): Promise<Map<FontRole, st
   const map = new Map<FontRole, string>(Object.entries(DEFAULT_STACKS) as [FontRole, string][]);
 
   await Promise.all(
-    scene.fonts.map(async (ref) => {
+    (scene.fonts ?? []).map(async (ref) => {
       map.set(ref.role, `"${ref.family}", ${DEFAULT_STACKS[ref.role]}`);
       if (ref.provider !== "google") return;
       const familyParam = ref.family.replace(/\s+/g, "+");

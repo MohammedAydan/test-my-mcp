@@ -235,6 +235,9 @@ export class API {
   }
 
   previewUrl(sceneId: string) {
+    if (this.isElectron) {
+      return `mf-runtime://app/index.html?scene=${encodeURIComponent(sceneId)}`;
+    }
     return `${this.url}/preview/?scene=${encodeURIComponent(sceneId)}`;
   }
 

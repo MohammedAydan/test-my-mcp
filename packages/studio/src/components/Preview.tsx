@@ -1,6 +1,6 @@
 import { Component, Show, createEffect, onMount, onCleanup, createSignal } from 'solid-js';
 import { store } from '../store.js';
-import { api } from '../api.js';
+import { api, unwrapPayload } from '../api.js';
 import { CanvasOverlay } from './CanvasOverlay.js';
 
 export function fmtTime(ms: number): string {
@@ -52,6 +52,21 @@ export const Preview: Component<PreviewProps> = (props) => {
     }
   });
 
+  // Push full scene state updates to the runtime iframe over postMessage
+  createEffect(() => {
+    const sc = state.scene;
+    if (sc && iframeRef?.contentWindow) {
+      iframeRef.contentWindow.postMessage(
+        {
+          type: 'motionforge:updateScene',
+          scene: unwrapPayload(sc),
+          atMs: state.playhead,
+        },
+        '*'
+      );
+    }
+  });
+
   // Playback loop
   onMount(() => {
     let lastTick = performance.now();
@@ -80,12 +95,33 @@ export const Preview: Component<PreviewProps> = (props) => {
       if (!data || typeof data !== 'object') return;
       if (data.type === 'motionforge:ready') {
         console.log('[Preview] Runtime ready:', data);
+        if (state.scene && iframeRef?.contentWindow) {
+          iframeRef.contentWindow.postMessage(
+            {
+              type: 'motionforge:initScene',
+              scene: unwrapPayload(state.scene),
+              atMs: state.playhead,
+            },
+            '*'
+          );
+        }
         iframeRef?.contentWindow?.postMessage({ type: 'getLayerBounds', frame: 0 }, '*');
+      } else if (data.type === 'motionforge:requestScene') {
+        if (state.scene && iframeRef?.contentWindow) {
+          iframeRef.contentWindow.postMessage(
+            {
+              type: 'motionforge:initScene',
+              scene: unwrapPayload(state.scene),
+              atMs: state.playhead,
+            },
+            '*'
+          );
+        }
       } else if (data.type === 'motionforge:frame') {
         if (state.playing && typeof data.atMs === 'number') {
           store.setPlayhead(data.atMs);
         }
-      } else if (data.type === 'layerBounds' && data.bounds) {
+      } else if ((data.type === 'layerBounds' || data.type === 'layerBoundsReport') && data.bounds) {
         store.setLayerBounds(data.bounds);
       }
     };
@@ -179,6 +215,18 @@ export const Preview: Component<PreviewProps> = (props) => {
               title="Scene preview runtime"
               sandbox="allow-scripts allow-same-origin"
               src={previewSrc()}
+              onLoad={() => {
+                if (state.scene && iframeRef?.contentWindow) {
+                  iframeRef.contentWindow.postMessage(
+                    {
+                      type: 'motionforge:initScene',
+                      scene: unwrapPayload(state.scene),
+                      atMs: state.playhead,
+                    },
+                    '*'
+                  );
+                }
+              }}
               style={{
                 transform: `translate(${state.viewportPan.x}px, ${state.viewportPan.y}px) scale(${state.viewportZoom})`,
                 'transform-origin': 'center center',

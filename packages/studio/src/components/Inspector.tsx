@@ -11,9 +11,9 @@ export const Inspector: Component = () => {
     return state.scene.layers.find((l) => l.id === state.selectedLayerId) || null;
   });
 
-  const updateField = (path: string, value: unknown, desc?: string) => {
-    store.mutateScene((scene) => {
-      const layer = scene.layers.find((l) => l.id === state.selectedLayerId);
+  const updateField = (path: string, value: unknown, desc?: string, recordHistory = true) => {
+    const mutator = (scene: any) => {
+      const layer = scene.layers.find((l: any) => l.id === state.selectedLayerId);
       if (!layer) return;
 
       const parts = path.split('.');
@@ -23,8 +23,20 @@ export const Inspector: Component = () => {
         target = target[parts[i]] as Record<string, unknown>;
       }
       target[parts[parts.length - 1]] = value;
-    }, desc || `Edit ${path}`);
+    };
+
+    if (recordHistory) {
+      store.mutateScene(mutator, desc || `Edit ${path}`);
+    } else {
+      store.updateSceneWithoutHistory(mutator);
+    }
   };
+
+  const bindScrub = (path: string, label: string) => ({
+    onScrubStart: () => store.pushHistory(`Scrub ${label}`),
+    onChange: (val: number) => updateField(path, val, `Scrub ${label}`, false),
+    onCommit: () => store.executeSave(),
+  });
 
   const getEntrancePresets = () => {
     return (
@@ -135,7 +147,7 @@ export const Inspector: Component = () => {
                           step={100}
                           min={0}
                           disabled={isLocked()}
-                          onChange={(val) => updateField('at', val, `Set at of ${layer().id}`)}
+                          {...bindScrub('at', `at of ${layer().id}`)}
                         />
                       </div>
                       <div class="insp-field">
@@ -147,7 +159,7 @@ export const Inspector: Component = () => {
                           step={100}
                           min={100}
                           disabled={isLocked()}
-                          onChange={(val) => updateField('duration', val, `Set duration of ${layer().id}`)}
+                          {...bindScrub('duration', `duration of ${layer().id}`)}
                         />
                       </div>
                     </div>
@@ -157,7 +169,7 @@ export const Inspector: Component = () => {
                   <Show when={layer().position}>
                     <div class="insp-section">
                       <div class="insp-section-title">Transform & Position</div>
-                      <div class="insp-input-row" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;">
+                      <div class="insp-input-row" style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
                         <div class="insp-field">
                           <label class="insp-label">X (%)</label>
                           <ScrubInput
@@ -166,7 +178,7 @@ export const Inspector: Component = () => {
                             unit="%"
                             step={0.5}
                             disabled={isLocked()}
-                            onChange={(val) => updateField('position.xPct', val, `Set xPct of ${layer().id}`)}
+                            {...bindScrub('position.xPct', `xPct of ${layer().id}`)}
                           />
                         </div>
                         <div class="insp-field">
@@ -177,7 +189,7 @@ export const Inspector: Component = () => {
                             unit="%"
                             step={0.5}
                             disabled={isLocked()}
-                            onChange={(val) => updateField('position.yPct', val, `Set yPct of ${layer().id}`)}
+                            {...bindScrub('position.yPct', `yPct of ${layer().id}`)}
                           />
                         </div>
                         <div class="insp-field">
@@ -188,7 +200,19 @@ export const Inspector: Component = () => {
                             unit="°"
                             step={1}
                             disabled={isLocked()}
-                            onChange={(val) => updateField('rotation', val, `Set rotation of ${layer().id}`)}
+                            {...bindScrub('rotation', `rotation of ${layer().id}`)}
+                          />
+                        </div>
+                        <div class="insp-field">
+                          <label class="insp-label">Opacity</label>
+                          <ScrubInput
+                            label="Op"
+                            value={(layer() as any).opacity ?? 1}
+                            step={0.05}
+                            min={0}
+                            max={1}
+                            disabled={isLocked()}
+                            {...bindScrub('opacity', `opacity of ${layer().id}`)}
                           />
                         </div>
                       </div>
@@ -220,7 +244,7 @@ export const Inspector: Component = () => {
                             min={10}
                             max={400}
                             disabled={isLocked()}
-                            onChange={(val) => updateField('sizePx', val, `Set sizePx of ${layer().id}`)}
+                            {...bindScrub('sizePx', `sizePx of ${layer().id}`)}
                           />
                         </div>
                         <div class="insp-field">
@@ -256,7 +280,7 @@ export const Inspector: Component = () => {
                           min={100}
                           max={2000}
                           disabled={isLocked()}
-                          onChange={(val) => updateField('variant.widthPx', val, `Set width of ${layer().id}`)}
+                          {...bindScrub('variant.widthPx', `width of ${layer().id}`)}
                         />
                       </div>
                     </div>
@@ -276,7 +300,7 @@ export const Inspector: Component = () => {
                           min={20}
                           max={2000}
                           disabled={isLocked()}
-                          onChange={(val) => updateField('widthPx', val, `Set width of ${layer().id}`)}
+                          {...bindScrub('widthPx', `width of ${layer().id}`)}
                         />
                       </div>
                     </div>

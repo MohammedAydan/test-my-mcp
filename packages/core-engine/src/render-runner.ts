@@ -188,6 +188,10 @@ export class RenderRunner extends EventEmitter {
         encoder,
         jobDir,
         config: this.config,
+        // zero-port: the headless page, the scene and the vault are served
+        // from memory/disk — the render needs no listening engine
+        paths: this.paths,
+        store: this.store,
         onProgress: (n) => {
           framesDone += n;
           job.progress = Math.min(0.9, framesDone / totalFrames);
