@@ -8,7 +8,7 @@ files:
   - out/**/*
   - package.json
 extraResources:
-  - from: ../core-engine/assets/sfx
+  - from: ../core-engine/data/vault/_sfx
     to: sfx
 mac:
   target:
