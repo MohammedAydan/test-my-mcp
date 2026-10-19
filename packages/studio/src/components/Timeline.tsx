@@ -116,38 +116,154 @@ export const Timeline: Component = () => {
     return 5000;
   };
 
+  // Group layers into logical Track Lanes (supporting explicit trackIndex & trackLane)
+  const getTrackLanes = () => {
+    const layers = state.scene?.layers || [];
+    const declaredLanes = ((state.scene as any)?.trackLanes || []) as Array<{
+      id?: string;
+      index?: number;
+      name?: string;
+      kind?: 'video' | 'audio' | 'overlay' | 'general';
+      locked?: boolean;
+      muted?: boolean;
+    }>;
+
+    const tracksMap = new Map<
+      number,
+      {
+        id?: string;
+        index: number;
+        name: string;
+        kind: 'video' | 'audio' | 'overlay' | 'general';
+        layers: StudioLayer[];
+        y: number;
+        h: number;
+        locked?: boolean;
+        muted?: boolean;
+      }
+    >();
+
+    const idToIndexMap = new Map<string, number>();
+
+    declaredLanes.forEach((dl, i) => {
+      const idx = typeof dl.index === 'number' ? dl.index : i;
+      if (dl.id) {
+        idToIndexMap.set(dl.id, idx);
+      }
+      tracksMap.set(idx, {
+        id: dl.id,
+        index: idx,
+        name: dl.name || `Track ${idx + 1}`,
+        kind: dl.kind || 'general',
+        layers: [],
+        y: 0,
+        h: TRACK_H,
+        locked: dl.locked,
+        muted: dl.muted,
+      });
+    });
+
+    const explicitIndices = new Set<number>();
+    for (const l of layers) {
+      const explicitIdx = (l as any).trackIndex;
+      const explicitLane = (l as any).trackLane;
+      if (typeof explicitIdx === 'number') {
+        explicitIndices.add(explicitIdx);
+      } else if (typeof explicitLane === 'string' && idToIndexMap.has(explicitLane)) {
+        explicitIndices.add(idToIndexMap.get(explicitLane)!);
+      }
+    }
+
+    let nextAutoIndex = 0;
+    const findNextFreeIndex = () => {
+      while (tracksMap.has(nextAutoIndex) || explicitIndices.has(nextAutoIndex)) {
+        nextAutoIndex++;
+      }
+      return nextAutoIndex++;
+    };
+
+    for (const layer of layers) {
+      const explicitIdx = (layer as any).trackIndex;
+      const explicitLane = (layer as any).trackLane;
+      let targetIdx: number;
+
+      if (typeof explicitIdx === 'number') {
+        targetIdx = explicitIdx;
+      } else if (typeof explicitLane === 'string' && idToIndexMap.has(explicitLane)) {
+        targetIdx = idToIndexMap.get(explicitLane)!;
+      } else {
+        targetIdx = findNextFreeIndex();
+      }
+
+      if (!tracksMap.has(targetIdx)) {
+        tracksMap.set(targetIdx, {
+          index: targetIdx,
+          name: `Track ${targetIdx + 1}`,
+          kind: 'general',
+          layers: [],
+          y: 0,
+          h: TRACK_H,
+        });
+      }
+
+      tracksMap.get(targetIdx)!.layers.push(layer);
+    }
+
+    const sortedTracks = Array.from(tracksMap.values()).sort((a, b) => a.index - b.index);
+
+    for (const t of sortedTracks) {
+      t.layers.sort((a, b) => (a.at || 0) - (b.at || 0));
+    }
+
+    return sortedTracks;
+  };
+
+  const computedTracks = createMemo(() => getTrackLanes());
+
   // Compute row layout heights for multi-track canvas
   const computeTrackLayout = () => {
-    const layers = state.scene?.layers || [];
+    const tracks = computedTracks();
     let currentY = RULER_H + 4;
     const layout: Array<{
       layer: StudioLayer;
+      trackIndex: number;
       y: number;
       h: number;
       subtracks: Array<{ property: string; y: number; h: number }>;
     }> = [];
 
-    for (const layer of layers) {
-      const isExpanded = state.expandedLayerIds.includes(layer.id);
-      const props = isExpanded ? getLayerAnimatableProps(layer) : [];
-      const subtracks = props.map((property, idx) => ({
-        property,
-        y: currentY + TRACK_H + idx * SUBTRACK_H,
-        h: SUBTRACK_H,
-      }));
+    for (const track of tracks) {
+      track.y = currentY;
+      track.h = TRACK_H;
 
-      const totalH = TRACK_H + subtracks.length * SUBTRACK_H;
-      layout.push({
-        layer,
-        y: currentY,
-        h: TRACK_H,
-        subtracks,
-      });
+      let maxSubtracksH = 0;
 
-      currentY += totalH + TRACK_GAP;
+      for (const layer of track.layers) {
+        const isExpanded = state.expandedLayerIds.includes(layer.id);
+        const props = isExpanded ? getLayerAnimatableProps(layer) : [];
+        const subtracks = props.map((property, idx) => ({
+          property,
+          y: currentY + TRACK_H + idx * SUBTRACK_H,
+          h: SUBTRACK_H,
+        }));
+
+        if (subtracks.length * SUBTRACK_H > maxSubtracksH) {
+          maxSubtracksH = subtracks.length * SUBTRACK_H;
+        }
+
+        layout.push({
+          layer,
+          trackIndex: track.index,
+          y: currentY,
+          h: TRACK_H,
+          subtracks,
+        });
+      }
+
+      currentY += TRACK_H + maxSubtracksH + TRACK_GAP;
     }
 
-    return { layout, totalHeight: currentY + 40 };
+    return { tracks, layout, totalHeight: currentY + 40 };
   };
 
   // Main Canvas Rendering Loop
@@ -163,7 +279,7 @@ export const Timeline: Component = () => {
     ctx.fillRect(0, 0, w, h);
 
     const dur = totalDuration();
-    const { layout } = computeTrackLayout();
+    const { tracks, layout } = computeTrackLayout();
 
     // 2. In / Out Marks shaded regions
     if (state.inPoint !== null && state.inPoint > 0) {
@@ -184,16 +300,23 @@ export const Timeline: Component = () => {
     ctx.clip();
     ctx.translate(0, -state.timelineScrollY);
 
+    // Track background lanes
+    for (const track of tracks) {
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
+      ctx.fillRect(0, track.y, w, track.h);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+      ctx.beginPath();
+      ctx.moveTo(0, track.y + track.h);
+      ctx.lineTo(w, track.y + track.h);
+      ctx.stroke();
+    }
+
     for (const item of layout) {
       const layer = item.layer;
       const x1 = timeToX(layer.at || 0);
       const layerDur = layer.duration || dur - (layer.at || 0);
       const x2 = timeToX((layer.at || 0) + layerDur);
       const barW = Math.max(4, x2 - x1);
-
-      // Track background lane
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.02)';
-      ctx.fillRect(0, item.y, w, item.h);
 
       const isSelected =
         state.selectedLayerIds.includes(layer.id) || state.selectedLayerId === layer.id;
@@ -556,18 +679,49 @@ export const Timeline: Component = () => {
         const pxPerMs = (w * state.zoom) / totalDuration();
         const deltaMs = Math.round(dx / pxPerMs);
 
+        // Find track and neighboring clips on the same track to prevent collisions
+        const tracks = computedTracks();
+        const currentTrack = tracks.find((t) => t.layers.some((l) => l.id === dragLayer!.id));
+        let minBoundaryAt = 0;
+        let maxBoundaryEnd = totalDuration();
+
+        if (currentTrack) {
+          for (const other of currentTrack.layers) {
+            if (other.id === dragLayer.id) continue;
+            const otherAt = other.at || 0;
+            const otherDur = other.duration ?? (totalDuration() - otherAt);
+            const otherEnd = otherAt + otherDur;
+
+            if (otherAt < dragInitialAt) {
+              if (otherEnd > minBoundaryAt) {
+                minBoundaryAt = otherEnd;
+              }
+            } else if (otherAt > dragInitialAt) {
+              if (otherAt < maxBoundaryEnd) {
+                maxBoundaryEnd = otherAt;
+              }
+            }
+          }
+        }
+
         if (dragMode === 'move') {
-          const newAt = Math.max(0, dragInitialAt + deltaMs);
+          const maxAllowedAt = Math.max(minBoundaryAt, maxBoundaryEnd - dragInitialDuration);
+          const requestedAt = dragInitialAt + deltaMs;
+          const newAt = Math.max(minBoundaryAt, Math.min(maxAllowedAt, requestedAt));
           store.setState('scene', 'layers', (l: StudioLayer) => l.id === dragLayer!.id, 'at', newAt);
         } else if (dragMode === 'trim-left') {
-          const newAt = Math.max(0, dragInitialAt + deltaMs);
-          const newDur = Math.max(200, dragInitialDuration - deltaMs);
+          const maxAllowedAt = (dragInitialAt + dragInitialDuration) - 200;
+          const requestedAt = dragInitialAt + deltaMs;
+          const newAt = Math.max(minBoundaryAt, Math.min(maxAllowedAt, requestedAt));
+          const newDur = (dragInitialAt + dragInitialDuration) - newAt;
           store.setState('scene', 'layers', (l: StudioLayer) => l.id === dragLayer!.id, {
             at: newAt,
             duration: newDur,
           });
         } else if (dragMode === 'trim-right') {
-          const newDur = Math.max(200, dragInitialDuration + deltaMs);
+          const maxAllowedDur = Math.max(200, maxBoundaryEnd - dragInitialAt);
+          const requestedDur = dragInitialDuration + deltaMs;
+          const newDur = Math.max(200, Math.min(maxAllowedDur, requestedDur));
           store.setState('scene', 'layers', (l: StudioLayer) => l.id === dragLayer!.id, 'duration', newDur);
         }
         return;
@@ -612,10 +766,11 @@ export const Timeline: Component = () => {
 
           if (Math.abs(x - x1) <= edgeHoverZone || Math.abs(x - x2) <= edgeHoverZone) {
             hoveredCursor = 'ew-resize';
+            break;
           } else if (x >= x1 && x <= x2) {
             hoveredCursor = 'move';
+            break;
           }
-          break;
         }
       }
 
@@ -627,6 +782,7 @@ export const Timeline: Component = () => {
         store.pushHistory(`Timeline edit: ${dragMode}`);
         store.setState('dirty', true);
         store.syncDesktopDirty();
+        store.executeSave();
       }
       isDraggingPlayhead = false;
       isPanning = false;
@@ -661,10 +817,12 @@ export const Timeline: Component = () => {
       }
     };
 
-    canvasRef.addEventListener('mousedown', onMouseDown);
+    if (canvasRef) {
+      canvasRef.addEventListener('mousedown', onMouseDown);
+      canvasRef.addEventListener('wheel', onWheel, { passive: false });
+    }
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-    canvasRef.addEventListener('wheel', onWheel, { passive: false });
 
     onCleanup(() => {
       window.removeEventListener('resize', resize);
@@ -771,52 +929,87 @@ export const Timeline: Component = () => {
           style={{ 'padding-top': `${RULER_H}px` }}
           onScroll={onTracksScroll}
         >
-          <For each={state.scene?.layers || []}>
-            {(layer) => {
+          <For each={computedTracks()}>
+            {(track) => {
+              const primaryLayer = () => track.layers[0];
               const isSelected = () =>
-                state.selectedLayerIds.includes(layer.id) || state.selectedLayerId === layer.id;
-              const isExpanded = () => state.expandedLayerIds.includes(layer.id);
-              const props = () => (isExpanded() ? getLayerAnimatableProps(layer) : []);
+                track.layers.some(
+                  (l) => state.selectedLayerIds.includes(l.id) || state.selectedLayerId === l.id
+                );
+              const anyExpandedLayer = () =>
+                track.layers.find((l) => state.expandedLayerIds.includes(l.id));
+              const isExpanded = () => Boolean(anyExpandedLayer());
+              const expandedLayer = () => anyExpandedLayer() || primaryLayer();
+              const props = () =>
+                isExpanded() && expandedLayer() ? getLayerAnimatableProps(expandedLayer()!) : [];
+
+              const trackTypeColor = () => {
+                if (track.kind === 'audio') return '#10b981';
+                if (track.layers.length > 0) return getLayerColor(track.layers[0].type);
+                return '#6366f1';
+              };
 
               return (
                 <div
                   class="border-b border-[#181824]/60"
-                  data-layer-id={layer.id}
+                  data-track-index={track.index}
+                  data-layer-id={track.layers[0]?.id}
                   style={{ 'margin-bottom': `${TRACK_GAP}px` }}
                 >
-                  {/* MAIN LAYER HEADER */}
+                  {/* MAIN TRACK HEADER */}
                   <div
-                    class={`flex items-center gap-1 px-2 h-[28px] cursor-pointer hover:bg-[#181824] ${
+                    class={`flex items-center gap-1.5 px-2 h-[28px] cursor-pointer hover:bg-[#181824] ${
                       isSelected() ? 'bg-[#1e1e2d]' : ''
                     }`}
-                    onClick={() => store.selectLayer(layer.id)}
+                    onClick={() => {
+                      if (track.layers.length > 0) {
+                        store.selectLayer(track.layers[0].id);
+                      }
+                    }}
                   >
-                    <button
-                      class="text-[10px] text-[#71717a] hover:text-white w-4 text-center"
-                      title={isExpanded() ? 'Collapse tracks' : 'Expand tracks'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        store.toggleLayerExpanded(layer.id);
-                      }}
+                    <Show
+                      when={track.layers.length > 0}
+                      fallback={<span class="w-4" />}
                     >
-                      {isExpanded() ? '▼' : '▶'}
-                    </button>
+                      <button
+                        class="text-[10px] text-[#71717a] hover:text-white w-4 text-center"
+                        title={isExpanded() ? 'Collapse tracks' : 'Expand tracks'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const target = expandedLayer();
+                          if (target) {
+                            store.toggleLayerExpanded(target.id);
+                          }
+                        }}
+                      >
+                        {isExpanded() ? '▼' : '▶'}
+                      </button>
+                    </Show>
+
+                    <span class="px-1 py-0.2 text-[9px] font-mono rounded bg-[#1e1e2d] text-[#818cf8] border border-[#27273a] flex-none">
+                      T{track.index + 1}
+                    </span>
+
                     <span
                       class="w-2 h-2 rounded-full flex-none"
-                      style={{ background: getLayerColor(layer.type) }}
+                      style={{ background: trackTypeColor() }}
                     />
-                    <span class="truncate flex-1 font-medium text-xs text-[#e4e4e7]">
-                      {layer.name || layer.id}
+
+                    <span class="truncate flex-1 font-medium text-xs text-[#e4e4e7]" title={track.name}>
+                      {track.layers.length > 1
+                        ? `${track.name} (${track.layers.length} clips)`
+                        : track.layers[0]?.name || track.layers[0]?.id || track.name}
                     </span>
                   </div>
 
                   {/* EXPANDED PROPERTY TRACKS */}
-                  <Show when={isExpanded()}>
+                  <Show when={isExpanded() && expandedLayer()}>
                     <div class="bg-[#08080c]">
                       <For each={props()}>
                         {(prop) => {
-                          const track = (layer.tracks as any[])?.find((t) => t.property === prop);
-                          const hasTrack = Boolean(track && track.keyframes?.length > 0);
+                          const layer = expandedLayer()!;
+                          const trk = (layer.tracks as any[])?.find((t) => t.property === prop);
+                          const hasTrack = Boolean(trk && trk.keyframes?.length > 0);
 
                           return (
                             <div class="flex items-center justify-between pl-6 pr-2 h-[22px] text-[11px] text-[#a1a1aa] hover:bg-[#14141d]">
