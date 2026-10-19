@@ -299,7 +299,7 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
     // 1. Pan mode (Hand tool, Space+drag, or Middle mouse)
     if (state.activeTool === 'hand' || isSpacePressed || e.button === 1) {
       setDragMode('pan');
-      (e.target as Element).setPointerCapture?.(e.pointerId);
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
       return;
     }
 
@@ -319,31 +319,38 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
           sizePx: (sel as any).sizePx,
           rotation: box.rotation,
         };
+        store.pushHistory(`Transform layer: ${sel.name || sel.id}`);
         if (handleType === 'rotate') {
           setDragMode('rotate');
         } else {
           setDragMode('resize');
         }
       }
-      (e.target as Element).setPointerCapture?.(e.pointerId);
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
       return;
     }
 
     // 3. Check hit testing on layers (from top to bottom in z order)
     if (state.scene?.layers) {
       const clickPt = dragStartCanvas;
+      const clickedLayerId = targetEl.getAttribute('data-layer-id');
       let hitLayer: StudioLayer | null = null;
+      if (clickedLayerId) {
+        hitLayer = state.scene.layers.find((l) => l.id === clickedLayerId) || null;
+      }
 
-      // Reverse search so topmost layer is picked
-      for (let i = state.scene.layers.length - 1; i >= 0; i--) {
-        const layer = state.scene.layers[i];
-        if (layer.type === 'background' || layer.type === 'foregroundFX') continue;
-        const box = getLayerBox(layer);
+      if (!hitLayer) {
+        // Reverse search so topmost layer is picked
+        for (let i = state.scene.layers.length - 1; i >= 0; i--) {
+          const layer = state.scene.layers[i];
+          if (layer.type === 'background' || layer.type === 'foregroundFX') continue;
+          const box = getLayerBox(layer);
 
-        // Simple box collision
-        if (clickPt.x >= box.x && clickPt.x <= box.x + box.width && clickPt.y >= box.y && clickPt.y <= box.y + box.height) {
-          hitLayer = layer;
-          break;
+          // Simple box collision
+          if (clickPt.x >= box.x && clickPt.x <= box.x + box.width && clickPt.y >= box.y && clickPt.y <= box.y + box.height) {
+            hitLayer = layer;
+            break;
+          }
         }
       }
 
@@ -353,6 +360,7 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
           store.selectLayer(hitLayer.id, isMulti);
         }
 
+        store.pushHistory(`Move layer: ${hitLayer.name || hitLayer.id}`);
         setDragMode('move');
         const box = getLayerBox(hitLayer);
         initialLayerProps = {
@@ -364,7 +372,7 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
           boxW: box.width,
           boxH: box.height,
         };
-        (e.target as Element).setPointerCapture?.(e.pointerId);
+        (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
         return;
       }
     }
@@ -375,7 +383,7 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
     }
     setDragMode('marquee');
     setMarqueeRect({ x: dragStartCanvas.x, y: dragStartCanvas.y, width: 0, height: 0 });
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   };
 
   const handlePointerMove = (e: PointerEvent) => {
@@ -466,6 +474,20 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
           ? { ...prev, x: targetX, y: targetY }
           : { x: targetX, y: targetY, width: initBoxW, height: initBoxH, rotation: 0 }
       );
+
+      // Dispatch ephemeral transform to preview iframe
+      const iframe = props.iframeRef();
+      if (iframe?.contentWindow) {
+        iframe.contentWindow.postMessage(
+          {
+            type: 'ephemeralTransform',
+            layerId,
+            xPct: newXPct,
+            yPct: newYPct,
+          },
+          '*'
+        );
+      }
       return;
     }
 
@@ -496,6 +518,20 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
       } else if (sel.type === 'imageLogo' || sel.type === 'lottie') {
         store.setState('scene', 'layers', (l: StudioLayer) => l.id === sel.id, 'widthPx', Math.round(newW));
       }
+
+      // Dispatch ephemeral transform to preview iframe
+      const iframe = props.iframeRef();
+      if (iframe?.contentWindow) {
+        iframe.contentWindow.postMessage(
+          {
+            type: 'ephemeralTransform',
+            layerId: sel.id,
+            widthPx: Math.round(newW),
+            heightPx: Math.round(newH),
+          },
+          '*'
+        );
+      }
       return;
     }
 
@@ -521,6 +557,19 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
 
       store.setState('scene', 'layers', (l: StudioLayer) => l.id === sel.id, 'rotation' as any, angleDeg);
       store.setState('layerBounds', sel.id, (prev) => (prev ? { ...prev, rotation: angleDeg } : undefined));
+
+      // Dispatch ephemeral transform to preview iframe
+      const iframe = props.iframeRef();
+      if (iframe?.contentWindow) {
+        iframe.contentWindow.postMessage(
+          {
+            type: 'ephemeralTransform',
+            layerId: sel.id,
+            rotation: angleDeg,
+          },
+          '*'
+        );
+      }
       return;
     }
 
@@ -536,9 +585,9 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
   const handlePointerUp = () => {
     const mode = dragMode();
     if (mode === 'move' || mode === 'resize' || mode === 'rotate') {
-      store.pushHistory(`Transform layer: ${primarySelectedLayer()?.name || primarySelectedLayer()?.id}`);
       store.setState('dirty', true);
       store.syncDesktopDirty();
+      store.executeSave();
     } else if (mode === 'marquee' && marqueeRect()) {
       const m = marqueeRect()!;
       if (m.width > 5 && m.height > 5 && state.scene?.layers) {
@@ -693,18 +742,19 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
         {/* SELECTED LAYERS BOUNDING BOXES & HANDLES */}
         <For each={selectedLayers()}>
           {(layer) => {
-            const rawBox = getLayerBox(layer);
-            const b = getScreenBox(rawBox);
-            const isPrimary = primarySelectedLayer()?.id === layer.id;
+            const b = createMemo(() => getScreenBox(getLayerBox(layer)));
+            const isPrimary = createMemo(() => primarySelectedLayer()?.id === layer.id);
 
             return (
-              <g transform={`rotate(${b.rotation} ${b.centerX} ${b.centerY})`}>
+              <g transform={`rotate(${b().rotation} ${b().centerX} ${b().centerY})`}>
                 {/* BOUNDING RECTANGLE */}
                 <rect
-                  x={b.x}
-                  y={b.y}
-                  width={b.width}
-                  height={b.height}
+                  id="selection-bounding-box"
+                  data-layer-id={layer.id}
+                  x={b().x}
+                  y={b().y}
+                  width={b().width}
+                  height={b().height}
                   fill="rgba(245, 158, 11, 0.05)"
                   stroke="#f59e0b"
                   stroke-width="1.5"
@@ -712,19 +762,19 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
                 />
 
                 {/* 8 RESIZE HANDLES & 1 ROTATION HANDLE (ON PRIMARY SELECTION) */}
-                <Show when={isPrimary}>
+                <Show when={isPrimary()}>
                   {/* ROTATION STEM & HANDLE (18px above top-center) */}
                   <line
-                    x1={b.centerX}
-                    y1={b.y}
-                    x2={b.centerX}
-                    y2={b.y - 18}
+                    x1={b().centerX}
+                    y1={b().y}
+                    x2={b().centerX}
+                    y2={b().y - 18}
                     stroke="#f59e0b"
                     stroke-width="1.5"
                   />
                   <circle
-                    cx={b.centerX}
-                    cy={b.y - 18}
+                    cx={b().centerX}
+                    cy={b().y - 18}
                     r={4.5}
                     fill="#f59e0b"
                     stroke="#ffffff"
@@ -735,8 +785,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
 
                   {/* 4 CORNER RESIZE HANDLES */}
                   <rect
-                    x={b.x - 4}
-                    y={b.y - 4}
+                    x={b().x - 4}
+                    y={b().y - 4}
                     width={8}
                     height={8}
                     fill="#ffffff"
@@ -747,8 +797,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
                     class="cursor-nwse-resize pointer-events-auto"
                   />
                   <rect
-                    x={b.x + b.width - 4}
-                    y={b.y - 4}
+                    x={b().x + b().width - 4}
+                    y={b().y - 4}
                     width={8}
                     height={8}
                     fill="#ffffff"
@@ -759,8 +809,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
                     class="cursor-nesw-resize pointer-events-auto"
                   />
                   <rect
-                    x={b.x + b.width - 4}
-                    y={b.y + b.height - 4}
+                    x={b().x + b().width - 4}
+                    y={b().y + b().height - 4}
                     width={8}
                     height={8}
                     fill="#ffffff"
@@ -771,8 +821,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
                     class="cursor-nwse-resize pointer-events-auto"
                   />
                   <rect
-                    x={b.x - 4}
-                    y={b.y + b.height - 4}
+                    x={b().x - 4}
+                    y={b().y + b().height - 4}
                     width={8}
                     height={8}
                     fill="#ffffff"
@@ -785,8 +835,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
 
                   {/* 4 EDGE RESIZE HANDLES */}
                   <rect
-                    x={b.centerX - 4}
-                    y={b.y - 4}
+                    x={b().centerX - 4}
+                    y={b().y - 4}
                     width={8}
                     height={8}
                     fill="#ffffff"
@@ -797,8 +847,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
                     class="cursor-ns-resize pointer-events-auto"
                   />
                   <rect
-                    x={b.x + b.width - 4}
-                    y={b.centerY - 4}
+                    x={b().x + b().width - 4}
+                    y={b().centerY - 4}
                     width={8}
                     height={8}
                     fill="#ffffff"
@@ -809,8 +859,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
                     class="cursor-ew-resize pointer-events-auto"
                   />
                   <rect
-                    x={b.centerX - 4}
-                    y={b.y + b.height - 4}
+                    x={b().centerX - 4}
+                    y={b().y + b().height - 4}
                     width={8}
                     height={8}
                     fill="#ffffff"
@@ -821,8 +871,8 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
                     class="cursor-ns-resize pointer-events-auto"
                   />
                   <rect
-                    x={b.x - 4}
-                    y={b.centerY - 4}
+                    x={b().x - 4}
+                    y={b().centerY - 4}
                     width={8}
                     height={8}
                     fill="#ffffff"

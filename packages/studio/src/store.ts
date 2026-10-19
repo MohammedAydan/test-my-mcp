@@ -1,4 +1,5 @@
 import { createStore } from 'solid-js/store';
+import { api } from './api.js';
 import type { StudioScene, CapabilitiesResponse, RenderJobStatus, AssetVaultItem } from './types.js';
 
 export interface StudioState {
@@ -100,8 +101,18 @@ const [state, setState] = createStore<StudioState>({
   activeModal: null,
 });
 
-const undoStack: Array<{ scene: StudioScene; description: string; selectedLayerId: string | null }> = [];
-const redoStack: Array<{ scene: StudioScene; description: string; selectedLayerId: string | null }> = [];
+const undoStack: Array<{
+  scene: StudioScene;
+  description: string;
+  selectedLayerId: string | null;
+  layerBounds?: Record<string, { x: number; y: number; width: number; height: number; rotation: number }>;
+}> = [];
+const redoStack: Array<{
+  scene: StudioScene;
+  description: string;
+  selectedLayerId: string | null;
+  layerBounds?: Record<string, { x: number; y: number; width: number; height: number; rotation: number }>;
+}> = [];
 const maxHistory = 50;
 
 function syncDesktopDirty() {
@@ -123,6 +134,7 @@ export const store = {
       scene: JSON.parse(JSON.stringify(state.scene)),
       description: description || 'Change scene',
       selectedLayerId: state.selectedLayerId,
+      layerBounds: JSON.parse(JSON.stringify(state.layerBounds || {})),
     });
     if (undoStack.length > maxHistory) {
       undoStack.shift();
@@ -144,6 +156,7 @@ export const store = {
       scene: JSON.parse(JSON.stringify(state.scene!)),
       description: 'Reverted state',
       selectedLayerId: state.selectedLayerId,
+      layerBounds: JSON.parse(JSON.stringify(state.layerBounds || {})),
     };
     redoStack.push(currentSnapshot);
 
@@ -151,10 +164,12 @@ export const store = {
     setState({
       scene: JSON.parse(JSON.stringify(prev.scene)),
       selectedLayerId: prev.selectedLayerId,
+      layerBounds: prev.layerBounds ? JSON.parse(JSON.stringify(prev.layerBounds)) : {},
       dirty: true,
       saveStatus: 'unsaved',
     });
     syncDesktopDirty();
+    this.executeSave();
     return prev.description;
   },
 
@@ -164,6 +179,7 @@ export const store = {
       scene: JSON.parse(JSON.stringify(state.scene!)),
       description: 'Current state before redo',
       selectedLayerId: state.selectedLayerId,
+      layerBounds: JSON.parse(JSON.stringify(state.layerBounds || {})),
     };
     undoStack.push(currentSnapshot);
 
@@ -171,10 +187,12 @@ export const store = {
     setState({
       scene: JSON.parse(JSON.stringify(next.scene)),
       selectedLayerId: next.selectedLayerId,
+      layerBounds: next.layerBounds ? JSON.parse(JSON.stringify(next.layerBounds)) : {},
       dirty: true,
       saveStatus: 'unsaved',
     });
     syncDesktopDirty();
+    this.executeSave();
     return next.description;
   },
 
@@ -292,6 +310,21 @@ export const store = {
       setState({ dirty: false, lastSaved: new Date() });
     }
     syncDesktopDirty();
+  },
+
+  async executeSave() {
+    if (!state.scene) return;
+    this.setSaveStatus('saving');
+    try {
+      const res = await api.createScene(state.scene);
+      this.setSaveStatus('saved');
+      this.addToast(`Saved scene ${res.id}`, 'success');
+      return res;
+    } catch (e: unknown) {
+      this.setSaveStatus('failed');
+      this.addToast(`Save failed: ${(e as Error).message}`, 'error');
+      throw e;
+    }
   },
 
   setViewportZoom(zoom: number) {

@@ -135,6 +135,20 @@ async function boot(): Promise<void> {
         },
         "*"
       );
+    } else if (data.type === "ephemeralTransform" || data.type === "motionforge:ephemeralTransform") {
+      const { layerId, xPct, yPct, rotation, widthPx, heightPx } = data;
+      const layerEl = stage?.content.querySelector<HTMLElement>(`.mf-layer[data-layer-id="${layerId}"]`);
+      if (layerEl) {
+        const exitWrapper = layerEl.querySelector<HTMLElement>(".mf-exit");
+        const contentEl = (exitWrapper?.firstElementChild ?? exitWrapper ?? layerEl) as HTMLElement;
+        if (typeof xPct === "number") contentEl.style.left = `${xPct}%`;
+        if (typeof yPct === "number") contentEl.style.top = `${yPct}%`;
+        if (typeof widthPx === "number") contentEl.style.width = `${widthPx}px`;
+        if (typeof heightPx === "number") contentEl.style.height = `${heightPx}px`;
+        if (typeof rotation === "number") {
+          contentEl.style.transform = `translate(-50%, -50%)${rotation ? ` rotate(${rotation}deg)` : ""}`;
+        }
+      }
     }
   });
 

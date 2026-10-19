@@ -110,16 +110,7 @@ export const App: Component = () => {
   (window as unknown as { loadDemoScene: () => Promise<void> }).loadDemoScene = loadDemoScene;
 
   const executeSave = async () => {
-    if (!state.scene) return;
-    store.setSaveStatus('saving');
-    try {
-      const res = await api.createScene(state.scene);
-      store.setSaveStatus('saved');
-      store.addToast(`Saved scene ${res.id}`, 'success');
-    } catch (e: unknown) {
-      store.setSaveStatus('failed');
-      store.addToast(`Save failed: ${(e as Error).message}`, 'error');
-    }
+    await store.executeSave();
   };
 
   // Debounced auto-save
