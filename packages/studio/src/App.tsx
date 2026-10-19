@@ -12,6 +12,7 @@ import { Toasts } from './components/Toasts.js';
 import { Modal } from './components/Modal.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { OnboardingTour } from './components/OnboardingTour.js';
+import { SplitterVertical, SplitterHorizontal } from './components/Splitter.js';
 import type { StudioScene } from './types.js';
 
 export const DEMO_SCENE: StudioScene = {
@@ -83,6 +84,8 @@ export const DEMO_SCENE: StudioScene = {
 export const App: Component = () => {
   const state = store.state;
   let saveTimeout: number | null = null;
+  let mainRef: HTMLElement | undefined;
+  let appRef: HTMLElement | undefined;
 
   const loadScene = async (id: string) => {
     try {
@@ -310,7 +313,13 @@ export const App: Component = () => {
   });
 
   return (
-    <div class="app">
+    <div
+      ref={appRef}
+      class="app"
+      style={{
+        '--timeline-height': state.workspace.timelineCollapsed ? '0px' : `${state.workspace.timelineHeight}px`,
+      }}
+    >
       <a href="#preview-stage" class="skip-link">
         Skip to preview content
       </a>
@@ -332,14 +341,47 @@ export const App: Component = () => {
       <HelpTipBar />
 
       {/* MAIN WORKSPACE */}
-      <main class="main">
-        <LayersPanel onAddLayer={() => store.setActiveModal('add-layer')} />
+      <main
+        ref={mainRef}
+        class="main"
+        style={{
+          '--left-panel-width': state.workspace.leftPanelCollapsed ? '0px' : `${state.workspace.leftPanelWidth}px`,
+          '--right-panel-width': state.workspace.rightPanelCollapsed ? '0px' : `${state.workspace.rightPanelWidth}px`,
+        }}
+      >
+        <div style={{ display: state.workspace.leftPanelCollapsed ? 'none' : 'contents' }}>
+          <LayersPanel onAddLayer={() => store.setActiveModal('add-layer')} />
+        </div>
+        <SplitterVertical
+          id="splitter-left"
+          onResize={(clientX) => store.setLeftPanelWidth(mainRef ? clientX - mainRef.getBoundingClientRect().left : clientX)}
+          onDoubleClick={() => store.toggleLeftPanelCollapsed()}
+          title="Drag to resize, double-click to collapse left panel"
+        />
         <Preview onLoadDemo={loadDemoScene} onOpenLoad={() => store.setActiveModal('load')} />
-        <Inspector />
+        <SplitterVertical
+          id="splitter-right"
+          onResize={(clientX) => store.setRightPanelWidth(mainRef ? mainRef.getBoundingClientRect().right - clientX : window.innerWidth - clientX)}
+          onDoubleClick={() => store.toggleRightPanelCollapsed()}
+          title="Drag to resize, double-click to collapse right panel"
+        />
+        <div style={{ display: state.workspace.rightPanelCollapsed ? 'none' : 'contents' }}>
+          <Inspector />
+        </div>
       </main>
 
+      {/* HORIZONTAL TIMELINE SPLITTER */}
+      <SplitterHorizontal
+        id="splitter-timeline"
+        onResize={(clientY) => store.setTimelineHeight(appRef ? appRef.getBoundingClientRect().bottom - clientY - 26 : window.innerHeight - clientY - 26)}
+        onDoubleClick={() => store.toggleTimelineCollapsed()}
+        title="Drag to resize, double-click to collapse timeline"
+      />
+
       {/* TIMELINE */}
-      <Timeline />
+      <div style={{ display: state.workspace.timelineCollapsed ? 'none' : 'contents' }}>
+        <Timeline />
+      </div>
 
       {/* STATUS BAR */}
       <StatusBar />

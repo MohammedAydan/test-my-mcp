@@ -133,10 +133,11 @@ input, select, textarea {
 /* App Layout Grid */
 .app {
   display: grid;
-  grid-template-rows: 42px auto 1fr 210px 26px;
+  grid-template-rows: 42px auto 1fr 4px var(--timeline-height, 240px) 26px;
   height: 100vh;
   width: 100vw;
   background: var(--bg-0);
+  overflow: hidden;
 }
 
 /* ============ TITLE BAR ============ */
@@ -374,10 +375,57 @@ input, select, textarea {
 /* ============ MAIN PANELS ============ */
 .main {
   display: grid;
-  grid-template-columns: 280px 1fr 340px;
+  grid-template-columns: var(--left-panel-width, 280px) 4px 1fr 4px var(--right-panel-width, 340px);
   min-height: 0;
-  border-bottom: 1px solid var(--border);
   background: var(--bg-0);
+  overflow: hidden;
+}
+
+/* ============ SPLITTERS ============ */
+.splitter-vertical {
+  width: 4px;
+  background: var(--border);
+  cursor: col-resize;
+  position: relative;
+  z-index: 15;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+.splitter-vertical::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+  cursor: col-resize;
+}
+.splitter-vertical:hover,
+.splitter-vertical.is-active {
+  background: var(--accent);
+}
+
+.splitter-horizontal {
+  height: 4px;
+  background: var(--border);
+  cursor: row-resize;
+  position: relative;
+  z-index: 15;
+  transition: background 0.15s ease;
+  user-select: none;
+}
+.splitter-horizontal::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+  cursor: row-resize;
+}
+.splitter-horizontal:hover,
+.splitter-horizontal.is-active {
+  background: var(--accent);
 }
 
 .panel {
@@ -387,8 +435,31 @@ input, select, textarea {
   min-height: 0;
   overflow: hidden;
 }
-.panel-left { border-right: 1px solid var(--border); }
-.panel-right { border-left: 1px solid var(--border); }
+.panel-left {
+  grid-column: 1;
+  border-right: none;
+}
+#splitter-left {
+  grid-column: 2;
+}
+.panel-center {
+  grid-column: 3;
+}
+#splitter-right {
+  grid-column: 4;
+}
+.panel-right {
+  grid-column: 5;
+  border-left: none;
+}
+
+#splitter-timeline {
+  grid-row: 4;
+}
+.timeline-area,
+.timeline {
+  grid-row: 5;
+}
 
 /* Panel Tabs */
 .panel-tabs {

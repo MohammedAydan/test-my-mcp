@@ -2,6 +2,15 @@ import { createStore } from 'solid-js/store';
 import { api } from './api.js';
 import type { StudioScene, CapabilitiesResponse, RenderJobStatus, AssetVaultItem } from './types.js';
 
+export interface WorkspaceLayout {
+  leftPanelWidth: number;
+  rightPanelWidth: number;
+  timelineHeight: number;
+  leftPanelCollapsed: boolean;
+  rightPanelCollapsed: boolean;
+  timelineCollapsed: boolean;
+}
+
 export interface StudioState {
   engine: { online: boolean; url: string; latencyMs: number };
   capabilities: CapabilitiesResponse | null;
@@ -19,6 +28,7 @@ export interface StudioState {
   viewportPan: { x: number; y: number };
   activeTool: 'select' | 'hand';
   layerBounds: Record<string, { x: number; y: number; width: number; height: number; rotation: number }>;
+  workspace: WorkspaceLayout;
   inPoint: number | null;
   outPoint: number | null;
   expandedLayerIds: string[];
@@ -66,6 +76,35 @@ const defaultEngineUrl =
   localStorage.getItem('motionforge_engine') ||
   'http://127.0.0.1:4000';
 
+const defaultWorkspace: WorkspaceLayout = {
+  leftPanelWidth: 280,
+  rightPanelWidth: 340,
+  timelineHeight: 240,
+  leftPanelCollapsed: false,
+  rightPanelCollapsed: false,
+  timelineCollapsed: false,
+};
+
+const initialWorkspace: WorkspaceLayout = (() => {
+  try {
+    const saved = localStorage.getItem('motionforge_workspace_v1');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        ...defaultWorkspace,
+        ...parsed,
+      };
+    }
+  } catch {}
+  return defaultWorkspace;
+})();
+
+function persistWorkspace(layout: WorkspaceLayout) {
+  try {
+    localStorage.setItem('motionforge_workspace_v1', JSON.stringify(layout));
+  } catch {}
+}
+
 const [state, setState] = createStore<StudioState>({
   engine: { online: false, url: defaultEngineUrl, latencyMs: 0 },
   capabilities: null,
@@ -83,6 +122,7 @@ const [state, setState] = createStore<StudioState>({
   viewportPan: { x: 0, y: 0 },
   activeTool: 'select',
   layerBounds: {},
+  workspace: initialWorkspace,
   inPoint: null,
   outPoint: null,
   expandedLayerIds: [],
@@ -345,6 +385,45 @@ export const store = {
 
   setLayerBounds(bounds: Record<string, { x: number; y: number; width: number; height: number; rotation: number }>) {
     setState('layerBounds', bounds);
+  },
+
+  setLeftPanelWidth(width: number) {
+    const clamped = Math.max(180, Math.min(600, Math.round(width)));
+    setState('workspace', 'leftPanelWidth', clamped);
+    persistWorkspace(state.workspace);
+  },
+
+  setRightPanelWidth(width: number) {
+    const clamped = Math.max(240, Math.min(650, Math.round(width)));
+    setState('workspace', 'rightPanelWidth', clamped);
+    persistWorkspace(state.workspace);
+  },
+
+  setTimelineHeight(height: number) {
+    const clamped = Math.max(140, Math.min(600, Math.round(height)));
+    setState('workspace', 'timelineHeight', clamped);
+    persistWorkspace(state.workspace);
+  },
+
+  toggleLeftPanelCollapsed() {
+    setState('workspace', 'leftPanelCollapsed', (prev) => !prev);
+    persistWorkspace(state.workspace);
+  },
+
+  toggleRightPanelCollapsed() {
+    setState('workspace', 'rightPanelCollapsed', (prev) => !prev);
+    persistWorkspace(state.workspace);
+  },
+
+  toggleTimelineCollapsed() {
+    setState('workspace', 'timelineCollapsed', (prev) => !prev);
+    persistWorkspace(state.workspace);
+  },
+
+  resetWorkspaceLayout() {
+    setState('workspace', { ...defaultWorkspace });
+    persistWorkspace(state.workspace);
+    this.addToast('Reset workspace layout to default', 'info');
   },
 
   setInPoint(ms: number | null) {

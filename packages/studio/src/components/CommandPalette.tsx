@@ -57,6 +57,13 @@ export const CommandPalette: Component<CommandPaletteProps> = (props) => {
       shortcut: 'Ctrl+O',
       run: () => props.onOpenLoad(),
     },
+    {
+      id: 'reset-workspace',
+      title: 'View: Reset Default Workspace',
+      description: 'Reset all panel splitters and timeline height to defaults',
+      shortcut: '',
+      run: () => store.resetWorkspaceLayout(),
+    },
   ];
 
   const filteredActions = () => {
