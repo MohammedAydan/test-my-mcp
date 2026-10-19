@@ -131,6 +131,20 @@ export const layerSchema = z.discriminatedUnion("type", [
 export type Layer = z.infer<typeof layerSchema>;
 
 // ---------------------------------------------------------------------------
+// Track Lanes (timeline track lane assignments and metadata)
+// ---------------------------------------------------------------------------
+
+export const trackLaneSchema = z.strictObject({
+  id: idSchema,
+  name: z.string().max(80).optional(),
+  kind: z.enum(["video", "audio"]).default("video"),
+  locked: z.boolean().default(false),
+  muted: z.boolean().default(false),
+  collapsed: z.boolean().default(false),
+});
+export type TrackLane = z.infer<typeof trackLaneSchema>;
+
+// ---------------------------------------------------------------------------
 // SceneSpec
 // ---------------------------------------------------------------------------
 
@@ -150,6 +164,7 @@ export const sceneShapeSchema = z.strictObject({
   durationMs: z.number().int().min(300).max(600_000),
   assets: z.array(assetSchema).max(64).default([]),
   fonts: z.array(fontRefSchema).max(12).default([]),
+  trackLanes: z.array(trackLaneSchema).max(32).optional(),
   layers: z.array(layerSchema).max(40),
   camera: cameraSchema.default({}),
   transitions: z.array(transitionSchema).max(32).default([]),
@@ -176,6 +191,37 @@ export const sceneSpecSchema = sceneShapeSchema
     scene.fonts.forEach((font, i) => {
       if (fontRoles.has(font.role)) fail(["fonts", i, "role"], `duplicate font role "${font.role}"`);
       fontRoles.add(font.role);
+    });
+
+    // unique trackLane ids
+    if (scene.trackLanes) {
+      const trackIds = new Set<string>();
+      scene.trackLanes.forEach((lane, i) => {
+        if (trackIds.has(lane.id)) fail(["trackLanes", i, "id"], `duplicate trackLane id "${lane.id}"`);
+        trackIds.add(lane.id);
+      });
+    }
+
+    // track lane non-overlapping integrity:
+    // layers explicitly assigned to the same track lane cannot overlap in time
+    const trackMap = new Map<number, Array<{ id: string; index: number; start: number; end: number }>>();
+    scene.layers.forEach((layer, i) => {
+      const lane = layer.trackIndex ?? layer.trackLane;
+      if (lane !== undefined) {
+        const start = layer.at;
+        const end = layer.duration !== undefined ? layer.at + layer.duration : scene.durationMs;
+        const existing = trackMap.get(lane) ?? [];
+        for (const prev of existing) {
+          if (Math.max(start, prev.start) < Math.min(end, prev.end)) {
+            fail(
+              ["layers", i, layer.trackIndex !== undefined ? "trackIndex" : "trackLane"],
+              `overlaps layer "${prev.id}" on trackIndex ${lane}: clips sharing the same track lane cannot overlap in time (${start}-${end}ms overlaps ${prev.start}-${prev.end}ms)`
+            );
+          }
+        }
+        existing.push({ id: layer.id, index: i, start, end });
+        trackMap.set(lane, existing);
+      }
     });
 
     // timeline bounds

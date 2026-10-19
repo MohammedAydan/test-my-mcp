@@ -51,6 +51,7 @@ export const COMMON_LAYER_OPTIONAL = [
   "z (stacking order, 0-999; default = array order)",
   "at (start time in ms, default 0)",
   "duration (visible window in ms, default: until scene end)",
+  "trackIndex (0-indexed timeline track lane; non-overlapping clips sharing a trackIndex share a row)",
   "entrance ({ name: <preset>, strength?, staggerMs?, durationMs?, ease?, delayMs? })",
   "emphasis ({ name: <preset>, ... })",
   "exit ({ name: <preset>, ... })",

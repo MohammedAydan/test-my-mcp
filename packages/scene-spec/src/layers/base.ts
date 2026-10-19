@@ -26,6 +26,14 @@ export const layerBaseSchema = z.strictObject({
   z: z.number().int().min(0).max(999).optional(),
   at: msSchema.default(0),
   duration: msSchema.optional(),
+  /**
+   * 0-indexed timeline track lane assignment.
+   * Non-overlapping clips assigned the same trackIndex render on the same timeline track row.
+   * If omitted, the layer renders on its own sequential visual track row.
+   */
+  trackIndex: z.number().int().min(0).max(99).optional(),
+  /** Authoring alias for trackIndex */
+  trackLane: z.number().int().min(0).max(99).optional(),
   /** Rotation in degrees (-360 to 360) around layer center */
   rotation: z.number().min(-360).max(360).optional(),
   /** Optional keyframe property animation tracks */
