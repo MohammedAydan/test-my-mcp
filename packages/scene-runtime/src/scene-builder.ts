@@ -292,11 +292,13 @@ export function applyKeyframeTracks(
     };
 
     const first = sorted[0];
+    if (!first) return;
     gsap.set(target, mapProp(first.value));
 
     for (let i = 1; i < sorted.length; i++) {
       const prev = sorted[i - 1];
       const curr = sorted[i];
+      if (!prev || !curr) continue;
       const durationSec = Math.max(0.001, (curr.at - prev.at) / 1000);
       const startSec = prev.at / 1000;
       const ease = curr.ease || "power2.inOut";

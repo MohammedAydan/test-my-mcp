@@ -1,4 +1,4 @@
-import { Component, For, Show, createSignal, onMount, onCleanup, createMemo } from 'solid-js';
+import { Component, For, Show, createSignal, onMount, onCleanup, createMemo, createEffect } from 'solid-js';
 import { store } from '../store.js';
 import type { StudioLayer } from '../types.js';
 
@@ -107,16 +107,6 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
   // Get layer bounds (from runtime bounds cache or calculated from spec)
   const getLayerBox = (layer: StudioLayer): Rect & { rotation: number } => {
     const cached = state.layerBounds[layer.id];
-    if (cached) {
-      return {
-        x: cached.x,
-        y: cached.y,
-        width: cached.width,
-        height: cached.height,
-        rotation: cached.rotation || (layer as any).rotation || 0,
-      };
-    }
-
     const cW = canvasWidth();
     const cH = canvasHeight();
     const rot = (layer as any).rotation || 0;
@@ -129,20 +119,22 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
     const centerX = (pos.xPct / 100) * cW;
     const centerY = (pos.yPct / 100) * cH;
 
-    let width = 300;
-    let height = 100;
+    let width = cached?.width || 300;
+    let height = cached?.height || 100;
 
-    if (layer.type === 'kineticText') {
-      const size = (layer as any).sizePx || 64;
-      const textLen = (layer as any).text?.length || 10;
-      width = Math.min(cW * 0.7, textLen * size * 0.55);
-      height = size * 1.3;
-    } else if (layer.type === 'card') {
-      width = (layer as any).variant?.widthPx || 360;
-      height = 120;
-    } else if (layer.type === 'imageLogo' || layer.type === 'lottie') {
-      width = (layer as any).widthPx || 200;
-      height = (layer as any).heightPx || width;
+    if (!cached) {
+      if (layer.type === 'kineticText') {
+        const size = (layer as any).sizePx || 64;
+        const textLen = (layer as any).text?.length || 10;
+        width = Math.min(cW * 0.7, textLen * size * 0.55);
+        height = size * 1.3;
+      } else if (layer.type === 'card') {
+        width = (layer as any).variant?.widthPx || 360;
+        height = 120;
+      } else if (layer.type === 'imageLogo' || layer.type === 'lottie') {
+        width = (layer as any).widthPx || 200;
+        height = (layer as any).heightPx || width;
+      }
     }
 
     return {
@@ -150,7 +142,7 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
       y: centerY - height / 2,
       width,
       height,
-      rotation: rot,
+      rotation: cached?.rotation || rot,
     };
   };
 
@@ -270,6 +262,33 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
           e.preventDefault();
           store.setViewportZoom(1);
         }
+      } else if (
+        ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) &&
+        state.selectedLayerId &&
+        state.activeTool === 'select'
+      ) {
+        const sel = primarySelectedLayer();
+        if (sel && (sel as any).position) {
+          e.preventDefault();
+          const step = e.shiftKey ? 2 : 0.5;
+          let dx = 0;
+          let dy = 0;
+          if (e.key === 'ArrowLeft') dx = -step;
+          if (e.key === 'ArrowRight') dx = step;
+          if (e.key === 'ArrowUp') dy = -step;
+          if (e.key === 'ArrowDown') dy = step;
+
+          store.pushHistory(`Nudge layer ${sel.id}`);
+          const newXPct = Math.round(((sel as any).position.xPct + dx) * 10) / 10;
+          const newYPct = Math.round(((sel as any).position.yPct + dy) * 10) / 10;
+          store.setState('scene', 'layers', (l: StudioLayer) => l.id === sel.id, 'position', {
+            xPct: newXPct,
+            yPct: newYPct,
+          });
+          store.setState('dirty', true);
+          store.syncDesktopDirty();
+          store.executeSave();
+        }
       }
     };
 
@@ -286,6 +305,29 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     });
+  });
+
+  // Synchronize iframe layer positions on undo/redo or external scene updates
+  createEffect(() => {
+    const layers = state.scene?.layers;
+    const iframe = props.iframeRef();
+    if (!layers || !iframe?.contentWindow) return;
+    if (dragMode() === 'none') {
+      for (const l of layers) {
+        if ((l as any).position) {
+          iframe.contentWindow.postMessage(
+            {
+              type: 'ephemeralTransform',
+              layerId: l.id,
+              xPct: (l as any).position.xPct,
+              yPct: (l as any).position.yPct,
+              rotation: (l as any).rotation ?? 0,
+            },
+            '*'
+          );
+        }
+      }
+    }
   });
 
   // Pointer event handlers on SVG overlay
@@ -869,31 +911,83 @@ export const CanvasOverlay: Component<{ containerRef: () => HTMLDivElement | und
         {/* SNAP GUIDES */}
         <For each={activeGuides()}>
           {(guide) => {
+            const isCanvasGuide = guide.label?.startsWith('Canvas');
+            const strokeColor = isCanvasGuide ? '#22d3ee' : '#f59e0b';
             if (guide.axis === 'x') {
               const pt = canvasToScreen({ x: guide.pos, y: 0 });
               return (
-                <line
-                  x1={pt.x}
-                  y1={0}
-                  x2={pt.x}
-                  y2="100%"
-                  stroke="#22d3ee"
-                  stroke-width="1.5"
-                  stroke-dasharray="4 4"
-                />
+                <g class="snap-guide-group">
+                  <line
+                    x1={pt.x}
+                    y1={0}
+                    x2={pt.x}
+                    y2="100%"
+                    stroke={strokeColor}
+                    stroke-width="1.5"
+                    stroke-dasharray="4 3"
+                  />
+                  <Show when={guide.label}>
+                    <rect
+                      x={pt.x + 3}
+                      y={16}
+                      width={guide.label!.length * 6.5 + 8}
+                      height={16}
+                      rx={3}
+                      fill="#0c0d12"
+                      fill-opacity="0.85"
+                      stroke={strokeColor}
+                      stroke-width="0.75"
+                    />
+                    <text
+                      x={pt.x + 7}
+                      y={28}
+                      fill={strokeColor}
+                      font-size="9"
+                      font-family="monospace"
+                      font-weight="600"
+                    >
+                      {guide.label}
+                    </text>
+                  </Show>
+                </g>
               );
             } else {
               const pt = canvasToScreen({ x: 0, y: guide.pos });
               return (
-                <line
-                  x1={0}
-                  y1={pt.y}
-                  x2="100%"
-                  y2={pt.y}
-                  stroke="#22d3ee"
-                  stroke-width="1.5"
-                  stroke-dasharray="4 4"
-                />
+                <g class="snap-guide-group">
+                  <line
+                    x1={0}
+                    y1={pt.y}
+                    x2="100%"
+                    y2={pt.y}
+                    stroke={strokeColor}
+                    stroke-width="1.5"
+                    stroke-dasharray="4 3"
+                  />
+                  <Show when={guide.label}>
+                    <rect
+                      x={16}
+                      y={pt.y - 18}
+                      width={guide.label!.length * 6.5 + 8}
+                      height={16}
+                      rx={3}
+                      fill="#0c0d12"
+                      fill-opacity="0.85"
+                      stroke={strokeColor}
+                      stroke-width="0.75"
+                    />
+                    <text
+                      x={20}
+                      y={pt.y - 6}
+                      fill={strokeColor}
+                      font-size="9"
+                      font-family="monospace"
+                      font-weight="600"
+                    >
+                      {guide.label}
+                    </text>
+                  </Show>
+                </g>
               );
             }
           }}

@@ -1,11 +1,28 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItemConstructorOptions, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, MenuItemConstructorOptions, net as electronNet, protocol, shell } from 'electron';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
+import { createEngineCore, EngineCore } from '@motionforge/core-engine';
+
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-gpu-sandbox');
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'mf-vault',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      corsEnabled: true,
+    },
+  },
+]);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,6 +30,7 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 let previewWindow: BrowserWindow | null = null;
 let engineProcess: ChildProcess | null = null;
+let engineCore: EngineCore | null = null;
 let enginePort = 4000;
 let engineUrl = 'http://127.0.0.1:4000';
 let activeProjectPath: string | null = null;
@@ -475,6 +493,34 @@ function registerIpcHandlers(): void {
     isDirty = Boolean(dirtyState);
     updateWindowTitle();
   });
+
+  const ALLOWED_METHODS = new Set([
+    'getCapabilities',
+    'getScene',
+    'saveScene',
+    'deleteScene',
+    'listScenes',
+    'listAssets',
+    'ingestAsset',
+    'inspectKeyframes',
+    'getLayerBounds',
+    'startRender',
+    'getRenderStatus',
+  ]);
+
+  ipcMain.handle('engine:invoke', async (_event, method: string, ...args: unknown[]) => {
+    if (!ALLOWED_METHODS.has(method)) {
+      throw new Error(`Unauthorized IPC call: method "${method}" is not allowlisted.`);
+    }
+    if (!engineCore) {
+      throw new Error('EngineCore is not initialized.');
+    }
+    const fn = (engineCore as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[method];
+    if (typeof fn !== 'function') {
+      throw new Error(`Method "${method}" not found on EngineCore.`);
+    }
+    return await fn.apply(engineCore, args);
+  });
 }
 
 async function createMainWindow(): Promise<void> {
@@ -547,7 +593,55 @@ app.whenReady().then(async () => {
   loadRecentProjects();
   registerIpcHandlers();
   buildAppMenu();
+
+  protocol.handle('mf-vault', async (request) => {
+    try {
+      if (!engineCore) {
+        return new Response('Engine not initialized', { status: 503 });
+      }
+      const url = new URL(request.url);
+      const host = url.hostname;
+      const pathname = url.pathname.replace(/^\/+/, '');
+      const assetRel = decodeURIComponent(host ? `${host}/${pathname}` : pathname);
+      const filePath = path.join(engineCore.paths.vaultDir, assetRel);
+      if (!existsSync(filePath)) {
+        return new Response('Asset not found in vault', { status: 404 });
+      }
+      return electronNet.fetch(pathToFileURL(filePath).toString(), {
+        headers: request.headers,
+      });
+    } catch (err) {
+      console.error('[mf-vault] Error serving asset:', err);
+      return new Response('Asset error', { status: 500 });
+    }
+  });
+
   await spawnCoreEngine();
+
+  try {
+    engineCore = await createEngineCore({ port: enginePort });
+    console.log('[desktop] EngineCore in-process domain logic initialized');
+
+    const forwardEvent = (eventName: string, payload: unknown) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('engine:event', { eventName, payload });
+      }
+    };
+    const domainEvents = [
+      'render:progress',
+      'render:completed',
+      'render:failed',
+      'scene:updated',
+      'scene:deleted',
+      'vault:updated',
+    ];
+    for (const ev of domainEvents) {
+      engineCore.on(ev, (payload) => forwardEvent(ev, payload));
+    }
+  } catch (err) {
+    console.error('[desktop] Failed to initialize in-process EngineCore:', err);
+  }
+
   await createMainWindow();
 
   app.on('activate', () => {
@@ -558,6 +652,10 @@ app.whenReady().then(async () => {
 });
 
 function terminateEngine(): void {
+  if (engineCore) {
+    engineCore.dispose().catch(() => undefined);
+    engineCore = null;
+  }
   if (engineProcess && !engineProcess.killed) {
     console.log('[desktop] Terminating core-engine child process');
     try {

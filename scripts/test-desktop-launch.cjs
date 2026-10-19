@@ -6,7 +6,7 @@ async function testDesktop() {
   console.log('=== RUNNING ELECTRON DESKTOP VERIFICATION ===\n');
 
   const app = await electron.launch({
-    args: [path.resolve(__dirname, '../packages/desktop/out/main/index.js')],
+    args: ['--no-sandbox', path.resolve(__dirname, '../packages/desktop/out/main/index.js')],
     env: {
       ...process.env,
       MOTIONFORGE_ENGINE_URL: 'http://127.0.0.1:4000',

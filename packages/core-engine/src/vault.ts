@@ -32,11 +32,66 @@ export function sanitizeVaultName(name: string): string | null {
   return trimmed;
 }
 
+export interface AssetVaultItem {
+  id: string;
+  name: string;
+  src: string;
+  kind: "image" | "video" | "audio" | "lottie" | "unknown";
+  size: number;
+  mimeType: string;
+  updatedAt: number;
+  projectPath?: string;
+}
+
 export async function ensureDirs(paths: EnginePaths): Promise<void> {
   await Promise.all([
     fsp.mkdir(paths.vaultDir, { recursive: true }),
     fsp.mkdir(paths.rendersDir, { recursive: true }),
+    fsp.mkdir(paths.storageDir ?? path.join(paths.dataDir, "scenes"), { recursive: true }),
   ]);
+}
+
+export async function listVaultAssets(paths: EnginePaths): Promise<AssetVaultItem[]> {
+  const results: AssetVaultItem[] = [];
+  if (!existsSync(paths.vaultDir)) return results;
+
+  async function scanDir(dir: string, prefix = ""): Promise<void> {
+    let entries: import("node:fs").Dirent[] = [];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") || entry.name.includes(".tmp")) continue;
+      const fullPath = path.join(dir, entry.name);
+      const relName = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await scanDir(fullPath, relName);
+      } else if (entry.isFile()) {
+        const stat = await fsp.stat(fullPath);
+        const ext = path.extname(entry.name).toLowerCase();
+        let kind: AssetVaultItem["kind"] = "unknown";
+        if ([".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif"].includes(ext)) kind = "image";
+        else if ([".mp4", ".webm", ".mov"].includes(ext)) kind = "video";
+        else if ([".mp3", ".ogg", ".wav"].includes(ext)) kind = "audio";
+        else if ([".json"].includes(ext)) kind = "lottie";
+
+        results.push({
+          id: relName,
+          name: entry.name,
+          src: `vault:${relName}`,
+          kind,
+          size: stat.size,
+          mimeType: mimeFor(entry.name),
+          updatedAt: Math.round(stat.mtimeMs),
+        });
+      }
+    }
+  }
+
+  await scanDir(paths.vaultDir);
+  return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function vaultFilePath(paths: EnginePaths, name: string): string {

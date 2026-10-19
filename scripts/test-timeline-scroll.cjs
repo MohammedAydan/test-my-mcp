@@ -6,7 +6,7 @@ async function testTimelineScroll() {
   console.log('=== DA-002: TIMELINE VERTICAL SCROLLING VERIFICATION ===\n');
 
   const app = await electron.launch({
-    args: [path.resolve(__dirname, '../packages/desktop/out/main/index.js')],
+    args: ['--no-sandbox', path.resolve(__dirname, '../packages/desktop/out/main/index.js')],
     env: {
       ...process.env,
       MOTIONFORGE_ENGINE_URL: 'http://127.0.0.1:4000',
@@ -91,8 +91,8 @@ async function testTimelineScroll() {
     const container = document.getElementById('timeline-tracks-scroll');
     const cRect = container.getBoundingClientRect();
 
-    const el1 = document.querySelector('[data-layer-id="layer-1"]');
-    const el10 = document.querySelector('[data-layer-id="layer-10"]');
+    const el1 = container.querySelector('[data-layer-id="layer-1"]');
+    const el10 = container.querySelector('[data-layer-id="layer-10"]');
 
     const r1 = el1.getBoundingClientRect();
     const r10 = el10.getBoundingClientRect();
@@ -156,8 +156,8 @@ async function testTimelineScroll() {
     const container = document.getElementById('timeline-tracks-scroll');
     const cRect = container.getBoundingClientRect();
 
-    const el1 = document.querySelector('[data-layer-id="layer-1"]');
-    const el10 = document.querySelector('[data-layer-id="layer-10"]');
+    const el1 = container.querySelector('[data-layer-id="layer-1"]');
+    const el10 = container.querySelector('[data-layer-id="layer-10"]');
 
     const r1 = el1.getBoundingClientRect();
     const r10 = el10.getBoundingClientRect();

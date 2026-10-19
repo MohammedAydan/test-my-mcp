@@ -7,17 +7,18 @@
    ============================================================ */
 
 :root {
-  /* Surfaces — layered near-black with a slight cool tint for video content to pop */
-  --bg-0:      #0a0a0f;   /* app background */
-  --bg-1:      #101017;   /* panels */
-  --bg-2:      #18181f;   /* elevated cards, inputs */
-  --bg-3:      #22222c;   /* hover states, dividers */
-  --bg-4:      #2c2c38;   /* pressed, active borders */
+  /* Surfaces — layered high-contrast professional NLE dark surfaces */
+  --bg-0:      #0c0d12;   /* app background & canvas backdrop */
+  --bg-1:      #161822;   /* panel surfaces */
+  --bg-2:      #1e212d;   /* elevated cards, inputs */
+  --bg-3:      #252839;   /* hover states, dividers */
+  --bg-4:      #2d3045;   /* pressed, active borders */
 
   /* Borders */
-  --border:        rgba(255, 255, 255, 0.06);
-  --border-strong: rgba(255, 255, 255, 0.12);
+  --border:        #252839;
+  --border-strong: #373b52;
   --border-focus:  #f59e0b;
+  --keyframe:      #6366f1;
 
   /* Text */
   --text-1: #f1f5f9;      /* primary */

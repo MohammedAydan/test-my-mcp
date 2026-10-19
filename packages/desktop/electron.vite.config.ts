@@ -4,9 +4,10 @@ import { resolve } from 'path';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['@motionforge/core-engine', '@motionforge/scene-spec'] })],
     build: {
       rollupOptions: {
+        external: ['playwright', 'playwright-core', 'fsevents'],
         input: {
           index: resolve(__dirname, 'src/main.ts'),
         },
@@ -14,7 +15,7 @@ export default defineConfig({
     },
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({ exclude: ['@motionforge/core-engine', '@motionforge/scene-spec'] })],
     build: {
       rollupOptions: {
         input: {

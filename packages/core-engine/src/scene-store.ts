@@ -14,9 +14,9 @@
  * Writes go through a temp file + `rename`, which is atomic on POSIX: a reader
  * (or a crash) can never observe a half-written scene.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { validateScene, type SceneSpec } from "@motionforge/scene-spec";
@@ -89,16 +89,29 @@ export class SceneStore {
   /** files that failed to hydrate, surfaced so a broken scene is never silent */
   readonly loadIssues: SceneStoreLoadIssue[] = [];
 
+  private readonly dataDir: string | null = null;
+  private readonly _scenesDir: string | null = null;
+
   /**
-   * @param dataDir `packages/core-engine/data`. Pass `null` for a purely
+   * @param dataDir `packages/core-engine/data` or `{ dataDir, scenesDir }`. Pass `null` for a purely
    *   in-memory store (tests that do not care about persistence).
    */
-  constructor(private readonly dataDir: string | null = null) {
+  constructor(
+    dataDirOrOptions: string | null | { dataDir?: string | null; scenesDir?: string | null } = null
+  ) {
     this.bus.setMaxListeners(0);
+    if (typeof dataDirOrOptions === "string" || dataDirOrOptions === null) {
+      this.dataDir = dataDirOrOptions;
+      this._scenesDir = dataDirOrOptions ? path.join(dataDirOrOptions, "scenes") : null;
+    } else {
+      this.dataDir = dataDirOrOptions.dataDir ?? null;
+      this._scenesDir =
+        dataDirOrOptions.scenesDir ?? (this.dataDir ? path.join(this.dataDir, "scenes") : null);
+    }
   }
 
   get scenesDir(): string | null {
-    return this.dataDir ? path.join(this.dataDir, "scenes") : null;
+    return this._scenesDir;
   }
 
   /**
@@ -189,9 +202,40 @@ export class SceneStore {
     };
     const target = path.join(dir, `${sanitize(entry.scene.id)}.json`);
     // temp file + rename: a reader can never see a partially written scene
-    const tmp = `${target}.${process.pid}.tmp`;
+    const tmp = `${target}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
     await writeFile(tmp, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
     await rename(tmp, target);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const existing = this.scenes.get(id);
+    if (!existing) return false;
+    this.scenes.delete(id);
+    if (this.scenesDir && existing.scene.id) {
+      const target = path.join(this.scenesDir, `${sanitize(existing.scene.id)}.json`);
+      try {
+        await unlink(target);
+      } catch {
+        // file might not exist on disk, ignore
+      }
+    }
+    this.bus.emit(`scene:${id}`, { type: "deleted" });
+    return true;
+  }
+
+  /** Synchronize an entry from external process watcher */
+  setEntry(id: string, entry: StoredScene): void {
+    this.scenes.set(id, entry);
+    this.bus.emit(`scene:${id}`, { type: "updated" });
+  }
+
+  /** Remove an entry from external process watcher */
+  removeEntry(id: string): boolean {
+    const removed = this.scenes.delete(id);
+    if (removed) {
+      this.bus.emit(`scene:${id}`, { type: "deleted" });
+    }
+    return removed;
   }
 
   get(id: string): StoredScene | undefined {

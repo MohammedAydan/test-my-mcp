@@ -29,10 +29,30 @@ const api: MotionForgeAPI = {
   setDirty: (dirty: boolean) => ipcRenderer.send('motionforge:set-dirty', dirty),
 };
 
+export interface MotionForgeEngineBridge {
+  invoke: (method: string, ...args: unknown[]) => Promise<unknown>;
+  onEvent: (callback: (event: { eventName: string; payload: unknown }) => void) => () => void;
+}
+
+const engineBridge: MotionForgeEngineBridge = {
+  invoke: (method: string, ...args: unknown[]) => {
+    return ipcRenderer.invoke('engine:invoke', method, ...args);
+  },
+  onEvent: (callback) => {
+    const handler = (_event: IpcRendererEvent, data: { eventName: string; payload: unknown }) => {
+      callback(data);
+    };
+    ipcRenderer.on('engine:event', handler);
+    return () => ipcRenderer.removeListener('engine:event', handler);
+  },
+};
+
 contextBridge.exposeInMainWorld('motionforge', api);
+contextBridge.exposeInMainWorld('motionforgeEngine', engineBridge);
 
 declare global {
   interface Window {
     motionforge?: MotionForgeAPI;
+    motionforgeEngine?: MotionForgeEngineBridge;
   }
 }

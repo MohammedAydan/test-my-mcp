@@ -110,7 +110,8 @@ export const App: Component = () => {
     }
   };
 
-  (window as unknown as { loadDemoScene: () => Promise<void> }).loadDemoScene = loadDemoScene;
+  (window as unknown as { loadDemoScene: () => Promise<void>; __mf_loadDemoScene: () => Promise<void> }).loadDemoScene = loadDemoScene;
+  (window as unknown as { loadDemoScene: () => Promise<void>; __mf_loadDemoScene: () => Promise<void> }).__mf_loadDemoScene = loadDemoScene;
 
   const executeSave = async () => {
     await store.executeSave();
@@ -225,6 +226,35 @@ export const App: Component = () => {
     const lastSceneId = localStorage.getItem('motionforge_last_scene');
     if (lastSceneId) {
       await loadScene(lastSceneId);
+    }
+
+    // Bi-directional IPC domain event bus
+    if (typeof window !== 'undefined' && window.motionforgeEngine?.onEvent) {
+      const unsub = window.motionforgeEngine.onEvent(async (evt) => {
+        if (evt.eventName === 'scene:updated') {
+          const payload = evt.payload as { sceneId: string; source: string };
+          if (payload.sceneId === state.sceneId && payload.source === 'external') {
+            store.addToast(`Scene updated externally by MCP/AI`, 'info');
+            await loadScene(payload.sceneId);
+          }
+        } else if (evt.eventName === 'scene:deleted') {
+          const payload = evt.payload as { sceneId: string };
+          if (payload.sceneId === state.sceneId) {
+            store.addToast(`Scene "${payload.sceneId}" was deleted`, 'warning');
+            store.setScene(null);
+          }
+        } else if (evt.eventName === 'render:progress') {
+          const payload = evt.payload as { jobId: string; progressPct: number };
+          store.addToast(`Render ${payload.jobId}: ${payload.progressPct}%`, 'info');
+        } else if (evt.eventName === 'render:completed') {
+          const payload = evt.payload as { jobId: string; outputPath: string };
+          store.addToast(`Render finished: ${payload.outputPath}`, 'success');
+        } else if (evt.eventName === 'render:failed') {
+          const payload = evt.payload as { jobId: string; error: string };
+          store.addToast(`Render failed: ${payload.error}`, 'error');
+        }
+      });
+      onCleanup(() => unsub());
     }
 
     // 3. Electron menu integration

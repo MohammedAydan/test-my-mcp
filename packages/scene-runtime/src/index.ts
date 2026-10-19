@@ -97,6 +97,11 @@ async function boot(): Promise<void> {
       { type: "motionforge:ready", fps, durationMs: scene.durationMs },
       "*"
     );
+    const initialBounds = computeLayerBounds();
+    window.parent?.postMessage(
+      { type: "layerBounds", frame: 0, bounds: initialBounds },
+      "*"
+    );
   } catch (error) {
     showError(error instanceof Error ? error.message : String(error));
     readyResolve();
@@ -114,6 +119,11 @@ async function boot(): Promise<void> {
       if (window.seekToFrame) {
         await window.seekToFrame(targetFrame);
       }
+      const bounds = computeLayerBounds();
+      window.parent?.postMessage(
+        { type: "layerBounds", frame: targetFrame, bounds },
+        "*"
+      );
     } else if (data.type === "motionforge:play") {
       if (mounted) {
         mounted.tl.play();
@@ -148,6 +158,8 @@ async function boot(): Promise<void> {
         if (typeof rotation === "number") {
           contentEl.style.transform = `translate(-50%, -50%)${rotation ? ` rotate(${rotation}deg)` : ""}`;
         }
+        const bounds = computeLayerBounds();
+        window.parent?.postMessage({ type: "layerBounds", bounds }, "*");
       }
     }
   });

@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -102,7 +103,7 @@ async function muxAudio(
   }
 }
 
-export class RenderRunner {
+export class RenderRunner extends EventEmitter {
   private queue: RenderJob[] = [];
   private running = false;
   private readonly pool = new RendererPool();
@@ -113,7 +114,10 @@ export class RenderRunner {
     private readonly paths: EnginePaths,
     private readonly store: SceneStore,
     private readonly log: (msg: string) => void
-  ) {}
+  ) {
+    super();
+    this.setMaxListeners(0);
+  }
 
   get jobsAll(): RenderJob[] {
     return [...this.jobs.values()].sort((a, b) => (a.id < b.id ? 1 : -1));
@@ -151,6 +155,11 @@ export class RenderRunner {
       job.status = "failed";
       job.error = error instanceof Error ? error.message : String(error);
       this.log(`render ${job.id} failed: ${job.error}`);
+      this.emit("failed", {
+        jobId: job.id,
+        sceneId: job.sceneId,
+        error: job.error,
+      });
     } finally {
       this.running = false;
       void this.drain();
@@ -182,6 +191,13 @@ export class RenderRunner {
         onProgress: (n) => {
           framesDone += n;
           job.progress = Math.min(0.9, framesDone / totalFrames);
+          this.emit("progress", {
+            jobId: job.id,
+            sceneId: job.sceneId,
+            progressPct: Math.round(job.progress * 100),
+            currentFrame: framesDone,
+            totalFrames,
+          });
         },
       });
 
@@ -222,6 +238,12 @@ export class RenderRunner {
         profile,
         workerCount,
       };
+      this.emit("completed", {
+        jobId: job.id,
+        sceneId: job.sceneId,
+        outputPath: mp4Path,
+        durationMs: wallMs,
+      });
     } finally {
       await rm(jobDir, { recursive: true, force: true }).catch(() => undefined);
     }

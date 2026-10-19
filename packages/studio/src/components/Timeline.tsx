@@ -43,6 +43,7 @@ export const Timeline: Component = () => {
   let dragInitialDuration = 0;
   let dragKeyframeInfo: { layerId: string; property: string; index: number; initialAt: number } | null = null;
   let hasDragged = false;
+  let activeDragTooltip: { x: number; y: number; text: string } | null = null;
   const edgeHoverZone = 6;
 
   // Standard keyframable properties per layer type
@@ -208,6 +209,18 @@ export const Timeline: Component = () => {
       }
 
       tracksMap.get(targetIdx)!.layers.push(layer);
+    }
+
+    if (state.scene?.audio?.cues && state.scene.audio.cues.length > 0) {
+      const audioIdx = tracksMap.size > 0 ? Math.max(...Array.from(tracksMap.keys())) + 1 : 0;
+      tracksMap.set(audioIdx, {
+        index: audioIdx,
+        name: `Audio & SFX (${state.scene.audio.cues.length} cues)`,
+        kind: 'audio',
+        layers: [],
+        y: 0,
+        h: TRACK_H,
+      });
     }
 
     const sortedTracks = Array.from(tracksMap.values()).sort((a, b) => a.index - b.index);
@@ -393,6 +406,55 @@ export const Timeline: Component = () => {
         }
       }
     }
+
+    // Audio Tracks & Procedural Waveforms
+    const audioTrack = tracks.find((t) => t.kind === 'audio');
+    if (audioTrack && state.scene?.audio?.cues) {
+      const audioCues = state.scene.audio.cues;
+      const sfxDurMap: Record<string, number> = {
+        whoosh: 1200,
+        riser: 3000,
+        shimmer: 2200,
+        pop: 500,
+        subImpact: 1800,
+        click: 300,
+      };
+
+      for (const cue of audioCues) {
+        const cueX1 = timeToX(cue.at);
+        const cueDur = sfxDurMap[cue.sfx] || 1500;
+        const cueX2 = timeToX(cue.at + cueDur);
+        const cueW = Math.max(24, cueX2 - cueX1);
+
+        // Audio clip background
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.18)';
+        ctx.fillRect(cueX1, audioTrack.y + 1, cueW, audioTrack.h - 2);
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cueX1, audioTrack.y + 1, cueW, audioTrack.h - 2);
+
+        // Procedural Audio Waveform
+        const centerY = audioTrack.y + audioTrack.h / 2 + 3;
+        const barSpacing = 3;
+        const numBars = Math.floor(cueW / barSpacing);
+        ctx.fillStyle = '#34d399';
+
+        for (let b = 0; b < numBars; b++) {
+          const barX = cueX1 + b * barSpacing;
+          const progress = b / numBars;
+          const envelope = Math.sin(progress * Math.PI);
+          const noise = Math.sin(b * 12.9898 + (cue.at % 100)) * 0.5 + 0.5;
+          const barHeight = Math.max(2, (audioTrack.h * 0.5) * envelope * (0.3 + 0.7 * noise) * (cue.gain ?? 1));
+          ctx.fillRect(barX, centerY - barHeight / 2, 1.5, barHeight);
+        }
+
+        // Clip label
+        ctx.fillStyle = '#f1f5f9';
+        ctx.font = '600 9px monospace';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`🔊 ${cue.sfx}`, cueX1 + 4, audioTrack.y + 3);
+      }
+    }
     ctx.restore();
 
     // 4. Ruler Header (pinned on top)
@@ -453,6 +515,33 @@ export const Timeline: Component = () => {
     ctx.lineTo(playheadX - 6, RULER_H - 6);
     ctx.closePath();
     ctx.fill();
+
+    // 6. Floating Drag / Trim Delta Tooltip
+    if (activeDragTooltip) {
+      const txt = activeDragTooltip.text;
+      ctx.font = '600 11px JetBrains Mono, monospace';
+      const textMetrics = ctx.measureText(txt);
+      const boxW = textMetrics.width + 16;
+      const boxH = 22;
+      const tipX = Math.max(10, Math.min(w - boxW - 10, activeDragTooltip.x - boxW / 2));
+      const tipY = Math.max(RULER_H + 6, activeDragTooltip.y - 28);
+
+      ctx.fillStyle = '#161822';
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      if ((ctx as any).roundRect) {
+        (ctx as any).roundRect(tipX, tipY, boxW, boxH, 4);
+      } else {
+        ctx.rect(tipX, tipY, boxW, boxH);
+      }
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#f59e0b';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(txt, tipX + 8, tipY + boxH / 2);
+    }
   };
 
   createEffect(() => {
@@ -719,6 +808,11 @@ export const Timeline: Component = () => {
           const requestedAt = dragInitialAt + deltaMs;
           const newAt = Math.max(minBoundaryAt, Math.min(maxAllowedAt, requestedAt));
           store.setState('scene', 'layers', (l: StudioLayer) => l.id === dragLayer!.id, 'at', newAt);
+          activeDragTooltip = {
+            x,
+            y,
+            text: `${deltaMs >= 0 ? `+${deltaMs}` : `${deltaMs}`}ms (${(newAt / 1000).toFixed(2)}s)`,
+          };
         } else if (dragMode === 'trim-left') {
           const maxAllowedAt = (dragInitialAt + dragInitialDuration) - 200;
           const requestedAt = dragInitialAt + deltaMs;
@@ -728,11 +822,21 @@ export const Timeline: Component = () => {
             at: newAt,
             duration: newDur,
           });
+          activeDragTooltip = {
+            x,
+            y,
+            text: `Trim Start: ${deltaMs >= 0 ? `+${deltaMs}` : `${deltaMs}`}ms (${(newDur / 1000).toFixed(2)}s)`,
+          };
         } else if (dragMode === 'trim-right') {
           const maxAllowedDur = Math.max(200, maxBoundaryEnd - dragInitialAt);
           const requestedDur = dragInitialDuration + deltaMs;
           const newDur = Math.max(200, Math.min(maxAllowedDur, requestedDur));
           store.setState('scene', 'layers', (l: StudioLayer) => l.id === dragLayer!.id, 'duration', newDur);
+          activeDragTooltip = {
+            x,
+            y,
+            text: `Trim End: ${deltaMs >= 0 ? `+${deltaMs}` : `${deltaMs}`}ms (${(newDur / 1000).toFixed(2)}s)`,
+          };
         }
         return;
       }
@@ -782,7 +886,7 @@ export const Timeline: Component = () => {
           const x2 = timeToX((item.layer.at || 0) + layerDur);
 
           if (Math.abs(x - x1) <= edgeHoverZone || Math.abs(x - x2) <= edgeHoverZone) {
-            hoveredCursor = 'ew-resize';
+            hoveredCursor = 'col-resize';
             break;
           } else if (x >= x1 && x <= x2) {
             hoveredCursor = 'move';
@@ -801,6 +905,7 @@ export const Timeline: Component = () => {
         store.executeSave();
       }
       hasDragged = false;
+      activeDragTooltip = null;
       isDraggingPlayhead = false;
       isPanning = false;
       dragMode = null;

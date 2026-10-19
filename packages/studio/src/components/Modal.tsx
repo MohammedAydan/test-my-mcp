@@ -26,6 +26,74 @@ export const Modal: Component<ModalProps> = (props) => {
   const [inspectFrames, setInspectFrames] = createSignal<Array<{ atMs: number; preview: string }>>([]);
   const [inspectLoading, setInspectLoading] = createSignal(false);
 
+  // Available scenes from engine
+  const [availableScenes, setAvailableScenes] = createSignal<
+    Array<{ id: string; name: string; revision: number; durationMs: number; layerCount: number }>
+  >([]);
+
+  createEffect(async () => {
+    if (state.activeModal === 'load') {
+      try {
+        const scenes = await api.listScenes();
+        setAvailableScenes(scenes as any);
+      } catch {
+        setAvailableScenes([]);
+      }
+    }
+  });
+
+  const [shortcutSearch, setShortcutSearch] = createSignal('');
+
+  const ALL_SHORTCUTS = [
+    { cat: 'Transport & Playback', key: 'Space', desc: 'Toggle Play / Pause playback' },
+    { cat: 'Transport & Playback', key: 'J / K / L', desc: 'Shuttle reverse / Pause / Shuttle forward (1x, 2x, 4x)' },
+    { cat: 'Transport & Playback', key: '← / →', desc: 'Step 1 frame backward / forward (Shift = 1 second)' },
+    { cat: 'Transport & Playback', key: 'Home / End', desc: 'Jump playhead to start / end of timeline' },
+    { cat: 'Timeline Editing', key: 'I / O', desc: 'Set In-point / Set Out-point work area marks' },
+    { cat: 'Timeline Editing', key: 'X', desc: 'Mark In & Out around selected layer duration' },
+    { cat: 'Timeline Editing', key: 'Ctrl+K', desc: 'Razor / Split clip at current playhead position' },
+    { cat: 'Timeline Editing', key: 'Shift+Delete', desc: 'Ripple delete selected clip (closes track gap)' },
+    { cat: 'Timeline Editing', key: 'Delete / Backspace', desc: 'Delete selected layer or keyframe' },
+    { cat: 'Tools & Canvas', key: 'V', desc: 'Select / Pointer tool (canvas move, rotate, resize)' },
+    { cat: 'Tools & Canvas', key: 'H', desc: 'Hand tool (pan canvas viewport)' },
+    { cat: 'Tools & Canvas', key: 'Space + Drag', desc: 'Temporary pan canvas from any active tool' },
+    { cat: 'Tools & Canvas', key: 'Ctrl + Scroll', desc: 'Zoom canvas monitor or timeline view' },
+    { cat: 'Tools & Canvas', key: 'Shift + Drag', desc: '10x scrub multiplier / Axis-locked canvas drag' },
+    { cat: 'Tools & Canvas', key: 'Alt + Drag', desc: '0.1x fine precision multiplier on numeric inputs' },
+    { cat: 'Project & System', key: 'Ctrl+Z / Ctrl+Shift+Z', desc: 'Undo / Redo up to 50 operations' },
+    { cat: 'Project & System', key: 'Ctrl+S', desc: 'Save scene & project immediately' },
+    { cat: 'Project & System', key: 'Ctrl+D', desc: 'Duplicate selected layer' },
+    { cat: 'Project & System', key: 'F', desc: 'Toggle Fullscreen preview canvas' },
+    { cat: 'Project & System', key: '?', desc: 'Open this Keyboard Shortcuts cheat sheet' },
+  ];
+
+  const filteredShortcuts = () => {
+    const q = shortcutSearch().toLowerCase().trim();
+    if (!q) return ALL_SHORTCUTS;
+    return ALL_SHORTCUTS.filter(
+      (s) =>
+        s.key.toLowerCase().includes(q) ||
+        s.desc.toLowerCase().includes(q) ||
+        s.cat.toLowerCase().includes(q)
+    );
+  };
+
+  const handleDeleteScene = async (id: string, e: MouseEvent) => {
+    e.stopPropagation();
+    if (confirm(`Are you sure you want to delete scene "${id}"? This will remove it from the engine and disk.`)) {
+      try {
+        await api.deleteScene(id);
+        setAvailableScenes((prev) => prev.filter((s) => s.id !== id));
+        store.addToast(`Deleted scene "${id}"`, 'info');
+        if (state.sceneId === id) {
+          store.setScene(null);
+        }
+      } catch (err: any) {
+        store.addToast(`Failed to delete scene: ${err?.message}`, 'error');
+      }
+    }
+  };
+
   const close = () => {
     store.setActiveModal(null);
     setRenderJobId(null);
@@ -201,11 +269,61 @@ export const Modal: Component<ModalProps> = (props) => {
                 </button>
               </div>
             </div>
+            <Show when={availableScenes().length > 0}>
+              <div class="modal-subtitle" style="margin-bottom: 8px;">
+                Stored Scenes in Engine:
+              </div>
+              <div style="max-height: 180px; overflow-y: auto; margin-bottom: 16px;">
+                <For each={availableScenes()}>
+                  {(sc) => (
+                    <div
+                      class="mf-context-item"
+                      style="display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; margin-bottom: 4px; background: var(--bg-2); border-radius: var(--radius); cursor: pointer;"
+                      onClick={() => {
+                        close();
+                        props.onLoadScene(sc.id);
+                      }}
+                    >
+                      <div style="display: flex; flex-direction: column; min-width: 0;">
+                        <span style="font-weight: 500; font-size: 13px;">{sc.name || sc.id}</span>
+                        <span style="font-size: 11px; color: var(--text-3); font-family: monospace;">
+                          {sc.id} · {sc.layerCount}L · {sc.durationMs}ms · rev {sc.revision}
+                        </span>
+                      </div>
+                      <div style="display: flex; align-items: center; gap: 6px;">
+                        <button
+                          class="toolbar-btn"
+                          style="color: var(--accent); padding: 4px 8px; font-size: 11px;"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            close();
+                            props.onLoadScene(sc.id);
+                          }}
+                        >
+                          Open
+                        </button>
+                        <button
+                          class="toolbar-btn"
+                          id={`btn-delete-scene-${sc.id}`}
+                          title="Delete Scene"
+                          style="color: #ef4444; padding: 4px 6px;"
+                          onClick={(e) => handleDeleteScene(sc.id, e)}
+                        >
+                          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
             <Show when={state.recentScenes.length > 0}>
               <div class="modal-subtitle" style="margin-bottom: 8px;">
                 Recent Scenes:
               </div>
-              <div style="max-height: 160px; overflow-y: auto;">
+              <div style="max-height: 140px; overflow-y: auto;">
                 <For each={state.recentScenes}>
                   {(rec) => (
                     <div
@@ -384,38 +502,37 @@ export const Modal: Component<ModalProps> = (props) => {
             <p class="modal-subtitle">Quick reference for all navigation, transport, and editing hotkeys</p>
           </div>
           <div class="modal-body">
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-              <tbody>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 6px 0; font-weight: 600;">Space</td>
-                  <td style="padding: 6px 0; color: var(--text-2);">Play / Pause playback</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 6px 0; font-weight: 600;">← / →</td>
-                  <td style="padding: 6px 0; color: var(--text-2);">Step frame backward / forward (100ms)</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 6px 0; font-weight: 600;">Ctrl+Z / Ctrl+Shift+Z</td>
-                  <td style="padding: 6px 0; color: var(--text-2);">Undo / Redo up to 50 operations</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 6px 0; font-weight: 600;">Ctrl+D</td>
-                  <td style="padding: 6px 0; color: var(--text-2);">Duplicate selected layer</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 6px 0; font-weight: 600;">Delete / Backspace</td>
-                  <td style="padding: 6px 0; color: var(--text-2);">Delete selected layer</td>
-                </tr>
-                <tr style="border-bottom: 1px solid var(--border);">
-                  <td style="padding: 6px 0; font-weight: 600;">Ctrl+K</td>
-                  <td style="padding: 6px 0; color: var(--text-2);">Open Command Palette</td>
-                </tr>
-                <tr>
-                  <td style="padding: 6px 0; font-weight: 600;">F</td>
-                  <td style="padding: 6px 0; color: var(--text-2);">Toggle Fullscreen Preview</td>
-                </tr>
-              </tbody>
-            </table>
+            <div style="margin-bottom: 12px;">
+              <input
+                type="text"
+                class="insp-input"
+                placeholder="Search shortcuts..."
+                style="width: 100%; padding: 6px 10px; font-size: 12px;"
+                value={shortcutSearch()}
+                onInput={(e) => setShortcutSearch(e.currentTarget.value)}
+              />
+            </div>
+            <div style="max-height: 320px; overflow-y: auto;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                <tbody>
+                  <For each={filteredShortcuts()}>
+                    {(item) => (
+                      <tr style="border-bottom: 1px solid var(--border);">
+                        <td style="padding: 6px 4px; font-weight: 600; font-family: monospace; color: var(--primary); white-space: nowrap;">
+                          {item.key}
+                        </td>
+                        <td style="padding: 6px 8px; color: var(--text-1);">
+                          {item.desc}
+                        </td>
+                        <td style="padding: 6px 4px; color: var(--text-3); font-size: 10px; text-align: right; white-space: nowrap;">
+                          {item.cat}
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </div>
           </div>
           <div class="modal-actions">
             <button class="modal-btn primary-btn" onClick={close}>

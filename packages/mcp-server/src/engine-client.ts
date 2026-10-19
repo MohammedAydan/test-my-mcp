@@ -1,11 +1,37 @@
 /**
- * HTTP client for core-engine. The MCP adapter owns no scene logic — every
- * capability comes from the engine over the wire.
+ * In-process or HTTP client for core-engine.
+ * When MOTIONFORGE_ENGINE_URL is not set, invokes EngineCore directly in-process
+ * without any REST APIs, resolving to the shared ~/.motionforge canonical path.
  */
+import { readFile } from "node:fs/promises";
+import {
+  createEngineCore,
+  initCreativeProject,
+  saveFramesMetaToDisk,
+  saveRenderToDisk,
+  saveStillsToDisk,
+  type EngineCore,
+} from "@motionforge/core-engine";
+
 export const ENGINE_URL = process.env.MOTIONFORGE_ENGINE_URL ?? "http://127.0.0.1:4000";
 
+let inProcessCore: EngineCore | null = null;
+
+async function getInProcessCore(): Promise<EngineCore> {
+  if (!inProcessCore) {
+    inProcessCore = await createEngineCore({
+      enableWatcher: true,
+    });
+  }
+  return inProcessCore;
+}
+
+function useHttp(): boolean {
+  return Boolean(process.env.MOTIONFORGE_ENGINE_URL);
+}
+
 /**
- * An engine HTTP failure. The class carries DATA (status + body issues); prefixing
+ * An engine failure. The class carries DATA (status + body issues); prefixing
  * is the presenter's job, so callers can format it without doubling the status.
  */
 export class EngineError extends Error {
@@ -83,11 +109,6 @@ export interface KeyframeFrame {
   /**
    * A lightweight JPEG preview (data:image/jpeg;base64,…) — the copy that is
    * safe to put in an MCP response.
-   *
-   * MCP over stdio is a PIPE with a bounded buffer. Twelve full-resolution
-   * 1080p PNGs are ~15 MB of base64; that overflows the pipe, the client closes
-   * its end, and the server dies with an unhandled `write EPIPE`. The preview
-   * is the same frame at ~1/20th the size.
    */
   preview: string;
   /** numeric sidecar: camera pose, live transition phase, per-layer lifecycle */
@@ -148,77 +169,161 @@ async function request(path: string, init?: RequestInit): Promise<unknown> {
 const PROJECT_HEADER = "x-motionforge-project";
 
 export const engineClient = {
-  capabilities: (): Promise<unknown> => request("/api/capabilities"),
+  capabilities: async (): Promise<unknown> => {
+    if (useHttp()) return request("/api/capabilities");
+    const core = await getInProcessCore();
+    return core.getCapabilities();
+  },
 
-  putScene: (scene: unknown, projectPath?: string): Promise<SceneUploadResult> =>
-    request("/api/scenes", {
-      method: "POST",
-      // `projectPath` rides in the body for /api/scenes and in a header for the
-      // project routes, so both are accepted here
-      body: JSON.stringify(projectPath ? { ...(scene as object), projectPath } : scene),
-      headers: projectPath ? { [PROJECT_HEADER]: projectPath } : undefined,
-    }) as Promise<SceneUploadResult>,
+  putScene: async (scene: unknown, projectPath?: string): Promise<SceneUploadResult> => {
+    if (useHttp()) {
+      return request("/api/scenes", {
+        method: "POST",
+        body: JSON.stringify(projectPath ? { ...(scene as object), projectPath } : scene),
+        headers: projectPath ? { [PROJECT_HEADER]: projectPath } : undefined,
+      }) as Promise<SceneUploadResult>;
+    }
+    const core = await getInProcessCore();
+    try {
+      const res = await core.saveScene(scene, projectPath);
+      return res as SceneUploadResult;
+    } catch (error: any) {
+      throw new EngineError(error.status ?? 400, error.message, error.issues);
+    }
+  },
 
-  initProject: (options: unknown): Promise<ProjectInitResult> =>
-    request("/projects/init", { method: "POST", body: JSON.stringify(options) }) as Promise<ProjectInitResult>,
+  initProject: async (options: unknown): Promise<ProjectInitResult> => {
+    if (useHttp()) {
+      return request("/projects/init", { method: "POST", body: JSON.stringify(options) }) as Promise<ProjectInitResult>;
+    }
+    const core = await getInProcessCore();
+    return (await initCreativeProject(options as any, {
+      seedScene: async (s) => (await core.store.upsert(s)).id,
+      engineBaseUrl: `http://127.0.0.1:${core.config.port}`,
+    })) as ProjectInitResult;
+  },
 
-  syncScene: (scene: unknown, projectPath: string): Promise<SceneUploadResult> =>
-    request("/projects/sync", {
-      method: "POST",
-      body: JSON.stringify({ scene, projectPath }),
-      headers: { [PROJECT_HEADER]: projectPath },
-    }) as Promise<SceneUploadResult>,
+  syncScene: async (scene: unknown, projectPath: string): Promise<SceneUploadResult> => {
+    if (useHttp()) {
+      return request("/projects/sync", {
+        method: "POST",
+        body: JSON.stringify({ scene, projectPath }),
+        headers: { [PROJECT_HEADER]: projectPath },
+      }) as Promise<SceneUploadResult>;
+    }
+    const core = await getInProcessCore();
+    try {
+      const res = await core.saveScene(scene, projectPath);
+      return res as SceneUploadResult;
+    } catch (error: any) {
+      throw new EngineError(error.status ?? 400, error.message, error.issues);
+    }
+  },
 
-  saveRender: (
+  saveRender: async (
     sceneId: string,
     quality: "draft" | "production",
     mp4Base64: string,
     projectPath: string
-  ): Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }> =>
-    request("/projects/renders", {
-      method: "POST",
-      body: JSON.stringify({ sceneId, quality, mp4Base64 }),
-      headers: { [PROJECT_HEADER]: projectPath },
-    }) as Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }>,
+  ): Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }> => {
+    if (useHttp()) {
+      return request("/projects/renders", {
+        method: "POST",
+        body: JSON.stringify({ sceneId, quality, mp4Base64 }),
+        headers: { [PROJECT_HEADER]: projectPath },
+      }) as Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }>;
+    }
+    const saved = await saveRenderToDisk(projectPath, sceneId, quality, Buffer.from(mp4Base64, "base64"));
+    return {
+      file: saved.file,
+      latest: saved.latest,
+      status: saved.status,
+      projectRenderFilePath: `${projectPath.replace(/\/+$/, "")}/${saved.latest}`,
+    };
+  },
 
-  saveStills: (
+  saveStills: async (
     sceneId: string,
     frames: Array<{ atMs: number; image: string }>,
     projectPath: string,
     framesMeta: unknown[] = []
-  ): Promise<{ files: string[]; savedStillsFilePaths: string[]; metaFile?: string }> =>
-    request("/projects/stills", {
-      method: "POST",
-      body: JSON.stringify({ sceneId, frames, framesMeta }),
-      headers: { [PROJECT_HEADER]: projectPath },
-    }) as Promise<{ files: string[]; savedStillsFilePaths: string[]; metaFile?: string }>,
+  ): Promise<{ files: string[]; savedStillsFilePaths: string[]; metaFile?: string }> => {
+    if (useHttp()) {
+      return request("/projects/stills", {
+        method: "POST",
+        body: JSON.stringify({ sceneId, frames, framesMeta }),
+        headers: { [PROJECT_HEADER]: projectPath },
+      }) as Promise<{ files: string[]; savedStillsFilePaths: string[]; metaFile?: string }>;
+    }
+    const files = await saveStillsToDisk(projectPath, sceneId, frames);
+    let metaFile: string | null = null;
+    if (Array.isArray(framesMeta) && framesMeta.length > 0) {
+      metaFile = await saveFramesMetaToDisk(projectPath, sceneId, framesMeta);
+    }
+    return {
+      files,
+      savedStillsFilePaths: files.map((f) => `${projectPath.replace(/\/+$/, "")}/${f}`),
+      ...(metaFile ? { metaFile } : {}),
+    };
+  },
 
-  keyframes: (
+  keyframes: async (
     sceneId: string,
     at: number[],
     includeFullResolution = false
-  ): Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }> =>
-    request(`/api/scenes/${encodeURIComponent(sceneId)}/keyframes`, {
-      method: "POST",
-      body: JSON.stringify({ at, includeFullResolution }),
-    }) as Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }>,
+  ): Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }> => {
+    if (useHttp()) {
+      return request(`/api/scenes/${encodeURIComponent(sceneId)}/keyframes`, {
+        method: "POST",
+        body: JSON.stringify({ at, includeFullResolution }),
+      }) as Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }>;
+    }
+    const core = await getInProcessCore();
+    return (await core.inspectKeyframes(sceneId, { at, includeFullResolution })) as any;
+  },
 
   previewUrl: (sceneId: string): string =>
     `${ENGINE_URL}/preview/?scene=${encodeURIComponent(sceneId)}`,
 
-  enqueueRender: (sceneId: string, quality: "draft" | "production"): Promise<{ jobId: string; status: string }> =>
-    request("/api/renders", {
-      method: "POST",
-      body: JSON.stringify({ sceneId, quality }),
-    }) as Promise<{ jobId: string; status: string }>,
+  enqueueRender: async (sceneId: string, quality: "draft" | "production"): Promise<{ jobId: string; status: string }> => {
+    if (useHttp()) {
+      return request("/api/renders", {
+        method: "POST",
+        body: JSON.stringify({ sceneId, quality }),
+      }) as Promise<{ jobId: string; status: string }>;
+    }
+    const core = await getInProcessCore();
+    return await core.startRender(sceneId, quality);
+  },
 
-  renderJob: (jobId: string): Promise<RenderJobView> =>
-    request(`/api/renders/${encodeURIComponent(jobId)}`) as Promise<RenderJobView>,
+  renderJob: async (jobId: string): Promise<RenderJobView> => {
+    if (useHttp()) {
+      return request(`/api/renders/${encodeURIComponent(jobId)}`) as Promise<RenderJobView>;
+    }
+    const core = await getInProcessCore();
+    const job = core.getRenderStatus(jobId);
+    if (!job) throw new EngineError(404, `unknown render job "${jobId}"`);
+    return job as any;
+  },
 
-  renderFileBase64: (jobId: string): Promise<{ mp4Base64: string; sceneId: string; quality: string }> =>
-    request(`/api/renders/${encodeURIComponent(jobId)}/file/base64`) as Promise<{
-      mp4Base64: string;
-      sceneId: string;
-      quality: string;
-    }>,
+  renderFileBase64: async (jobId: string): Promise<{ mp4Base64: string; sceneId: string; quality: string }> => {
+    if (useHttp()) {
+      return request(`/api/renders/${encodeURIComponent(jobId)}/file/base64`) as Promise<{
+        mp4Base64: string;
+        sceneId: string;
+        quality: string;
+      }>;
+    }
+    const core = await getInProcessCore();
+    const job = core.getRenderStatus(jobId);
+    if (!job || job.status !== "succeeded" || !job.result) {
+      throw new EngineError(404, "render not finished");
+    }
+    const bytes = await readFile(job.result.mp4Path);
+    return {
+      mp4Base64: bytes.toString("base64"),
+      sceneId: job.sceneId,
+      quality: job.quality,
+    };
+  },
 };

@@ -1,6 +1,7 @@
 import { Component, Show, For, createMemo } from 'solid-js';
 import { store } from '../store.js';
 import type { StudioLayer } from '../types.js';
+import { ScrubInput } from './ScrubInput.js';
 
 export const Inspector: Component = () => {
   const state = store.state;
@@ -124,27 +125,31 @@ export const Inspector: Component = () => {
                   {/* TIMING SECTION */}
                   <div class="insp-section">
                     <div class="insp-section-title">Timing & Lifecycle</div>
-                    <div class="insp-field">
-                      <label class="insp-label">Start Time (at ms)</label>
-                      <input
-                        type="number"
-                        class="insp-input"
-                        value={layer().at || 0}
-                        disabled={isLocked()}
-                        onInput={(e) => updateField('at', Number(e.currentTarget.value), `Set at of ${layer().id}`)}
-                      />
-                    </div>
-                    <div class="insp-field">
-                      <label class="insp-label">Duration (ms)</label>
-                      <input
-                        type="number"
-                        class="insp-input"
-                        value={layer().duration || 3000}
-                        disabled={isLocked()}
-                        onInput={(e) =>
-                          updateField('duration', Number(e.currentTarget.value), `Set duration of ${layer().id}`)
-                        }
-                      />
+                    <div class="insp-input-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                      <div class="insp-field">
+                        <label class="insp-label">Start Time</label>
+                        <ScrubInput
+                          label="At"
+                          value={layer().at || 0}
+                          unit="ms"
+                          step={100}
+                          min={0}
+                          disabled={isLocked()}
+                          onChange={(val) => updateField('at', val, `Set at of ${layer().id}`)}
+                        />
+                      </div>
+                      <div class="insp-field">
+                        <label class="insp-label">Duration</label>
+                        <ScrubInput
+                          label="Dur"
+                          value={layer().duration || 3000}
+                          unit="ms"
+                          step={100}
+                          min={100}
+                          disabled={isLocked()}
+                          onChange={(val) => updateField('duration', val, `Set duration of ${layer().id}`)}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -152,37 +157,38 @@ export const Inspector: Component = () => {
                   <Show when={layer().position}>
                     <div class="insp-section">
                       <div class="insp-section-title">Transform & Position</div>
-                      <div class="insp-input-row">
+                      <div class="insp-input-row" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;">
                         <div class="insp-field">
-                          <label class="insp-label">X Position (%)</label>
-                          <input
-                            type="number"
-                            class="insp-input"
+                          <label class="insp-label">X (%)</label>
+                          <ScrubInput
+                            label="X"
                             value={layer().position?.xPct ?? 50}
+                            unit="%"
+                            step={0.5}
                             disabled={isLocked()}
-                            onInput={(e) =>
-                              updateField(
-                                'position.xPct',
-                                Number(e.currentTarget.value),
-                                `Set xPct of ${layer().id}`
-                              )
-                            }
+                            onChange={(val) => updateField('position.xPct', val, `Set xPct of ${layer().id}`)}
                           />
                         </div>
                         <div class="insp-field">
-                          <label class="insp-label">Y Position (%)</label>
-                          <input
-                            type="number"
-                            class="insp-input"
+                          <label class="insp-label">Y (%)</label>
+                          <ScrubInput
+                            label="Y"
                             value={layer().position?.yPct ?? 50}
+                            unit="%"
+                            step={0.5}
                             disabled={isLocked()}
-                            onInput={(e) =>
-                              updateField(
-                                'position.yPct',
-                                Number(e.currentTarget.value),
-                                `Set yPct of ${layer().id}`
-                              )
-                            }
+                            onChange={(val) => updateField('position.yPct', val, `Set yPct of ${layer().id}`)}
+                          />
+                        </div>
+                        <div class="insp-field">
+                          <label class="insp-label">Rot (°)</label>
+                          <ScrubInput
+                            label="R"
+                            value={(layer() as any).rotation ?? 0}
+                            unit="°"
+                            step={1}
+                            disabled={isLocked()}
+                            onChange={(val) => updateField('rotation', val, `Set rotation of ${layer().id}`)}
                           />
                         </div>
                       </div>
@@ -203,28 +209,18 @@ export const Inspector: Component = () => {
                           onInput={(e) => updateField('text', e.currentTarget.value, `Set text of ${layer().id}`)}
                         />
                       </div>
-                      <div class="insp-input-row">
+                      <div class="insp-input-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                         <div class="insp-field">
-                          <label class="insp-label">Font Size (px)</label>
-                          <input
-                            type="number"
-                            class="insp-input"
+                          <label class="insp-label">Font Size</label>
+                          <ScrubInput
+                            label="Size"
                             value={(layer() as unknown as { sizePx?: number }).sizePx || 80}
+                            unit="px"
+                            step={2}
+                            min={10}
+                            max={400}
                             disabled={isLocked()}
-                            onInput={(e) =>
-                              updateField(
-                                'sizePx',
-                                Number(e.currentTarget.value),
-                                `Set sizePx of ${layer().id}`
-                              )
-                            }
-                            onChange={(e) =>
-                              updateField(
-                                'sizePx',
-                                Number(e.currentTarget.value),
-                                `Set sizePx of ${layer().id}`
-                              )
-                            }
+                            onChange={(val) => updateField('sizePx', val, `Set sizePx of ${layer().id}`)}
                           />
                         </div>
                         <div class="insp-field">
@@ -242,6 +238,46 @@ export const Inspector: Component = () => {
                             onInput={(e) => updateField('fill', e.currentTarget.value, `Set fill of ${layer().id}`)}
                           />
                         </div>
+                      </div>
+                    </div>
+                  </Show>
+
+                  {/* CARD SIZING */}
+                  <Show when={layer().type === 'card'}>
+                    <div class="insp-section">
+                      <div class="insp-section-title">Card Container</div>
+                      <div class="insp-field">
+                        <label class="insp-label">Width</label>
+                        <ScrubInput
+                          label="Width"
+                          value={(layer() as any).variant?.widthPx || 800}
+                          unit="px"
+                          step={10}
+                          min={100}
+                          max={2000}
+                          disabled={isLocked()}
+                          onChange={(val) => updateField('variant.widthPx', val, `Set width of ${layer().id}`)}
+                        />
+                      </div>
+                    </div>
+                  </Show>
+
+                  {/* MEDIA SIZING */}
+                  <Show when={layer().type === 'imageLogo' || layer().type === 'lottie'}>
+                    <div class="insp-section">
+                      <div class="insp-section-title">Media Sizing</div>
+                      <div class="insp-field">
+                        <label class="insp-label">Width</label>
+                        <ScrubInput
+                          label="Width"
+                          value={(layer() as any).widthPx || 240}
+                          unit="px"
+                          step={10}
+                          min={20}
+                          max={2000}
+                          disabled={isLocked()}
+                          onChange={(val) => updateField('widthPx', val, `Set width of ${layer().id}`)}
+                        />
                       </div>
                     </div>
                   </Show>

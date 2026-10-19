@@ -11,6 +11,7 @@ import { validateScene, type ProjectQuality, type SceneSpec } from "@motionforge
 import type { ResolvedAsset } from "./project-assets.js";
 import {
   ensureDirs,
+  listVaultAssets,
   mimeFor,
   sanitizeVaultName,
   saveVaultUpload,
@@ -177,6 +178,19 @@ export async function registerSceneRoutes(
   };
   app.post("/api/scenes", sceneRoute);
 
+  app.get("/api/scenes", async () => {
+    return store.list().map((entry) => ({
+      id: entry.scene.id ?? "",
+      name: entry.scene.name,
+      revision: entry.revision,
+      hash: entry.hash,
+      updatedAt: entry.updatedAt,
+      projectPath: entry.projectPath,
+      layerCount: entry.scene.layers.length,
+      durationMs: entry.scene.durationMs,
+    }));
+  });
+
   // the preview bundle fetches the scene it is about to render, so this route is
   // part of the scene contract — not an incidental extra
   app.get("/api/scenes/:id", async (req, reply) => {
@@ -184,6 +198,13 @@ export async function registerSceneRoutes(
     const found = store.get(id);
     if (!found) return reply.code(404).send({ error: `unknown scene "${id}"` });
     return found.scene;
+  });
+
+  app.delete("/api/scenes/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const deleted = await store.delete(id);
+    if (!deleted) return reply.code(404).send({ error: `unknown scene "${id}"` });
+    return reply.code(200).send({ id, success: true });
   });
 
   /**
@@ -480,6 +501,10 @@ export async function startEngine(opts: StartEngineOptions): Promise<Engine> {
   // -------------------------------------------------------------------------
   // assets (vault)
   // -------------------------------------------------------------------------
+  app.get("/api/assets", async () => {
+    return listVaultAssets(config.paths);
+  });
+
   app.post("/api/assets", async (req, reply) => {
     const filename = sanitizeVaultName(String((req.query as { filename?: string }).filename ?? ""));
     if (!filename) {
