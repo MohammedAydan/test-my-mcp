@@ -24,6 +24,7 @@ import { PRESET_DEFAULTS, applyEmphasis, applyEntrance, applyExit, type PresetTa
 import { renderLayer, type BuiltLayer } from "./layers/index.js";
 import type { LayerContext } from "./layers/context.js";
 import {
+  applyLayerStatics,
   createMotionWrappers,
   LayerLifecycle,
   planMotionSlots,
@@ -177,6 +178,11 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
     stage.content.appendChild(layerRoot);
 
     const wrappers = createMotionWrappers(layerRoot);
+
+    // The layer's authored, non-animated properties (opacity, scale, blend
+    // mode, visibility) live on their own wrapper, OUTSIDE the motion chain,
+    // so a preset that fades the layer in still ends at the authored opacity.
+    applyLayerStatics(wrappers.static, layer);
 
     const ctx: LayerContext = {
       tl,

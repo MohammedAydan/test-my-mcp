@@ -1,0 +1,229 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ==========================================================================
+   MotionForge Pro NLE — Design Tokens
+   Adobe Spectrum Dark grade: high density, 1px structure, one blue accent.
+   ========================================================================== */
+
+:root {
+  /* ---------------------------------------------------------------------
+     Surfaces — 2–3px gutters between docked panels, never big rounded cards
+     --------------------------------------------------------------------- */
+  --mf-bg-gutter: #090a0d;   /* the gap between docked panels / app backdrop */
+  --mf-bg-panel: #14161a;    /* panel surfaces */
+  --mf-bg-header: #1a1d23;   /* panel header + tab bar (26px) */
+  --mf-bg-elevated: #20242c; /* inputs, dropdowns, raised controls */
+  --mf-bg-sunken: #0f1114;   /* ruler well, track header gutter, code wells */
+  --mf-bg-hover: #242830;
+  --mf-bg-active: #2b3038;
+
+  /* ---------------------------------------------------------------------
+     Borders — 1px, always
+     --------------------------------------------------------------------- */
+  --mf-border: #262a34;
+  --mf-border-strong: #333a47;
+  --mf-border-focus: #2d8ceb; /* the focused panel's blue outline */
+  --mf-border-danger: #7a1f28;
+
+  /* ---------------------------------------------------------------------
+     Accents
+     --------------------------------------------------------------------- */
+  --mf-accent: #2d8ceb;          /* Adobe Pro Blue — focus + primary action */
+  --mf-accent-hover: #4b9bf0;
+  --mf-accent-dim: rgba(45, 140, 235, 0.14);
+  --mf-accent-text: #8cc2ff;     /* blue that is legible as TEXT */
+  --mf-record: #ff4b4b;          /* playhead + record + destructive */
+  --mf-record-dim: rgba(255, 75, 75, 0.16);
+  --mf-keyframe: #38bdf8;        /* keyframe diamonds + selection */
+  --mf-warning: #f59e0b;
+  --mf-success: #22c55e;
+  --mf-audio: #10b981;
+
+  /* ---------------------------------------------------------------------
+     Text
+     --------------------------------------------------------------------- */
+  --mf-text-1: #e6e9ef;
+  --mf-text-2: #9aa3b2;
+  --mf-text-3: #6b7280;
+  --mf-text-inverse: #0b0d10;
+
+  /* ---------------------------------------------------------------------
+     Typography
+     --------------------------------------------------------------------- */
+  --mf-font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --mf-font-mono: 'JetBrains Mono', 'Cascadia Mono', Consolas, 'SF Mono', 'Courier New', monospace;
+  --mf-text-xs: 10px;
+  --mf-text-sm: 11px;
+  --mf-text-md: 12px;
+  --mf-text-lg: 13px;
+
+  /* ---------------------------------------------------------------------
+     Metrics — a pro NLE is dense
+     --------------------------------------------------------------------- */
+  --mf-titlebar-h: 32px;
+  --mf-menubar-h: 26px;
+  --mf-tool-dock-w: 40px;
+  --mf-panel-header-h: 26px;
+  --mf-statusbar-h: 22px;
+  --mf-row-h: 22px;
+  --mf-track-h: 28px;
+  --mf-audio-track-h: 26px;
+  --mf-ruler-h: 28px;
+  --mf-gutter: 2px;
+  --mf-splitter: 4px;
+  --mf-radius: 2px;
+  --mf-radius-sm: 1px;
+
+  --mf-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --mf-dur: 120ms;
+
+  /* ---------------------------------------------------------------------
+     Layer-kind swatches (the After Effects column-label convention)
+     --------------------------------------------------------------------- */
+  --mf-kind-background: #6b7280;
+  --mf-kind-kineticText: #f43f5e;
+  --mf-kind-card: #14b8a6;
+  --mf-kind-imageLogo: #f59e0b;
+  --mf-kind-lottie: #22c55e;
+  --mf-kind-foregroundFX: #3b82f6;
+
+  /* ---------------------------------------------------------------------
+     Legacy aliases.
+     Older class names still reference these; they now resolve to the
+     Adobe Spectrum Dark grade instead of the old amber theme.
+     --------------------------------------------------------------------- */
+  --bg-0: var(--mf-bg-gutter);
+  --bg-1: var(--mf-bg-panel);
+  --bg-2: var(--mf-bg-elevated);
+  --bg-3: var(--mf-bg-hover);
+  --bg-4: var(--mf-bg-active);
+  --border: var(--mf-border);
+  --border-strong: var(--mf-border-strong);
+  --border-focus: var(--mf-accent);
+  --primary: var(--mf-accent);
+  --primary-hover: var(--mf-accent-hover);
+  --primary-dim: var(--mf-accent-dim);
+  --secondary: var(--mf-audio);
+  --secondary-hover: #34d399;
+  --secondary-dim: rgba(16, 185, 129, 0.14);
+  --accent: var(--mf-record);
+  --accent-hover: #ff6b6b;
+  --accent-dim: var(--mf-record-dim);
+  --text-1: var(--mf-text-1);
+  --text-2: var(--mf-text-2);
+  --text-3: var(--mf-text-3);
+  --danger: var(--mf-record);
+  --info: var(--mf-accent);
+  --radius-sm: var(--mf-radius-sm);
+  --radius: var(--mf-radius);
+  --radius-lg: var(--mf-radius);
+  --radius-xl: var(--mf-radius);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.65);
+  --ease: var(--mf-ease);
+  --duration: var(--mf-dur);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--mf-font-ui);
+  font-size: var(--mf-text-md);
+  line-height: 1.4;
+  color: var(--mf-text-1);
+  background: var(--mf-bg-gutter);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+  transition: background var(--mf-dur) var(--mf-ease),
+    color var(--mf-dur) var(--mf-ease),
+    border-color var(--mf-dur) var(--mf-ease);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 1px solid var(--mf-accent);
+  outline-offset: 1px;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: var(--mf-text-sm);
+  color: inherit;
+}
+
+/* Every number in the UI is monospaced and tabular — digits must never
+   jitter horizontally while a value is being scrubbed. */
+.mf-num,
+input[type='number'],
+.mf-timecode {
+  font-family: var(--mf-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+.mf-hidden {
+  display: none !important;
+}
+
+/* Scrollbars — thin, dark, pro */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #333a47;
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #414a5c;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

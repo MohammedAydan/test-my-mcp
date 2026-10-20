@@ -11,10 +11,21 @@ A production-grade **programmatic motion graphics & video engine** with a decoup
 ```
 packages/
   scene-spec/      @motionforge/scene-spec   — Zod SceneSpec schema + TS types (shared contract)
-  core-engine/     @motionforge/core-engine  — Fastify API, assets, Playwright frame renderer, FFmpeg encoder, SFX mixer
+  core-engine/     @motionforge/core-engine  — in-process domain core, assets, Playwright frame renderer, FFmpeg encoder, SFX mixer
   scene-runtime/   @motionforge/scene-runtime — Vite + TS + Tailwind + GSAP browser canvas (DOM/SVG/Lottie layers, camera rig, timeline UI)
-  mcp-server/      @motionforge/mcp-server   — Thin MCP wrapper exposing exactly 5 tools, talks to core-engine over HTTP
+  studio/          @motionforge/studio      — Solid.js Pro NLE user interface (the desktop shell's renderer)
+  desktop/         @motionforge/desktop     — Electron shell hosting EngineCore in the main process
+  mcp-server/      @motionforge/mcp-server   — Thin MCP wrapper exposing exactly 6 tools, talks to core-engine in-process
 ```
+
+> **v3.0 (2026-10-20).** The Studio was rebuilt as a modular Pro NLE. The
+> blueprint and the verification ledger live in
+> [`docs/redesign/`](docs/redesign/):
+> [`00_MASTER_EXECUTION_ROADMAP.md`](docs/redesign/00_MASTER_EXECUTION_ROADMAP.md),
+> [`01_BACKEND_AND_SCHEMA_AUDIT.md`](docs/redesign/01_BACKEND_AND_SCHEMA_AUDIT.md),
+> [`02_PRO_NLE_DESIGN_SYSTEM.md`](docs/redesign/02_PRO_NLE_DESIGN_SYSTEM.md),
+> [`03_MODULAR_COMPONENT_ARCHITECTURE.md`](docs/redesign/03_MODULAR_COMPONENT_ARCHITECTURE.md),
+> [`04_LIVE_PROGRESS_LOG.md`](docs/redesign/04_LIVE_PROGRESS_LOG.md).
 
 ## Non-negotiable architectural rules
 
@@ -43,21 +54,49 @@ packages/
    ends on a peak leaves the element stranded and the next frame cuts it.
 8. **Never animate layout on text.** `width`/`height` on a text or card element forces a
    re-wrap every frame. Masks animate `clip-path` only.
+9. **Every layer accepts the universal spatial set.** `layerBaseSchema` declares
+   `position`, `scale`, `rotation`, `opacity`, `visible`, `locked`, `trackIndex` and
+   `blendMode` for EVERY layer kind — including the `background` at `layers.0`.
+   The Studio writes those properties onto whichever layer the user grabbed, so a
+   kind that does not declare them fails every auto-save with
+   `Unrecognized key(s) in object: 'position'`.
+10. **Normalize, then validate.** `sanitizeSceneInput()` (published from
+    `@motionforge/scene-spec`) strips transient `_`-prefixed properties, heals the
+    legacy `_hidden`/`_locked` markers into `visible`/`locked`, and clamps the
+    spatial numbers into their legal range. BOTH write paths call it:
+    `EngineCore.saveScene` and `packages/studio/src/api.ts`. A hallucinated key is
+    still a validation error — the sanitizer removes *transient* properties, not
+    unknown ones.
+11. **Zero emoji, 100% vector SVG.** Every icon in the Studio comes from
+    `packages/studio/src/components/icons/NleIcons.tsx`. Unicode emoji are
+    forbidden anywhere in the UI or the codebase; `npm run verify:no-emoji` is a
+    gate, and the practical verification scans `document.body.innerText` live.
+12. **The Studio is a composition of modules.** `packages/studio/src/` is split into
+    `state/`, `services/`, `styles/` and `components/{shell,workspace,project-bin,
+    hierarchy,monitor,inspector,timeline,export,modals,shared}`. A component owns
+    ONE responsibility, reads ONE store slice and talks to the engine through
+    `services/engine-bridge.ts`. `App.tsx` is the composition root only.
 
 ## Commands
 
 ```bash
 npm install                      # install all workspaces
 npm run build -ws                # build every package
-npm run typecheck -ws            # tsc --noEmit everywhere
+npm run typecheck -ws            # tsc --noEmit everywhere (all SIX workspaces)
 npm test                         # vitest across packages
-npm run dev -w @motionforge/core-engine   # API on :4000
-npm run dev -w @motionforge/scene-runtime # Vite preview UI on :5173 (proxies to :4000)
+npm run dev -w @motionforge/desktop    # the Electron Pro NLE (predev builds the runtime bundle)
+npm run dev -w @motionforge/scene-runtime # the runtime canvas alone, on :5173
+npm run dev -w @motionforge/studio       # the Studio UI alone, on :5174 (browser fallback bridge)
 npm run doctor -w @motionforge/core-engine        # toolchain check (ffmpeg, chromium, sfx bank, runtime dist)
 npm run smoke -w @motionforge/core-engine         # tiny full-pipeline draft render + ffprobe assertions
 npm run demo -w @motionforge/core-engine          # showcase scene: keyframe inspection + draft render
-npm run start -w @motionforge/mcp-server          # MCP stdio server (MOTIONFORGE_ENGINE_URL, default :4000)
+npm run start -w @motionforge/mcp-server          # MCP stdio server
+npm run verify:no-emoji        # static zero-emoji gate over every package source
+npm run verify:pro-nle         # practical verification of the REAL Electron app (52 checks)
 ```
+
+> The practical verification needs a display. On a headless host:
+> `xvfb-run -a --server-args="-screen 0 1920x1200x24" npm run verify:pro-nle`.
 
 ### Creative project kit (client jobs)
 
@@ -208,9 +247,17 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 | Client-job scaffolding + CLI | `templates/creative-project/**` and `scripts/*.mjs` (`npm run init-project` / `sync-scene` / `pull-render`) |
 | Agent skill | `skills/motionforge-creative-project/SKILL.md` |
 | MCP tool wiring | `packages/mcp-server/src/**` (never drop engine `issues[]`; advertise `sceneShapeSchema`, not a cast raw shape) |
-| HTTP route, render pipeline, audio | `packages/core-engine/src/**` |
-| Visual layer rendering, timeline UI | `packages/scene-runtime/src/**` |
+| Render pipeline, audio, scene persistence | `packages/core-engine/src/**` |
+| Visual layer rendering, the runtime canvas | `packages/scene-runtime/src/**` |
 | Zero-port headless serving (preview bundle, scene, vault) | `packages/core-engine/src/renderer.ts` — `setupPlaywrightZeroPortRoutes` |
+| Scene sanitizer / normalizer | `packages/scene-spec/src/sanitize.ts` — `sanitizeSceneInput()` |
+| Pro NLE design tokens (colour, type, metrics) | `packages/studio/src/styles/tokens.css` |
+| A new UI icon | `packages/studio/src/components/icons/NleIcons.tsx` — **never** an emoji |
+| The frameless window chrome / window controls | `packages/studio/src/components/shell/TitleBar.tsx` + `packages/desktop/src/{main,preload}.ts` |
+| A menu item, a palette entry or a shortcut | `packages/studio/src/services/commands.ts` — ONE registry, three views |
+| Studio state and its actions | `packages/studio/src/state/store.ts` |
+| The engine bridge (the only IPC caller) | `packages/studio/src/services/engine-bridge.ts` |
+| The practical verification | `scripts/test-pro-nle-redesign.cjs` (`npm run verify:pro-nle`) |
 
 Changing the `SceneSpec` schema is a **breaking contract change**: bump
 `schemaVersion`, keep the old version parsing (or migrate), and update the docs in the
@@ -218,17 +265,29 @@ same commit.
 
 ---
 
-## Current State & Audit Reality (October 2026)
+## Current State (October 2026)
 
-> **IMPORTANT:** Previous reports claimed full completion and passing tests, but an exhaustive zero-trust audit revealed severe interaction gaps in the desktop application layer (see [`docs/11_CURRENT_STATE_AUDIT.md`](docs/11_CURRENT_STATE_AUDIT.md) and [`docs/12_FEATURE_STATUS_MATRIX.md`](docs/12_FEATURE_STATUS_MATRIX.md)).
+> **v3.0 — the Pro NLE rebuild landed.** The desktop application layer was
+> rebuilt as a modular, frameless Adobe-Premiere-grade NLE. The blueprint is in
+> [`docs/redesign/`](docs/redesign/) and the verification ledger is
+> [`docs/redesign/04_LIVE_PROGRESS_LOG.md`](docs/redesign/04_LIVE_PROGRESS_LOG.md).
 
 Key points for agents working in this repo:
-1. **Engine & CLI Pipeline are Functional:** The core rendering engine, Playwright frame capture, FFmpeg export, and MCP tools function as specified.
-2. **Desktop UI/UX requires Remediation:**
-   - Canvas direct manipulation currently updates SVG wireframes only without transforming the live preview iframe or saving to the engine.
-   - Timeline canvas lacks vertical scrolling (`scrollY`), clipping scenes with >3 layers.
-   - Panels are currently rigid without drag-to-resize splitters.
-   - Layers are 1:1 mapped to rows; multi-clip track lane support (`trackIndex`) is pending.
-   - Asset drag-and-drop to canvas/timeline is not yet implemented.
-3. **Execution Roadmap:** Follow [`docs/13_NEXT_STEPS.md`](docs/13_NEXT_STEPS.md) for the prioritized 20-item remediation plan across backend and desktop packages.
+1. **Engine & CLI pipeline are functional:** the rendering engine, Playwright
+   frame capture, FFmpeg export and the MCP tools all work as specified.
+2. **The desktop application layer was rebuilt** (the gaps listed in
+   [`docs/11_CURRENT_STATE_AUDIT.md`](docs/11_CURRENT_STATE_AUDIT.md) and
+   [`docs/12_FEATURE_STATUS_MATRIX.md`](docs/12_FEATURE_STATUS_MATRIX.md) are
+   closed):
+   - Canvas direct manipulation now transforms the LIVE preview, snaps to smart
+     alignment guides, and persists through the engine.
+   - The timeline scrolls vertically, zooms on the wheel, packs multi-clip
+     tracks, trims with dual handles and splits with the razor tool.
+   - Panels are resizable (drag) and maximisable (`` ` `` / double-click).
+   - Layers are multi-track (`trackIndex`) and the asset vault drags onto both
+     the canvas and the timeline.
+3. **Verification is a gate, not a claim:**
+   `npm run typecheck` (6 workspaces), `npm test` (421 tests),
+   `npm run verify:no-emoji`, and `npm run verify:pro-nle` (52 practical
+   checks against the real Electron app) must all be green.
 

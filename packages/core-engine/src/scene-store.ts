@@ -19,7 +19,7 @@ import { EventEmitter } from "node:events";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { validateScene, type SceneSpec } from "@motionforge/scene-spec";
+import { validateScene, sanitizeSceneInput, type SceneSpec } from "@motionforge/scene-spec";
 
 export interface StoredScene {
   scene: SceneSpec;
@@ -144,7 +144,15 @@ export class SceneStore {
       }
       const envelope = parsed as Partial<PersistedScene> | null;
       const raw = envelope && typeof envelope === "object" && "scene" in envelope ? envelope.scene : parsed;
-      const validation = validateScene(raw);
+      // LEGACY HEALING.
+      //
+      // A scene file on disk may have been written by an older build: it can
+      // carry UI-only bookkeeping keys (`_hidden`, `_locked`) or keys the
+      // current schema has retired. Those are normalized away (and healed into
+      // their modern equivalents) instead of making the whole scene
+      // unloadable. A scene whose VALUES are genuinely illegal is still
+      // rejected — healing must never hide a real authoring error.
+      const validation = validateScene(sanitizeSceneInput(raw, { dropUnknown: true }));
       if (!validation.ok) {
         this.loadIssues.push({ file: name, error: `invalid scene: ${validation.issues.join("; ")}` });
         continue;

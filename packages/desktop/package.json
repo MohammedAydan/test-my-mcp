@@ -7,9 +7,12 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
+    "predev": "npm run build -w @motionforge/scene-spec && npm run build -w @motionforge/core-engine && npm run build -w @motionforge/scene-runtime",
     "dev": "electron-vite dev",
+    "prebuild": "npm run build -w @motionforge/scene-spec && npm run build -w @motionforge/core-engine && npm run build -w @motionforge/scene-runtime",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "pack": "electron-builder --dir",
     "package": "electron-builder"
   },

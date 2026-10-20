@@ -24,7 +24,7 @@ import {
   TEXT_UNIT_GUARD_CSS,
   type SettleDeps,
 } from "../src/determinism.js";
-import { createMotionWrappers, LayerLifecycle, planMotionSlots } from "../src/motion-slots.js";
+import { applyLayerStatics, createMotionWrappers, LayerLifecycle, planMotionSlots } from "../src/motion-slots.js";
 import { createStage, resetStage } from "../src/stage.js";
 import { renderCard } from "../src/layers/card.js";
 import { renderImageLogo } from "../src/layers/image-logo.js";
@@ -434,7 +434,8 @@ describe("motion slots", () => {
     const w = createMotionWrappers(root);
 
     expect(w.root).toBe(root);
-    expect(w.entrance.parentElement).toBe(root);
+    expect(w.static.parentElement).toBe(root);
+    expect(w.entrance.parentElement).toBe(w.static);
     expect(w.emphasis.parentElement).toBe(w.entrance);
     expect(w.exit.parentElement).toBe(w.emphasis);
     expect(w.content).toBe(w.exit);
@@ -446,6 +447,32 @@ describe("motion slots", () => {
     expect(new Set([w.entrance, w.emphasis, w.exit]).size).toBe(3);
     // the lifecycle root is never a preset target
     expect([w.entrance, w.emphasis, w.exit]).not.toContain(w.root);
+    // the static wrapper is never a preset target either
+    expect([w.entrance, w.emphasis, w.exit]).not.toContain(w.static);
+  });
+
+  it("applies the authored static properties to the static wrapper", () => {
+    const root = document.createElement("div");
+    const w = createMotionWrappers(root);
+
+    applyLayerStatics(w.static, { ...bg, opacity: 0.5, scale: 2, blendMode: "screen" });
+    expect(w.static.style.opacity).toBe("0.5");
+    expect(w.static.style.transform).toContain("scale(2)");
+    expect(w.static.style.mixBlendMode).toBe("screen");
+
+    const hidden = createMotionWrappers(document.createElement("div"));
+    applyLayerStatics(hidden.static, { ...bg, visible: false });
+    expect(hidden.static.style.display).toBe("none");
+  });
+
+  it("leaves the static wrapper untouched when nothing is authored", () => {
+    const root = document.createElement("div");
+    const w = createMotionWrappers(root);
+    applyLayerStatics(w.static, { ...bg });
+    expect(w.static.style.opacity).toBe("");
+    expect(w.static.style.transform).toBe("");
+    expect(w.static.style.mixBlendMode).toBe("");
+    expect(w.static.style.display).toBe("");
   });
 
   it("plans non-overlapping entrance/emphasis/exit windows", () => {

@@ -1,7 +1,22 @@
 import { z } from "zod";
-import { idSchema, msSchema } from "../common.js";
+import { idSchema, msSchema, offsetSchema } from "../common.js";
 import { presetRefSchema } from "../motion.js";
 import { sfxTriggerSchema } from "../audio.js";
+
+/**
+ * CSS blend modes a layer root may be composited with.
+ *
+ * Kept as a closed set so the runtime can map every value onto a real
+ * `mix-blend-mode` without a fallback branch.
+ */
+export const LAYER_BLEND_MODES = [
+  "normal",
+  "multiply",
+  "screen",
+  "overlay",
+  "plus-lighter",
+] as const;
+export type LayerBlendMode = (typeof LAYER_BLEND_MODES)[number];
 
 export const keyframeSchema = z.strictObject({
   at: msSchema,
@@ -34,8 +49,28 @@ export const layerBaseSchema = z.strictObject({
   trackIndex: z.number().int().min(0).max(99).optional(),
   /** Authoring alias for trackIndex */
   trackLane: z.number().int().min(0).max(99).optional(),
-  /** Rotation in degrees (-360 to 360) around layer center */
-  rotation: z.number().min(-360).max(360).optional(),
+  /** Rotation in degrees (-3600 to 3600) around layer center */
+  rotation: z.number().min(-3600).max(3600).optional(),
+  /**
+   * Center anchor of the layer, in percent of the canvas.
+   *
+   * Optional here so it can be declared by EVERY layer kind — the Studio's
+   * direct-manipulation overlay writes `position` onto whichever layer the
+   * user grabbed, and a `background` at `layers.0` is the most common target.
+   * Kinds that require an anchor (`kineticText`, `card`, `imageLogo`,
+   * `lottie`) re-declare it with their own required/defaulted shape.
+   */
+  position: offsetSchema.optional(),
+  /** Uniform scale multiplier (1 = the authored size). */
+  scale: z.number().min(0.05).max(10).optional(),
+  /** Opacity multiplier (1 = fully opaque). */
+  opacity: z.number().min(0).max(1).optional(),
+  /** Authored visibility — `false` hides the layer without deleting it. */
+  visible: z.boolean().optional(),
+  /** Authored lock — the layer is not editable in the Studio. */
+  locked: z.boolean().optional(),
+  /** CSS blend mode applied to the layer root. */
+  blendMode: z.enum(LAYER_BLEND_MODES).optional(),
   /** Optional keyframe property animation tracks */
   tracks: z.array(keyframeTrackSchema).optional(),
   /**

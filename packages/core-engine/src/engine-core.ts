@@ -4,6 +4,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 
 import type { SceneSpec } from "@motionforge/scene-spec";
+import { sanitizeSceneInput } from "@motionforge/scene-spec";
 import { capabilities } from "./capabilities.js";
 import {
   engineConfig,
@@ -128,8 +129,19 @@ export class EngineCore extends EventEmitter {
   }
 
   async saveScene(scene: unknown, projectPath?: string): Promise<SceneStoreResponse> {
+    // The last line of defence.
+    //
+    // The Studio is a direct-manipulation editor: it attaches spatial and NLE
+    // properties (position, scale, opacity, visible, locked …) to whichever
+    // layer the user grabbed — including the `background` at `layers.0`. Those
+    // properties are part of the contract now, but a scene can still carry
+    // transient UI-only bookkeeping, and a legacy project can still carry
+    // keys the schema has retired. Normalizing here means the store NEVER
+    // sees an unsanitizable scene, no matter which client called.
+    const sanitized = sanitizeSceneInput(scene);
+
     const res = await storeScene({
-      body: scene,
+      body: sanitized,
       store: this.store,
       paths: this.paths,
       port: this.config.port,
@@ -406,8 +418,8 @@ export class EngineCore extends EventEmitter {
       const rawText = await fsp.readFile(fullPath, "utf8");
       const parsed = JSON.parse(rawText);
       const envelope = parsed && typeof parsed === "object" && "scene" in parsed ? parsed.scene : parsed;
-      const { validateScene } = await import("@motionforge/scene-spec");
-      const validation = validateScene(envelope);
+      const { validateScene, sanitizeSceneInput } = await import("@motionforge/scene-spec");
+      const validation = validateScene(sanitizeSceneInput(envelope, { dropUnknown: true }));
       if (!validation.ok) return;
 
       const scene: SceneSpec = validation.scene;

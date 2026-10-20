@@ -5,7 +5,10 @@ Schema source of truth: `packages/scene-spec/src/**` (Zod, strict — unknown ke
 validation errors). All times are **milliseconds**, all positions are **percent of
 canvas**, all font sizes/lengths are **design px** (authored against the canvas scale).
 
-> **Roadmap Note (BE-001):** Track lane assignment (`trackIndex`) is currently planned for addition to `layerBaseSchema` to enable multiple non-overlapping clips per timeline track row. See [`plans/BACKEND_PLAN.md`](plans/BACKEND_PLAN.md).
+> **v3.0 (2026-10-20):** Track lane assignment (`trackIndex`) is now part of
+> `layerBaseSchema`, together with the whole universal spatial set
+> (`position`, `scale`, `rotation`, `opacity`, `visible`, `locked`,
+> `blendMode`). See "The universal spatial / NLE set" below.
 
 
 > **Machine-readable twin of this document.** Everything below is also emitted
@@ -72,6 +75,32 @@ Every layer has:
 | `z` | int | auto | draw order |
 | `entrance` / `emphasis` / `exit` | PresetRef | — | see Motion presets |
 | `sfx` | SfxTrigger[] | — | cues relative to `at` |
+
+### The universal spatial / NLE set
+
+Every layer kind — **including `background` and `foregroundFX`** — accepts the
+same spatial set. The Studio writes these onto whichever layer the user grabs,
+so a kind that does not declare them fails every save with
+`Unrecognized key(s) in object: 'position'`.
+
+| field | type | range | notes |
+|---|---|---|---|
+| `position` | `{ xPct, yPct }` | ±200 | center anchor, percent of canvas. Optional here; `kineticText`, `card`, `imageLogo` and `lottie` re-declare it (required or defaulted). |
+| `scale` | number | 0.05 – 10 | uniform multiplier on the authored size |
+| `rotation` | number | −3600 – 3600 | degrees around the layer centre |
+| `opacity` | number | 0 – 1 | multiplier on the layer's own alpha |
+| `visible` | boolean | `true` | `false` hides the layer without deleting it |
+| `locked` | boolean | `false` | the layer is not editable in the Studio |
+| `trackIndex` | int | 0 – 99 | video track lane (non-overlapping clips share a lane) |
+| `trackLane` | int | 0 – 99 | authoring alias for `trackIndex` |
+| `blendMode` | enum | `normal` | `normal` \| `multiply` \| `screen` \| `overlay` \| `plus-lighter` |
+
+> **Normalization.** `sanitizeSceneInput()` (published from
+> `@motionforge/scene-spec`) strips transient `_`-prefixed properties, heals the
+> legacy `_hidden`/`_locked` markers into `visible`/`locked`, and clamps the
+> spatial numbers into their legal range. The engine and the Studio both call
+> it, so a payload can never be rejected for a transient property. A genuinely
+> unknown key is still a validation error.
 
 ### Motion presets (PresetRef)
 `{ name, durationMs?, delayMs?, ease?, staggerMs?, strength? }` — `strength` is a

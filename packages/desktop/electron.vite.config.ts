@@ -1,5 +1,6 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import solidPlugin from 'vite-plugin-solid';
+import type { PluginOption } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig({
@@ -33,7 +34,11 @@ export default defineConfig({
     css: {
       postcss: resolve(__dirname, '../studio/postcss.config.js'),
     },
-    plugins: [solidPlugin()],
+    // `vite-plugin-solid` is resolved against the workspace-root Vite while
+    // electron-vite uses the package-local Vite, so the two `Plugin` types are
+    // structurally identical but nominally different. The cast keeps the
+    // config typechecked without duplicating the dependency.
+    plugins: [solidPlugin() as unknown as PluginOption],
     build: {
       rollupOptions: {
         input: {

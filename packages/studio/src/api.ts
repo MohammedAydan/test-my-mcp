@@ -1,186 +1,119 @@
-import type { CapabilitiesResponse, MotionForgeEngineBridge, StudioScene } from './types.js';
+import type { CapabilitiesResponse, StudioScene } from './types.js';
+import { invokeEngine, isElectron as detectElectron, onEngineEvent } from './services/engine-bridge.js';
+import {
+  deleteScene as engineDeleteScene,
+  getScene as engineGetScene,
+  inspectKeyframes as engineInspectKeyframes,
+  listScenes as engineListScenes,
+  saveScene as engineSaveScene,
+  sanitizeSceneForEngine,
+  unwrapPayload,
+} from './services/scene-service.js';
+import { ingestAsset as engineIngestAsset, listAssets as engineListAssets } from './services/asset-service.js';
+import { getRenderStatus, startRender as engineStartRender } from './services/render-service.js';
+
+/**
+ * The Studio's API facade.
+ *
+ * A thin, stable surface over the services layer. Components call `api.*`;
+ * `api` calls the services; the services call the engine over IPC. No
+ * component ever touches `window.motionforgeEngine` directly.
+ */
 
 export class APIError extends Error {
-  constructor(public status: number, message: string, public issues: unknown[] = []) {
+  constructor(
+    public status: number,
+    message: string,
+    public issues: unknown[] = []
+  ) {
     super(message);
     this.name = 'APIError';
   }
 }
 
-/**
- * Strips Solid.js reactive Proxies and clone-breaking objects before passing
- * across the Electron V8 Structured Clone IPC boundary.
- */
-export function unwrapPayload<T>(val: T): T {
-  if (val === null || val === undefined || typeof val !== 'object') return val;
-  if (val instanceof ArrayBuffer || val instanceof Uint8Array) return val;
-  return JSON.parse(JSON.stringify(val));
-}
+export { sanitizeSceneForEngine, unwrapPayload };
 
-export function sanitizeSceneForEngine(scene: unknown): unknown {
-  if (!scene || typeof scene !== 'object') return scene;
-  const clone = JSON.parse(JSON.stringify(scene));
-  if (Array.isArray(clone.layers)) {
-    clone.layers = clone.layers.map((layer: Record<string, unknown>) => {
-      const clean: Record<string, unknown> = { ...layer };
-      for (const k of Object.keys(clean)) {
-        if (k.startsWith('_')) {
-          delete clean[k];
-        }
-      }
-      return clean;
-    });
-  }
-  return clone;
-}
-
-function getBridge(): MotionForgeEngineBridge {
-  if (typeof window !== 'undefined' && window.motionforgeEngine) {
-    return window.motionforgeEngine;
-  }
-  // Mock / fallback for testing environments
-  return {
-    invoke: async (method: string) => {
-      if (method === 'getCapabilities') return { schemaVersion: 1, registries: {} };
-      if (method === 'listScenes') return [];
-      if (method === 'listAssets') return [];
-      return null;
-    },
-    onEvent: () => () => undefined,
-  };
-}
-
-export class API {
-  readonly isElectron = true;
-  readonly url = 'in-process';
+export const api = {
+  isElectron: detectElectron(),
+  url: 'in-process',
 
   async ping(): Promise<{ ok: boolean; latencyMs: number }> {
-    const bridge = getBridge();
     const start = performance.now();
     try {
-      await bridge.invoke('getCapabilities');
+      await invokeEngine('getCapabilities');
       return { ok: true, latencyMs: Math.round(performance.now() - start) };
     } catch {
       return { ok: false, latencyMs: -1 };
     }
-  }
+  },
 
   async capabilities(): Promise<CapabilitiesResponse> {
-    const bridge = getBridge();
-    return (await bridge.invoke('getCapabilities')) as CapabilitiesResponse;
-  }
+    return (await invokeEngine('getCapabilities')) as CapabilitiesResponse;
+  },
 
   async getScene(id: string): Promise<StudioScene> {
-    const bridge = getBridge();
-    const scene = (await bridge.invoke('getScene', id)) as StudioScene | null;
-    if (!scene) throw new APIError(404, `unknown scene "${id}"`);
-    return scene;
-  }
+    return engineGetScene(id);
+  },
 
-  async createScene(
-    scene: StudioScene
-  ): Promise<{ id: string; revision: number; status: string; warnings?: string[] }> {
-    const payload = sanitizeSceneForEngine(scene);
-    const bridge = getBridge();
-    try {
-      return (await bridge.invoke('saveScene', unwrapPayload(payload))) as {
-        id: string;
-        revision: number;
-        status: string;
-        warnings?: string[];
-      };
-    } catch (err: any) {
-      throw new APIError(400, err?.message || 'Failed to save scene', err?.issues || []);
-    }
-  }
+  async createScene(scene: StudioScene): Promise<{ id: string; revision: number; status: string; warnings?: string[] }> {
+    return engineSaveScene(scene);
+  },
 
   async deleteScene(id: string): Promise<{ id: string; success: boolean }> {
-    const bridge = getBridge();
-    return (await bridge.invoke('deleteScene', id)) as { id: string; success: boolean };
-  }
+    return engineDeleteScene(id);
+  },
 
-  async listScenes(): Promise<
-    Array<{
-      id: string;
-      name: string;
-      revision: number;
-      hash: string;
-      updatedAt: number;
-      layerCount: number;
-      durationMs: number;
-    }>
-  > {
-    const bridge = getBridge();
-    return (await bridge.invoke('listScenes')) as any;
-  }
+  async listScenes() {
+    return engineListScenes();
+  },
 
-  async listAssets(): Promise<
-    Array<{
-      id: string;
-      name: string;
-      src: string;
-      kind: string;
-      size: number;
-      mimeType: string;
-    }>
-  > {
-    const bridge = getBridge();
-    return (await bridge.invoke('listAssets')) as any;
-  }
+  async listAssets() {
+    return engineListAssets();
+  },
 
   async inspect(id: string, at: number[], includeFullResolution = false) {
-    const bridge = getBridge();
-    return (await bridge.invoke('inspectKeyframes', id, { at, includeFullResolution })) as any;
-  }
+    return engineInspectKeyframes(id, at, includeFullResolution);
+  },
 
   async startRender(sceneId: string, quality: 'draft' | 'production') {
-    const bridge = getBridge();
-    return (await bridge.invoke('startRender', sceneId, quality)) as { id: string; status: string };
-  }
+    return engineStartRender(sceneId, quality);
+  },
 
   async getRender(jobId: string) {
-    const bridge = getBridge();
-    return (await bridge.invoke('getRenderStatus', jobId)) as any;
-  }
+    return getRenderStatus(jobId);
+  },
 
   previewUrl(sceneId: string): string {
-    return `mf-runtime://app/index.html?scene=${encodeURIComponent(sceneId)}`;
-  }
+    // `embedded=1` tells the runtime to stay out of the way: the Studio
+    // provides the SMPTE transport, so the runtime must not mount its own.
+    return `mf-runtime://app/index.html?scene=${encodeURIComponent(sceneId)}&embedded=1`;
+  },
 
   async uploadAsset(filename: string, data: ArrayBuffer | Uint8Array | Blob) {
-    const cleanName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const bridge = getBridge();
-    let buffer: Uint8Array;
-    if (data instanceof Uint8Array) {
-      buffer = data;
-    } else if (data instanceof ArrayBuffer) {
-      buffer = new Uint8Array(data);
-    } else {
-      buffer = new Uint8Array(await (data as Blob).arrayBuffer());
-    }
-    return (await bridge.invoke('ingestAsset', buffer, cleanName)) as any;
-  }
+    return engineIngestAsset(filename, data);
+  },
 
   assetVaultUrl(name: string): string {
     return `mf-vault://${name}`;
-  }
+  },
 
   sfxUrl(name: string): string {
     return `mf-vault://_sfx/${name}.ogg`;
-  }
+  },
 
-  subscribe(sceneId: string, cb: (e: any) => void) {
-    const bridge = getBridge();
-    const unsub = bridge.onEvent((evt) => {
-      if (evt.eventName === 'scene:updated' && (evt.payload as any)?.sceneId === sceneId) {
-        cb(new MessageEvent('scene:updated', { data: JSON.stringify(evt.payload) }));
+  subscribe(sceneId: string, cb: (e: MessageEvent) => void) {
+    const unsubscribe = onEngineEvent((event) => {
+      if (event.eventName === 'scene:updated') {
+        const payload = event.payload as { sceneId?: string };
+        if (payload?.sceneId === sceneId) {
+          cb(new MessageEvent('scene:updated', { data: JSON.stringify(event.payload) }));
+        }
       }
     });
-    return { close: unsub };
-  }
-}
+    return { close: unsubscribe };
+  },
+};
 
-export const api = new API();
 if (typeof window !== 'undefined') {
-  (window as unknown as { api: API }).api = api;
+  (window as unknown as { api: typeof api }).api = api;
 }

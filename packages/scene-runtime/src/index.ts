@@ -331,8 +331,32 @@ async function mountScene(
   if (renderMode) {
     // headless render entry: settle on frame 0, then signal readiness
     await mounted.settle(0);
-  } else {
+  } else if (!isEmbedded()) {
+    // The Studio's Program Monitor provides its own SMPTE transport, so the
+    // runtime's scrubber is only mounted when the runtime is opened STANDALONE
+    // (a browser tab). Inside the Studio it would be a second, conflicting
+    // transport sitting on top of the composition.
     mounted.ui = mountTimelineUI(tl, scene, fps);
+  }
+}
+
+/**
+ * True when the runtime is embedded in a host application (the Studio).
+ *
+ * Detected from the URL (`?embedded=1`, which the Studio sets) and from the
+ * frame heuristic (`window.self !== window.top`).
+ */
+function isEmbedded(): boolean {
+  try {
+    if (new URLSearchParams(window.location.search).get('embedded') === '1') return true;
+  } catch {
+    /* a malformed query string is not an embedding */
+  }
+  try {
+    return window.self !== window.top;
+  } catch {
+    // a cross-origin parent throws on access — that IS an embedding
+    return true;
   }
 }
 

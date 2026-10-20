@@ -7,6 +7,11 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { createEngineCore, EngineCore } from '@motionforge/core-engine';
+import {
+  resolveRuntimeRequest,
+  resolveRuntimeRoot,
+  resolveVaultRequest,
+} from './protocol-paths.js';
 
 app.commandLine.appendSwitch('no-sandbox');
 app.commandLine.appendSwitch('disable-gpu-sandbox');
@@ -46,6 +51,36 @@ let isDirty = false;
 let isQuitting = false;
 let recentProjects: string[] = [];
 
+/**
+ * The scene runtime bundle root.
+ *
+ * Resolved ONCE at startup so a missing bundle is reported immediately,
+ * loudly, and with the exact command that fixes it — instead of surfacing
+ * later as a 404 inside the preview iframe.
+ */
+let runtimeRoot: string | null = null;
+
+/**
+ * The candidate roots for the scene runtime bundle, most specific first.
+ *
+ * `__dirname` is `<repo>/packages/desktop/out/main` in development and
+ * `<app>/resources/app.asar/out/main` in a packaged build, so the list walks
+ * outwards from the executable to the repository layout.
+ */
+function runtimeRootCandidates(): string[] {
+  const candidates: string[] = [];
+  const packaged = process.resourcesPath;
+  if (packaged) {
+    candidates.push(path.join(packaged, 'scene-runtime'));
+    candidates.push(path.join(packaged, 'app.asar.unpacked', 'scene-runtime'));
+  }
+  candidates.push(path.resolve(__dirname, '../../../scene-runtime/dist'));
+  candidates.push(path.resolve(__dirname, '../../scene-runtime/dist'));
+  candidates.push(path.resolve(__dirname, '../runtime'));
+  candidates.push(path.resolve(process.cwd(), 'packages/scene-runtime/dist'));
+  return candidates;
+}
+
 // Whitelist directories for security
 const RECENT_FILE = path.join(os.homedir(), '.motionforge', 'recent.json');
 
@@ -75,7 +110,6 @@ function saveRecentProjects(): void {
 function addRecentProject(p: string): void {
   recentProjects = [p, ...recentProjects.filter((x) => x !== p)].slice(0, 10);
   saveRecentProjects();
-  buildAppMenu();
 }
 
 function updateWindowTitle(): void {
@@ -289,8 +323,13 @@ function buildAppMenu(): void {
     },
   ];
 
+  // The Studio draws its OWN menu bar inside the frameless title bar, so the
+  // native application menu is removed entirely. The template is kept only so
+  // the platform keeps its standard editing shortcuts (copy/paste inside
+  // text fields) available to the renderer.
   const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+  Menu.setApplicationMenu(null);
+  void menu;
 }
 
 function openPreviewWindow(sceneId?: string): void {
@@ -335,6 +374,22 @@ function registerIpcHandlers(): void {
       platform: os.platform(),
       arch: os.arch(),
       version: os.release(),
+    };
+  });
+
+  /**
+   * The resolved scene-runtime bundle.
+   *
+   * The renderer (and the verification harness) needs to know WHICH bundle
+   * is being served — a packaged build and a development checkout point at
+   * different directories, and a mismatch is the exact failure the startup
+   * verification exists to catch.
+   */
+  ipcMain.handle('motionforge:get-runtime-info', () => {
+    return {
+      root: runtimeRoot,
+      indexPath: runtimeRoot ? path.join(runtimeRoot, 'index.html') : null,
+      verified: Boolean(runtimeRoot && existsSync(path.join(runtimeRoot, 'index.html'))),
     };
   });
 
@@ -413,6 +468,43 @@ function registerIpcHandlers(): void {
     updateWindowTitle();
   });
 
+  // ---------------------------------------------------------------------------
+  // Frameless window controls
+  //
+  // The Studio owns its own chrome (see `shell/TitleBar.tsx`), so the native
+  // title bar is gone and these four channels replace it.
+  // ---------------------------------------------------------------------------
+
+  ipcMain.handle('window:minimize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.minimize();
+  });
+
+  ipcMain.handle('window:toggleMaximize', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { isMaximized: false };
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+    return { isMaximized: mainWindow.isMaximized() };
+  });
+
+  ipcMain.handle('window:isMaximized', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { isMaximized: false };
+    return { isMaximized: mainWindow.isMaximized() };
+  });
+
+  ipcMain.handle('window:close', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.close();
+  });
+
+  ipcMain.handle('window:isFullScreen', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return { isFullScreen: false };
+    return { isFullScreen: mainWindow.isFullScreen() };
+  });
+
   const ALLOWED_METHODS = new Set([
     'getCapabilities',
     'getScene',
@@ -455,7 +547,13 @@ async function createMainWindow(): Promise<void> {
     minWidth: 1024,
     minHeight: 700,
     title: 'MotionForge',
-    backgroundColor: '#0a0a0f',
+    // ── Frameless shell ────────────────────────────────────────────────────
+    // The Studio draws its own title bar, menu bar and window controls, so the
+    // native frame AND the native menu bar are both removed.
+    frame: false,
+    titleBarStyle: 'hidden',
+    autoHideMenuBar: true,
+    backgroundColor: '#090a0d',
     webPreferences: {
       preload: preloadPath,
       sandbox: true,
@@ -463,6 +561,23 @@ async function createMainWindow(): Promise<void> {
       nodeIntegration: false,
       webSecurity: true,
     },
+  });
+
+  // Keep the custom chrome in sync with the real window state (a double-click
+  // on the title bar zooms the window without the renderer knowing).
+  const pushMaximizedState = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('window:MaximizedChanged', {
+      isMaximized: mainWindow.isMaximized(),
+    });
+  };
+  mainWindow.on('maximize', pushMaximizedState);
+  mainWindow.on('unmaximize', pushMaximizedState);
+  mainWindow.on('restore', pushMaximizedState);
+  mainWindow.on('enter-full-screen', pushMaximizedState);
+  mainWindow.on('leave-full-screen', pushMaximizedState);
+  mainWindow.on('closed', () => {
+    mainWindow = null;
   });
 
   updateWindowTitle();
@@ -488,10 +603,6 @@ async function createMainWindow(): Promise<void> {
     }
   });
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-
   if (process.env.ELECTRON_RENDERER_URL) {
     console.log(`[desktop] Loading ELECTRON_RENDERER_URL: ${process.env.ELECTRON_RENDERER_URL}`);
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -513,20 +624,49 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
   buildAppMenu();
 
+  // ── Scene runtime bundle ─────────────────────────────────────────────────
+  // Resolved once, up front, so a missing bundle is a startup error with an
+  // actionable message instead of a silent 404 inside the preview iframe.
+  {
+    const { root, tried } = resolveRuntimeRoot(runtimeRootCandidates());
+    runtimeRoot = root;
+    if (root) {
+      const indexPath = path.join(root, 'index.html');
+      if (existsSync(indexPath)) {
+        console.log(`[desktop] scene-runtime bundle verified: ${indexPath}`);
+      } else {
+        console.warn(
+          `[desktop] scene-runtime root found but index.html is missing: ${root}\n` +
+            `         Run "npm run build -w @motionforge/scene-runtime" before launching the desktop shell.`
+        );
+      }
+    } else {
+      console.error(
+        '[desktop] scene-runtime bundle NOT FOUND. The preview viewport will be empty.\n' +
+          '         Tried:\n' +
+          tried.map((c) => `           - ${c}`).join('\n') +
+          '\n         Fix: npm run build -w @motionforge/scene-runtime'
+      );
+    }
+  }
+
   protocol.handle('mf-vault', async (request) => {
     try {
       if (!engineCore) {
         return new Response('Engine not initialized', { status: 503 });
       }
       const url = new URL(request.url);
-      const host = url.hostname;
-      const pathname = url.pathname.replace(/^\/+/, '');
-      const assetRel = decodeURIComponent(host ? (pathname ? `${host}/${pathname}` : host) : pathname);
-      const filePath = path.join(engineCore.paths.vaultDir, assetRel);
-      if (!existsSync(filePath)) {
+      const resolution = resolveVaultRequest(engineCore.paths.vaultDir, url);
+      if (!resolution.filePath) {
+        console.warn(`[mf-vault] Refused request ${request.url}: ${resolution.error}`);
+        return new Response('Asset path refused', { status: 400 });
+      }
+      if (!existsSync(resolution.filePath)) {
         return new Response('Asset not found in vault', { status: 404 });
       }
-      return electronNet.fetch(pathToFileURL(filePath).toString(), {
+      // `pathToFileURL` is the only correct way to hand a Windows drive-letter
+      // path to `net.fetch` — a hand-built `file://D:\...` URL is not a URL.
+      return electronNet.fetch(pathToFileURL(resolution.filePath).toString(), {
         headers: request.headers,
       });
     } catch (err) {
@@ -537,24 +677,23 @@ app.whenReady().then(async () => {
 
   protocol.handle('mf-runtime', async (request) => {
     try {
-      const url = new URL(request.url);
-      let pathname = decodeURIComponent(url.pathname);
-      if (!pathname || pathname === '/' || pathname === '/index.html') {
-        pathname = '/index.html';
+      if (!runtimeRoot) {
+        return new Response(
+          'Scene runtime bundle is not built. Run: npm run build -w @motionforge/scene-runtime',
+          { status: 503 }
+        );
       }
-      const candidates = [
-        path.resolve(__dirname, '../../../scene-runtime/dist'),
-        path.resolve(__dirname, '../../scene-runtime/dist'),
-        path.resolve(__dirname, '../runtime'),
-        path.resolve(process.cwd(), 'packages/scene-runtime/dist'),
-      ];
-      const baseDir = candidates.find((c) => existsSync(c)) || candidates[0];
-      const cleanPath = path.join(baseDir, pathname.replace(/^\/+/, ''));
-      if (!existsSync(cleanPath)) {
-        console.warn(`[mf-runtime] File not found: ${cleanPath}`);
+      const url = new URL(request.url);
+      const resolution = resolveRuntimeRequest(runtimeRoot, url);
+      if (!resolution.filePath) {
+        console.warn(`[mf-runtime] Refused request ${request.url}: ${resolution.error}`);
+        return new Response('Runtime path refused', { status: 400 });
+      }
+      if (!existsSync(resolution.filePath)) {
+        console.warn(`[mf-runtime] File not found: ${resolution.filePath}`);
         return new Response('Runtime file not found', { status: 404 });
       }
-      return electronNet.fetch(pathToFileURL(cleanPath).toString());
+      return electronNet.fetch(pathToFileURL(resolution.filePath).toString());
     } catch (err) {
       console.error('[mf-runtime] Error serving runtime:', err);
       return new Response('Runtime error', { status: 500 });

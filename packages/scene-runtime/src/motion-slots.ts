@@ -128,6 +128,14 @@ export function planMotionSlots(
 export interface MotionWrappers {
   /** the `.mf-layer` root the wrappers were created in */
   root: HTMLElement;
+  /**
+   * The authored static-property wrapper.
+   *
+   * It sits OUTSIDE the motion chain so a layer's persistent `opacity`,
+   * `scale` and `blendMode` compose with the entrance/emphasis/exit tweens
+   * instead of competing with them for the same inline style.
+   */
+  static: HTMLElement;
   entrance: HTMLElement;
   emphasis: HTMLElement;
   exit: HTMLElement;
@@ -149,10 +157,43 @@ export function createMotionWrappers(root: HTMLElement): MotionWrappers {
   };
 
   // nested chain, so transforms compose instead of overwriting each other
-  const entrance = make("mf-entrance", root);
+  const staticSlot = make("mf-static", root);
+  const entrance = make("mf-entrance", staticSlot);
   const emphasis = make("mf-emphasis", entrance);
   const exit = make("mf-exit", emphasis);
-  return { root, entrance, emphasis, exit, content: exit };
+  return { root, static: staticSlot, entrance, emphasis, exit, content: exit };
+}
+
+/**
+ * Apply a layer's authored, non-animated properties to its static wrapper.
+ *
+ * `opacity` and `scale` are the layer's *base* value: the motion presets tween
+ * the inner wrappers, and CSS composes a parent's opacity with a child's, so
+ * an entrance that fades to `autoAlpha: 1` still ends at the authored opacity.
+ *
+ * `visible: false` removes the layer from the frame entirely — the Studio
+ * persists it as a real field, so the runtime has to honour it.
+ */
+export function applyLayerStatics(slot: HTMLElement, layer: SceneLayer): void {
+  const opacity = layer.opacity;
+  if (typeof opacity === "number") {
+    slot.style.opacity = `${Math.min(1, Math.max(0, opacity))}`;
+  }
+
+  const scale = layer.scale;
+  if (typeof scale === "number" && scale !== 1) {
+    slot.style.transform = `scale(${Math.min(10, Math.max(0.05, scale))})`;
+    slot.style.transformOrigin = "50% 50%";
+  }
+
+  const blend = layer.blendMode;
+  if (blend && blend !== "normal") {
+    slot.style.mixBlendMode = blend;
+  }
+
+  if (layer.visible === false) {
+    slot.style.display = "none";
+  }
 }
 
 export interface LayerLifecycleEntry {

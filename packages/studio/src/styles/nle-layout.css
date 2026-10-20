@@ -1,0 +1,570 @@
+/* ==========================================================================
+   MotionForge Pro NLE — Layout
+   The app shell: frameless title bar, tool dock, dockable workspace grid,
+   panels, splitters, timeline and status bar.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   Skip link
+   -------------------------------------------------------------------------- */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 12px;
+  background: var(--mf-accent);
+  color: var(--mf-text-inverse);
+  padding: 6px 14px;
+  font-weight: 600;
+  font-size: var(--mf-text-sm);
+  z-index: 100000;
+  transition: top var(--mf-dur) var(--mf-ease);
+  text-decoration: none;
+}
+.skip-link:focus {
+  top: 6px;
+}
+
+/* --------------------------------------------------------------------------
+   App grid — 32px title bar / workspace / timeline / 22px status bar
+   -------------------------------------------------------------------------- */
+.app {
+  display: grid;
+  grid-template-rows: var(--mf-titlebar-h) 1fr var(--mf-splitter) var(--timeline-height, 240px) var(--mf-statusbar-h);
+  grid-template-columns: 100%;
+  height: 100vh;
+  width: 100vw;
+  background: var(--mf-bg-gutter);
+  overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   Frameless title bar
+   -------------------------------------------------------------------------- */
+.mf-titlebar {
+  display: flex;
+  align-items: stretch;
+  height: var(--mf-titlebar-h);
+  background: var(--mf-bg-header);
+  border-bottom: 1px solid var(--mf-border);
+  position: relative;
+  z-index: 40;
+}
+
+.mf-titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.mf-titlebar-center {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 0;
+  -webkit-app-region: drag;
+}
+
+.mf-titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 0;
+  -webkit-app-region: no-drag;
+}
+
+.mf-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 6px;
+  color: var(--mf-accent-text);
+}
+.mf-brand-mark {
+  display: block;
+  color: var(--mf-accent);
+}
+.mf-brand-name {
+  color: var(--mf-text-1);
+  font-size: var(--mf-text-sm);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* --- application menu bar ------------------------------------------------ */
+.mf-menubar {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+}
+.mf-menubar-item {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: var(--mf-text-sm);
+  color: var(--mf-text-2);
+  background: transparent;
+  white-space: nowrap;
+}
+.mf-menubar-item:hover {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-1);
+}
+.mf-menubar-item.is-open {
+  background: var(--mf-accent-dim);
+  color: var(--mf-text-1);
+}
+
+.mf-menu-pop {
+  position: fixed;
+  min-width: 220px;
+  background: var(--mf-bg-elevated);
+  border: 1px solid var(--mf-border-strong);
+  box-shadow: var(--shadow-lg);
+  padding: 4px 0;
+  z-index: 100000;
+}
+.mf-menu-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  width: 100%;
+  padding: 5px 12px;
+  font-size: var(--mf-text-sm);
+  color: var(--mf-text-1);
+  text-align: left;
+}
+.mf-menu-row:hover {
+  background: var(--mf-accent-dim);
+}
+.mf-menu-row[disabled] {
+  color: var(--mf-text-3);
+  pointer-events: none;
+}
+.mf-menu-row.is-danger:hover {
+  background: var(--mf-record-dim);
+  color: var(--mf-record);
+}
+.mf-menu-sep {
+  height: 1px;
+  background: var(--mf-border);
+  margin: 4px 0;
+}
+.mf-menu-shortcut {
+  font-family: var(--mf-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--mf-text-xs);
+  color: var(--mf-text-3);
+}
+
+/* --- breadcrumb + dirty dot ---------------------------------------------- */
+.mf-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--mf-text-sm);
+  color: var(--mf-text-2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.mf-breadcrumb-project {
+  color: var(--mf-text-1);
+  font-weight: 600;
+}
+.mf-breadcrumb-sep {
+  color: var(--mf-text-3);
+}
+.mf-breadcrumb-scene {
+  color: var(--mf-text-2);
+  font-family: var(--mf-font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mf-dirty-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mf-warning);
+  flex: none;
+}
+
+/* --- workspace preset pills ---------------------------------------------- */
+.mf-workspace-pills {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  background: var(--mf-bg-sunken);
+  border: 1px solid var(--mf-border);
+  border-radius: var(--mf-radius);
+  padding: 1px;
+  -webkit-app-region: no-drag;
+}
+.mf-workspace-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  font-size: var(--mf-text-xs);
+  font-weight: 500;
+  color: var(--mf-text-2);
+  border-radius: var(--mf-radius-sm);
+  white-space: nowrap;
+}
+.mf-workspace-pill:hover {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-1);
+}
+.mf-workspace-pill.is-active {
+  background: var(--mf-accent);
+  color: var(--mf-text-inverse);
+  font-weight: 600;
+}
+.mf-workspace-pill svg {
+  flex: none;
+}
+
+/* --- window controls ------------------------------------------------------ */
+.mf-window-controls {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  margin-left: 6px;
+}
+.mf-window-btn {
+  width: 40px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mf-text-2);
+  background: transparent;
+}
+.mf-window-btn:hover {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-1);
+}
+.mf-window-btn.is-close:hover {
+  background: #e81123;
+  color: #ffffff;
+}
+
+/* --------------------------------------------------------------------------
+   Workspace row — a flex row of rails, splitters and the centre monitor
+   -------------------------------------------------------------------------- */
+.mf-workspace {
+  display: flex;
+  min-height: 0;
+  background: var(--mf-bg-gutter);
+  overflow: hidden;
+}
+.mf-workspace-center {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  gap: var(--mf-gutter);
+  padding: var(--mf-gutter) 0;
+}
+.mf-workspace-center > * {
+  flex: 1;
+  min-width: 0;
+}
+.mf-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mf-gutter);
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--mf-gutter) 0;
+}
+.mf-rail-left {
+  width: var(--left-panel-width, 280px);
+  flex: none;
+}
+.mf-rail-right {
+  width: var(--right-panel-width, 340px);
+  flex: none;
+}
+.mf-rail > * {
+  min-height: 0;
+  flex: 1 1 0;
+}
+.mf-rail > *:first-child {
+  flex: 1 1 42%;
+}
+.mf-rail.is-hidden {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   Maximised panel (Premiere's `~` behaviour)
+   --------------------------------------------------------------------------
+   `:has()` lets a container react to a maximised descendant, so the whole
+   workspace can collapse to the focused panel without any extra state.
+   -------------------------------------------------------------------------- */
+.mf-workspace:has(.mf-maximized-host) .mf-rail:not(:has(.mf-maximized-host)),
+.mf-workspace:has(.mf-maximized-host) .mf-splitter,
+.mf-workspace:has(.mf-maximized-host) .mf-workspace-center {
+  display: none;
+}
+.mf-workspace:has(.mf-maximized-host) .mf-rail:has(.mf-maximized-host) {
+  width: auto;
+  flex: 1 1 auto;
+  padding: var(--mf-gutter) 0;
+}
+
+/* --------------------------------------------------------------------------
+   Tool dock (vertical rail)
+   -------------------------------------------------------------------------- */
+.mf-tool-dock {
+  width: var(--mf-tool-dock-w);
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0;
+  background: var(--mf-bg-panel);
+  border-right: 1px solid var(--mf-border);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.mf-tool-btn {
+  width: 30px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mf-radius);
+  color: var(--mf-text-2);
+  background: transparent;
+  position: relative;
+}
+.mf-tool-btn:hover {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-1);
+}
+.mf-tool-btn.is-active {
+  background: var(--mf-accent-dim);
+  color: var(--mf-accent-text);
+  box-shadow: inset 2px 0 0 var(--mf-accent);
+}
+.mf-tool-btn[disabled] {
+  opacity: 0.35;
+  pointer-events: none;
+}
+.mf-tool-sep {
+  width: 20px;
+  height: 1px;
+  background: var(--mf-border);
+  margin: 3px 0;
+}
+.mf-tool-key {
+  position: absolute;
+  right: 2px;
+  bottom: 0;
+  font-family: var(--mf-font-mono);
+  font-size: 8px;
+  color: var(--mf-text-3);
+  opacity: 0;
+  transition: opacity var(--mf-dur) var(--mf-ease);
+}
+.mf-tool-btn:hover .mf-tool-key,
+.mf-tool-btn.is-active .mf-tool-key {
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------------------
+   Left rail — the Project Bin above the Layer Stack, separated by a gutter
+   -------------------------------------------------------------------------- */
+.mf-left-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mf-gutter);
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.mf-left-rail > * {
+  min-height: 0;
+  flex: 1 1 0;
+}
+.mf-left-rail > *:first-child {
+  flex: 1 1 42%;
+}
+
+/* --------------------------------------------------------------------------
+   Panels
+   -------------------------------------------------------------------------- */
+.mf-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--mf-bg-panel);
+  border: 1px solid var(--mf-border);
+  position: relative;
+}
+.mf-panel.is-focused {
+  border-color: var(--mf-border-focus);
+}
+.mf-panel.is-sunken {
+  background: var(--mf-bg-sunken);
+}
+
+.mf-panel-header {
+  display: flex;
+  align-items: stretch;
+  height: var(--mf-panel-header-h);
+  flex: none;
+  background: var(--mf-bg-header);
+  border-bottom: 1px solid var(--mf-border);
+}
+.mf-panel-tabs {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow: hidden;
+}
+.mf-panel-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: var(--mf-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mf-text-3);
+  border-right: 1px solid var(--mf-border);
+  background: transparent;
+  white-space: nowrap;
+}
+.mf-panel-tab:hover {
+  color: var(--mf-text-1);
+  background: var(--mf-bg-hover);
+}
+.mf-panel-tab.is-active {
+  color: var(--mf-accent-text);
+  background: var(--mf-bg-panel);
+  box-shadow: inset 0 -2px 0 var(--mf-accent);
+}
+.mf-panel-tab svg {
+  flex: none;
+}
+.mf-panel-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+}
+.mf-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.mf-panel-body.is-scrollable {
+  overflow-y: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Splitters
+   -------------------------------------------------------------------------- */
+.mf-splitter {
+  background: var(--mf-bg-gutter);
+  position: relative;
+  z-index: 15;
+}
+.mf-splitter.is-vertical {
+  width: var(--mf-splitter);
+  cursor: col-resize;
+}
+.mf-splitter.is-horizontal {
+  height: var(--mf-splitter);
+  cursor: row-resize;
+}
+.mf-splitter::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+}
+.mf-splitter.is-vertical::after {
+  inset: 0 -3px;
+}
+.mf-splitter.is-horizontal::after {
+  inset: -3px 0;
+}
+.mf-splitter:hover,
+.mf-splitter.is-active {
+  background: var(--mf-accent);
+}
+
+/* --------------------------------------------------------------------------
+   Timeline region
+   -------------------------------------------------------------------------- */
+.mf-timeline-region {
+  display: flex;
+  min-height: 0;
+  background: var(--mf-bg-gutter);
+}
+.mf-timeline-host {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+.mf-timeline-host > .mf-panel {
+  flex: 1 1 auto;
+}
+
+/* --------------------------------------------------------------------------
+   Status bar
+   -------------------------------------------------------------------------- */
+.mf-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: var(--mf-statusbar-h);
+  padding: 0 10px;
+  background: var(--mf-bg-header);
+  border-top: 1px solid var(--mf-border);
+  font-size: var(--mf-text-xs);
+  color: var(--mf-text-2);
+  font-family: var(--mf-font-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.mf-status-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.mf-status-spacer {
+  flex: 1;
+}
+.mf-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mf-text-3);
+  flex: none;
+}
+.mf-status-dot.is-online {
+  background: var(--mf-success);
+}
+.mf-status-dot.is-offline {
+  background: var(--mf-record);
+}
+.mf-status-dot.is-busy {
+  background: var(--mf-warning);
+}
