@@ -12,8 +12,19 @@ function makeRng(seed: number): () => number {
 }
 
 export function renderBackground(layer: BackgroundLayer, ctx: LayerContext): { content: HTMLElement } {
-  const { content } = ctx;
   const v = layer.variant;
+
+  // The background paints into its OWN full-bleed host instead of into the
+  // motion wrapper.
+  //
+  // The wrapper (`.mf-exit`) is animated by the entrance/exit presets, and the
+  // unified transform pipeline owns the transform of the layer's CONTENT
+  // element — so the content element has to be a distinct element, not the
+  // wrapper itself.
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;inset:0;";
+  ctx.content.appendChild(host);
+  const content = host;
 
   if (v.variant === "solid") {
     content.style.background = v.color;

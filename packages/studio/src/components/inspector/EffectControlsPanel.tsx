@@ -1,4 +1,6 @@
 import { Component, For, Show, createMemo, createSignal } from 'solid-js';
+import { interpolateKeyframeValue } from '@motionforge/scene-spec';
+import type { KeyframeProperty, LayerFilterKey } from '@motionforge/scene-spec';
 import { store } from '../../state/store.js';
 import type { StudioLayer } from '../../types.js';
 import { ScrubInput } from './ScrubInput.js';
@@ -6,17 +8,19 @@ import { PanelContainer } from '../workspace/PanelContainer.js';
 import { layerKindColor } from '../hierarchy/LayerStackPanel.js';
 import {
   IconChevronRight,
-  IconComposition,
+  IconDiamond,
   IconLock,
   IconReset,
+  IconStopwatch,
 } from '../icons/NleIcons.js';
 
 /**
  * Effect Controls — the property inspector.
  *
  * Two modes:
- *  - a LAYER is selected → the transform / timing / content accordions for
- *    that layer, with the content section switching on the layer kind,
+ *  - a LAYER is selected → the transform / effects / timing / content
+ *    accordions for that layer, with the content section switching on the
+ *    layer kind,
  *  - nothing is selected → the COMPOSITION settings.
  *
  * Every numeric field is a `<ScrubInput />`: one undo snapshot per gesture,
@@ -42,10 +46,126 @@ const Accordion: Component<AccordionProps> = (props) => (
   </div>
 );
 
+/* ── keyframe controls ────────────────────────────────────────────────────── */
+
+interface KeyframeControlsProps {
+  /** the animatable property this cluster drives */
+  property: KeyframeProperty;
+  /**
+   * The RAW property value — the number the keyframe stores.
+   *
+   * It is NOT the number the field displays: `scale` is shown as a percent
+   * but stored as a multiplier (1 = 100%), and `opacity` is shown as a
+   * percent but stored as a fraction (1 = 100%).
+   */
+  value: number;
+  disabled?: boolean;
+}
+
+/**
+ * The stopwatch cluster of one animatable property.
+ *
+ *      [<]  [stopwatch | diamond]  [>]
+ *
+ * The middle button TOGGLES a keyframe at the playhead; the arrows JUMP the
+ * playhead to the previous / next keyframe of the SAME property.
+ */
+const KeyframeControls: Component<KeyframeControlsProps> = (props) => {
+  const layerId = () => store.state.selectedLayerId;
+
+  const keyframe = () => {
+    const id = layerId();
+    if (!id) return null;
+    return store.findLayerKeyframe(id, props.property, store.state.playhead);
+  };
+
+  const hasPrev = () => {
+    const id = layerId();
+    if (!id) return false;
+    return store.prevLayerKeyframe(id, props.property, store.state.playhead) !== null;
+  };
+
+  const hasNext = () => {
+    const id = layerId();
+    if (!id) return false;
+    return store.nextLayerKeyframe(id, props.property, store.state.playhead) !== null;
+  };
+
+  const toggle = () => {
+    const id = layerId();
+    if (!id) return;
+    const existing = keyframe();
+    if (existing) {
+      store.removeLayerKeyframe(id, existing.id);
+      store.addToast(`Removed the ${props.property} keyframe`, 'info');
+      return;
+    }
+    store.setLayerKeyframe(id, props.property, store.state.playhead, props.value);
+    store.addToast(
+      `Keyframed ${props.property} at ${Math.round(store.state.playhead)}ms`,
+      'success'
+    );
+  };
+
+  const jump = (direction: 'prev' | 'next') => {
+    const id = layerId();
+    if (!id) return;
+    const target =
+      direction === 'next'
+        ? store.nextLayerKeyframe(id, props.property, store.state.playhead)
+        : store.prevLayerKeyframe(id, props.property, store.state.playhead);
+    if (!target) return;
+    store.setPlayhead(target.timeMs);
+  };
+
+  return (
+    <span class="mf-kf-controls" data-keyframe-property={props.property}>
+      <button
+        class="mf-kf-btn"
+        title="Previous keyframe"
+        aria-label={`Previous ${props.property} keyframe`}
+        data-action="keyframe-prev"
+        disabled={props.disabled || !hasPrev()}
+        onClick={() => jump('prev')}
+      >
+        <IconChevronRight size={11} style={{ transform: 'rotate(180deg)' }} />
+      </button>
+
+      <button
+        class={`mf-kf-btn ${keyframe() ? 'is-keyed' : ''}`}
+        title={keyframe() ? 'Remove the keyframe' : 'Add a keyframe at the playhead'}
+        aria-label={`${props.property} keyframe`}
+        aria-pressed={keyframe() !== null}
+        data-action="keyframe-toggle"
+        disabled={props.disabled}
+        onClick={toggle}
+      >
+        <Show when={keyframe()} fallback={<IconStopwatch size={11} />}>
+          <IconDiamond size={11} filled />
+        </Show>
+      </button>
+
+      <button
+        class="mf-kf-btn"
+        title="Next keyframe"
+        aria-label={`Next ${props.property} keyframe`}
+        data-action="keyframe-next"
+        disabled={props.disabled || !hasNext()}
+        onClick={() => jump('next')}
+      >
+        <IconChevronRight size={11} />
+      </button>
+    </span>
+  );
+};
+
+/* ── the inspector ────────────────────────────────────────────────────────── */
+
 export const EffectControlsPanel: Component = () => {
   const state = store.state;
   const [openSections, setOpenSections] = createSignal({
     transform: true,
+    effects: true,
     timing: true,
     content: true,
     composition: true,
@@ -74,7 +194,53 @@ export const EffectControlsPanel: Component = () => {
    * save. The live value is written WITHOUT history so a drag does not flood
    * the undo stack.
    */
-  const bindScrub = (path: string, label: string) => ({
+  /**
+   * The value a keyframable property SHOWS at the playhead.
+   *
+   * A keyframed property is not the authored value — it is the INTERPOLATED
+   * value at the current time. Showing the authored number would make the
+   * inspector disagree with the preview (the exact defect the v4 verification
+   * caught). The interpolation is the SAME function the runtime renders with
+   * (`@motionforge/scene-spec`).
+   */
+  const keyframedValue = (property: KeyframeProperty): number | undefined => {
+    const layer = selectedLayer();
+    if (!layer) return undefined;
+    return interpolateKeyframeValue(
+      layer.keyframes as never,
+      layer.tracks as never,
+      property,
+      state.playhead
+    );
+  };
+
+  /** The value a keyframable scrub field displays. */
+  const displayValue = (
+    property: KeyframeProperty,
+    authored: number,
+    scale = 1
+  ): number => {
+    const keyed = keyframedValue(property);
+    if (keyed === undefined) return authored;
+    return scale === 1 ? keyed : keyed / scale;
+  };
+
+  /** True when the property has ANY keyframe (so an edit should auto-key). */
+  const isKeyframed = (property: KeyframeProperty): boolean =>
+    store.layerKeyframes(state.selectedLayerId ?? '', property).length > 0;
+
+  /**
+   * Bind a scrub field to a dotted path on the selected layer.
+   *
+   * `valueScale` converts the DISPLAYED value into the AUTHORED one: the
+   * Scale and Opacity fields are shown as percentages but stored as
+   * multipliers, so a scrub of "120 %" must write `1.2`, not `120`.
+   *
+   * When the property is KEYFRAMED, an edit auto-keys: the new value is
+   * written into the keyframe at the playhead (After Effects semantics) — the
+   * preview follows the scrub, and the keyframe curve follows the value.
+   */
+  const bindScrub = (path: string, label: string, property?: KeyframeProperty, valueScale = 1) => ({
     onScrubStart: () => {
       const id = state.selectedLayerId;
       if (!id) return;
@@ -85,6 +251,7 @@ export const EffectControlsPanel: Component = () => {
       if (!id) return;
       const layer = state.scene?.layers.find((l) => l.id === id);
       if (!layer) return;
+      const authored = valueScale === 1 ? val : val / valueScale;
       const parts = path.split('.');
       const next: Record<string, unknown> = { ...(layer as unknown as Record<string, unknown>) };
       let cursor: Record<string, unknown> = next;
@@ -96,13 +263,82 @@ export const EffectControlsPanel: Component = () => {
         cursor = cursor[key] as Record<string, unknown>;
       }
       const last = parts[parts.length - 1];
-      if (last) cursor[last] = val;
+      if (last) cursor[last] = authored;
       store.patchLayer(id, next);
     },
-    onCommit: () => {
+    onCommit: (val: number) => {
+      const id = state.selectedLayerId;
+      if (id && property && isKeyframed(property)) {
+        // auto-key: a keyframed property writes its value into the keyframe
+        // at the playhead instead of only changing the authored value
+        const authored = valueScale === 1 ? val : val / valueScale;
+        store.setLayerKeyframe(id, property, state.playhead, authored);
+      }
       void store.executeSave();
     },
   });
+
+  /* ── visual filters ──────────────────────────────────────────────────── */
+
+  /** The current value of one filter, or `fallback` when it is absent. */
+  const filterValue = (key: LayerFilterKey, fallback: number): number => {
+    const layer = selectedLayer();
+    const value = layer?.filters?.[key];
+    return typeof value === 'number' ? value : fallback;
+  };
+
+  /** The filter bag of the selected layer with one entry set (or cleared). */
+  const filterBag = (
+    layerId: string,
+    key: LayerFilterKey,
+    value: number,
+    neutral: number
+  ): Record<string, number | string> => {
+    const layer = state.scene?.layers.find((l) => l.id === layerId);
+    const bag: Record<string, number | string> = {};
+    for (const [k, v] of Object.entries(layer?.filters ?? {})) {
+      if (v === undefined) continue;
+      bag[k] = v as number | string;
+    }
+    if (value === neutral) delete bag[key];
+    else bag[key] = value;
+    return bag;
+  };
+
+  /**
+   * Bind a numeric filter to the selected layer.
+   *
+   * The gesture pushes ONE undo snapshot at its start, the live value is
+   * written WITHOUT history (so a drag does not flood the undo stack) and
+   * the commit goes through `store.setLayerFilter` — the one canonical write
+   * path for the filter bag.
+   */
+  const bindFilter = (key: LayerFilterKey, neutral: number, label: string) => {
+    let before: number | undefined;
+    return {
+      onScrubStart: () => {
+        const id = state.selectedLayerId;
+        if (!id) return;
+        const current = state.scene?.layers.find((l) => l.id === id)?.filters?.[key];
+        before = typeof current === 'number' ? current : undefined;
+        store.pushHistory(`Scrub ${label} of ${id}`);
+      },
+      onChange: (val: number) => {
+        const id = state.selectedLayerId;
+        if (!id) return;
+        store.patchLayer(id, { filters: filterBag(id, key, val, neutral) });
+      },
+      onCommit: (val: number) => {
+        const id = state.selectedLayerId;
+        if (!id) return;
+        // put the pre-gesture value back so `setLayerFilter` snapshots it as
+        // the undo target, then write the final value through the store action
+        store.patchLayer(id, { filters: filterBag(id, key, before ?? neutral, neutral) });
+        store.setLayerFilter(id, key, val === neutral ? undefined : val);
+        void store.executeSave();
+      },
+    };
+  };
 
   const setText = (path: string, value: string, label: string) => {
     const id = state.selectedLayerId;
@@ -149,6 +385,7 @@ export const EffectControlsPanel: Component = () => {
   return (
     <PanelContainer
       id="effect-controls"
+      class="panel-container"
       tabs={['Effect Controls']}
       activeTab="Effect Controls"
       label="Effect controls"
@@ -290,16 +527,7 @@ export const EffectControlsPanel: Component = () => {
         {(layer) => (
           <div class="mf-panel-body is-scrollable" id="layer-properties">
             {/* layer header */}
-            <div
-              style={{
-                display: 'flex',
-                'align-items': 'center',
-                gap: '6px',
-                padding: '6px 8px',
-                'border-bottom': '1px solid var(--mf-border)',
-                background: 'var(--mf-bg-header)',
-              }}
-            >
+            <div class="mf-layer-head">
               <span class="mf-swatch" style={{ background: layerKindColor(layer().type) }} />
               <input
                 class="mf-input"
@@ -318,73 +546,99 @@ export const EffectControlsPanel: Component = () => {
 
             {/* transform */}
             <Accordion title="Transform" open={openSections().transform} onToggle={() => toggle('transform')}>
-              <div class="mf-grid-2">
-                <div class="mf-field">
+              <div class="mf-prop-list">
+                <div class="mf-prop-row">
                   <label class="mf-label">Position X</label>
+                  <KeyframeControls
+                    property="xPct"
+                    value={displayValue('xPct', layer().position?.xPct ?? 50)}
+                    disabled={layer().locked}
+                  />
                   <ScrubInput
                     label="X"
                     unit="%"
-                    value={layer().position?.xPct ?? 50}
+                    value={displayValue('xPct', layer().position?.xPct ?? 50)}
                     min={-200}
                     max={200}
                     step={0.5}
                     disabled={layer().locked}
-                    {...bindScrub('position.xPct', `xPct of ${layer().id}`)}
+                    {...bindScrub('position.xPct', `xPct of ${layer().id}`, 'xPct')}
                   />
                 </div>
-                <div class="mf-field">
+
+                <div class="mf-prop-row">
                   <label class="mf-label">Position Y</label>
+                  <KeyframeControls
+                    property="yPct"
+                    value={displayValue('yPct', layer().position?.yPct ?? 50)}
+                    disabled={layer().locked}
+                  />
                   <ScrubInput
                     label="Y"
                     unit="%"
-                    value={layer().position?.yPct ?? 50}
+                    value={displayValue('yPct', layer().position?.yPct ?? 50)}
                     min={-200}
                     max={200}
                     step={0.5}
                     disabled={layer().locked}
-                    {...bindScrub('position.yPct', `yPct of ${layer().id}`)}
+                    {...bindScrub('position.yPct', `yPct of ${layer().id}`, 'yPct')}
                   />
                 </div>
-              </div>
 
-              <div class="mf-grid-3">
-                <div class="mf-field">
+                <div class="mf-prop-row">
                   <label class="mf-label">Scale</label>
+                  <KeyframeControls
+                    property="scale"
+                    value={displayValue('scale', layer().scale ?? 1)}
+                    disabled={layer().locked}
+                  />
                   <ScrubInput
                     label="S"
                     unit="%"
-                    value={Math.round((layer().scale ?? 1) * 100)}
+                    value={Math.round(displayValue('scale', layer().scale ?? 1) * 100)}
                     min={5}
                     max={1000}
                     step={1}
                     disabled={layer().locked}
-                    {...bindScrub('scale', `scale of ${layer().id}`)}
+                    {...bindScrub('scale', `scale of ${layer().id}`, 'scale', 100)}
                   />
                 </div>
-                <div class="mf-field">
+
+                <div class="mf-prop-row">
                   <label class="mf-label">Rotation</label>
+                  <KeyframeControls
+                    property="rotation"
+                    value={displayValue('rotation', layer().rotation ?? 0)}
+                    disabled={layer().locked}
+                  />
                   <ScrubInput
                     label="R"
                     unit="°"
-                    value={layer().rotation ?? 0}
+                    value={displayValue('rotation', layer().rotation ?? 0)}
                     min={-3600}
                     max={3600}
                     step={1}
                     disabled={layer().locked}
-                    {...bindScrub('rotation', `rotation of ${layer().id}`)}
+                    {...bindScrub('rotation', `rotation of ${layer().id}`, 'rotation')}
                   />
                 </div>
-                <div class="mf-field">
+
+                <div class="mf-prop-row">
                   <label class="mf-label">Opacity</label>
+                  <KeyframeControls
+                    property="opacity"
+                    value={displayValue('opacity', layer().opacity ?? 1)}
+                    disabled={layer().locked}
+                  />
                   <ScrubInput
                     label="O"
                     unit="%"
-                    value={Math.round((layer().opacity ?? 1) * 100)}
+                    value={Math.round(displayValue('opacity', layer().opacity ?? 1) * 100)}
                     min={0}
                     max={100}
                     step={1}
                     disabled={layer().locked}
-                    {...bindScrub('opacity', `opacity of ${layer().id}`)}
+                    {...bindScrub('opacity', `opacity of ${layer().id}`, 'opacity', 100)}
                   />
                 </div>
               </div>
@@ -459,6 +713,132 @@ export const EffectControlsPanel: Component = () => {
                 <IconReset size={12} />
                 <span>Reset Transform</span>
               </button>
+            </Accordion>
+
+            {/* visual effects */}
+            <Accordion title="Visual Effects" open={openSections().effects} onToggle={() => toggle('effects')}>
+              <div class="mf-grid-2">
+                <div class="mf-field">
+                  <label class="mf-label">Blur (px)</label>
+                  <ScrubInput
+                    label="Blur"
+                    unit="px"
+                    value={filterValue('blur', 0)}
+                    min={0}
+                    max={60}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('blur', 0, 'blur')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Corner Radius (px)</label>
+                  <ScrubInput
+                    label="Rad"
+                    unit="px"
+                    value={filterValue('cornerRadius', 0)}
+                    min={0}
+                    max={120}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('cornerRadius', 0, 'corner radius')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Drop Shadow Blur (px)</label>
+                  <ScrubInput
+                    label="Shad"
+                    unit="px"
+                    value={filterValue('shadowBlur', 0)}
+                    min={0}
+                    max={80}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('shadowBlur', 0, 'shadow blur')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Shadow Colour</label>
+                  <input
+                    type="color"
+                    class="mf-color-input"
+                    value={String(layer().filters?.shadowColor ?? '#000000')}
+                    disabled={layer().locked}
+                    onChange={(e) => {
+                      const id = state.selectedLayerId;
+                      if (!id) return;
+                      store.setLayerFilter(id, 'shadowColor', e.currentTarget.value);
+                      void store.executeSave();
+                    }}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Brightness (%)</label>
+                  <ScrubInput
+                    label="Brt"
+                    unit="%"
+                    value={filterValue('brightness', 100)}
+                    min={0}
+                    max={200}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('brightness', 100, 'brightness')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Contrast (%)</label>
+                  <ScrubInput
+                    label="Con"
+                    unit="%"
+                    value={filterValue('contrast', 100)}
+                    min={0}
+                    max={200}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('contrast', 100, 'contrast')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Saturate (%)</label>
+                  <ScrubInput
+                    label="Sat"
+                    unit="%"
+                    value={filterValue('saturate', 100)}
+                    min={0}
+                    max={200}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('saturate', 100, 'saturate')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Blend Mode</label>
+                  <select
+                    class="mf-select"
+                    value={layer().blendMode ?? 'normal'}
+                    disabled={layer().locked}
+                    onChange={(e) =>
+                      patch(
+                        { blendMode: e.currentTarget.value },
+                        `Set blend mode of ${layer().id}`
+                      )
+                    }
+                  >
+                    <option value="normal">Normal</option>
+                    <option value="multiply">Multiply</option>
+                    <option value="screen">Screen</option>
+                    <option value="overlay">Overlay</option>
+                    <option value="plus-lighter">Plus Lighter</option>
+                  </select>
+                </div>
+              </div>
             </Accordion>
 
             {/* timing */}
@@ -699,7 +1079,7 @@ export const EffectControlsPanel: Component = () => {
                       max={4000}
                       step={10}
                       disabled={layer().locked}
-                      {...bindScrub('widthPx', `width of ${layer().id}`)}
+                      {...bindScrub('widthPx', `widthPx of ${layer().id}`)}
                     />
                   </div>
                   <div class="mf-field">
@@ -712,7 +1092,7 @@ export const EffectControlsPanel: Component = () => {
                       max={4000}
                       step={10}
                       disabled={layer().locked}
-                      {...bindScrub('heightPx', `height of ${layer().id}`)}
+                      {...bindScrub('heightPx', `heightPx of ${layer().id}`)}
                     />
                   </div>
                 </div>

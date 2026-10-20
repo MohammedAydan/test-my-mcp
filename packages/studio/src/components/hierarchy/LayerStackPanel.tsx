@@ -65,6 +65,7 @@ export const LayerStackPanel: Component = () => {
   return (
     <PanelContainer
       id="layer-stack"
+      class="panel-container"
       tabs={['Layers']}
       activeTab="Layers"
       label="Layer stack"
@@ -125,7 +126,7 @@ export const LayerStackPanel: Component = () => {
                 >
                   <span style={{ display: 'flex', gap: '1px', 'align-items': 'center' }}>
                     <button
-                      class={`mf-icon-btn ${isVisible(layer) ? 'is-on' : ''}`}
+                      class={`mf-icon-btn mf-stack-toggle ${isVisible(layer) ? 'is-on' : ''}`}
                       title={isVisible(layer) ? 'Hide layer' : 'Show layer'}
                       aria-label={isVisible(layer) ? 'Hide layer' : 'Show layer'}
                       aria-pressed={isVisible(layer)}
@@ -138,7 +139,7 @@ export const LayerStackPanel: Component = () => {
                       {isVisible(layer) ? <IconEye size={12} /> : <IconEyeOff size={12} />}
                     </button>
                     <button
-                      class="mf-icon-btn"
+                      class="mf-icon-btn mf-stack-toggle"
                       title="Solo layer"
                       aria-label="Solo layer"
                       data-action="solo"
@@ -150,7 +151,7 @@ export const LayerStackPanel: Component = () => {
                       <IconSolo size={12} />
                     </button>
                     <button
-                      class={`mf-icon-btn ${isLocked(layer) ? 'is-locked' : ''}`}
+                      class={`mf-icon-btn mf-stack-toggle ${isLocked(layer) ? 'is-locked' : ''}`}
                       title={isLocked(layer) ? 'Unlock layer' : 'Lock layer'}
                       aria-label={isLocked(layer) ? 'Unlock layer' : 'Lock layer'}
                       aria-pressed={isLocked(layer)}

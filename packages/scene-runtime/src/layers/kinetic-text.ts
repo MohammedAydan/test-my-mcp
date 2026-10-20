@@ -59,11 +59,14 @@ export function renderKineticText(layer: KineticTextLayer, ctx: LayerContext): K
   const family = fontFamilyFor(ctx.fonts, layer.role, layer.googleFamily);
 
   const block = document.createElement("div");
+  // The anchor (`left` / `top`) is authored here; the TRANSFORM is owned by
+  // the unified pipeline (`../transform.js`), which writes it on this very
+  // element. Writing a second, differently-formatted transform here is what
+  // used to desync the preview from the scene.
   block.style.cssText = [
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
-    `transform:translate(-50%,-50%)${layer.rotation ? ` rotate(${layer.rotation}deg)` : ""}`,
     `text-align:${layer.align}`,
     `direction:${layer.direction}`,
     `font-family:${family}`,

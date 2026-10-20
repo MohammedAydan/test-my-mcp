@@ -96,7 +96,6 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
-    `transform:translate(-50%,-50%)${layer.rotation ? ` rotate(${layer.rotation}deg)` : ""}`,
     `width:${layer.widthPx}px`,
     `height:${resolvedHeightPx}px`,
     "max-width:100%",
@@ -113,7 +112,13 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
     filters.push(`drop-shadow(0 0 ${12 * layer.glow.strength}px ${layer.glow.color})`);
     filters.push(`drop-shadow(0 0 ${36 * layer.glow.strength}px ${layer.glow.color})`);
   }
-  if (filters.length > 0) host.style.filter = filters.join(" ");
+  if (filters.length > 0) {
+    const authored = filters.join(" ");
+    host.style.filter = authored;
+    // remembered so the unified pipeline can COMPOSE the layer's own filters
+    // with these instead of replacing them
+    host.dataset.mfAuthoredFilter = authored;
+  }
 
   // frosted plate behind the logo: same curve as the mask, grown by the inset
   if (layer.glass) {

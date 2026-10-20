@@ -140,6 +140,9 @@ describe("legacy scene healing on load", () => {
     const scenesDir = path.join(workdir, "scenes");
     const legacy = {
       ...BASE,
+      // a DISTINCT name: the store de-duplicates by name, and this fixture is
+      // about legacy healing — not about being the newest of a group
+      name: "Legacy Fixture",
       id: "legacy-scene",
       layers: [
         {

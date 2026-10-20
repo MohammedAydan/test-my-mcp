@@ -13,8 +13,12 @@ const GRAIN_URI =
   );
 
 export function renderForegroundFx(layer: ForegroundFxLayer, ctx: LayerContext): { content: HTMLElement } {
-  // neutral, always-transparent target for entrance/exit presets
+  // The layer's own content element: a real, full-bleed box, so the unified
+  // transform pipeline has an element to own and the bounds report has a box
+  // to measure. It paints nothing — the overlays below do that.
   const content = document.createElement("div");
+  content.style.cssText = "position:absolute;inset:0;pointer-events:none;";
+  ctx.content.appendChild(content);
 
   for (const effect of layer.effects) {
     if (effect.kind === "vignette") {

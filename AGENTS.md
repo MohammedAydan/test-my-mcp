@@ -76,6 +76,18 @@ packages/
     hierarchy,monitor,inspector,timeline,export,modals,shared}`. A component owns
     ONE responsibility, reads ONE store slice and talks to the engine through
     `services/engine-bridge.ts`. `App.tsx` is the composition root only.
+13. **ONE transform owner, ONE keyframe implementation.** The runtime's
+    `scene-runtime/src/transform.ts` is the only thing that writes a layer's
+    `transform` / `opacity` / `filter`; the renderers write the anchor
+    (`left`/`top`) and nothing else. The keyframe INTERPOLATION lives in
+    `@motionforge/scene-spec` (`interpolateKeyframeValue`) so the runtime and the
+    inspector can never disagree about a value.
+14. **A layer without an explicit `trackIndex` gets its OWN timeline lane.**
+    `store.resolveTrackLanes()` is the single grouping authority: two clips
+    share a row only when they declare the same lane AND do not overlap.
+15. **An icon's path is cloned per instance.** A DOM node can only live in one
+    place, so a shared path would paint in its last instance and be blank
+    everywhere else — `cloneIconPath()` in `NleIcons.tsx` prevents it.
 
 ## Commands
 
@@ -92,7 +104,8 @@ npm run smoke -w @motionforge/core-engine         # tiny full-pipeline draft ren
 npm run demo -w @motionforge/core-engine          # showcase scene: keyframe inspection + draft render
 npm run start -w @motionforge/mcp-server          # MCP stdio server
 npm run verify:no-emoji        # static zero-emoji gate over every package source
-npm run verify:pro-nle         # practical verification of the REAL Electron app (52 checks)
+npm run verify:pro-nle         # practical verification of the REAL Electron app (60 checks)
+npm run verify:ux-gizmo        # the v4 UX + transform-gizmo harness (66 checks)
 ```
 
 > The practical verification needs a display. On a headless host:

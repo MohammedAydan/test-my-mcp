@@ -66,6 +66,31 @@ body {
 }
 
 /*
+ * The authored static slot.
+ *
+ * The unified transform pipeline owns `transform`, `opacity` and `filter` on
+ * the layer's CONTENT element, so the static slot only carries what the
+ * pipeline does not: the blend mode and the visibility switch. (A full-bleed
+ * layer — `background`, `foregroundFX` — is the exception: the pipeline never
+ * touches it, so its authored opacity and scale stay here.)
+ */
+.mf-static {
+  transform-origin: 50% 50%;
+}
+
+/*
+ * The layer's painted content.
+ *
+ * The pipeline writes the anchor (`left` / `top`) and the transform; the
+ * renderer writes everything else. The origin is the content's own centre, so
+ * a rotation happens about exactly the point the pipeline centres the box on —
+ * which is what makes the reported bounds and the rendered pixels agree.
+ */
+[data-mf-content] {
+  transform-origin: 50% 50%;
+}
+
+/*
  * One line container per authored line.
  *
  * `position: relative` anchors the highlight pill to the line box, and

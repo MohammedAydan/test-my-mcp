@@ -3,8 +3,15 @@ import { z } from "zod";
 /** Every time value in a SceneSpec is milliseconds. */
 export const msSchema = z.number().finite().min(0);
 
-/** Percent of canvas (or of a parent box). Positions may slightly overshoot. */
-export const pctSchema = z.number().finite().min(-200).max(200);
+/**
+ * Percent of canvas (or of a parent box).
+ *
+ * The range is deliberately wider than the canvas (-300..300) so a layer can
+ * START or END off-screen: an entrance that flies in from `xPct: -120` is a
+ * legal authoring move, and clamping it to the canvas edge produced a visible
+ * "pop" at the moment the layer appeared.
+ */
+export const pctSchema = z.number().finite().min(-300).max(300);
 
 /** 0..1 opacity-style scalar. */
 export const unitSchema = z.number().min(0).max(1);

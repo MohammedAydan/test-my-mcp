@@ -231,12 +231,34 @@ async function capturePreview(
   }
 }
 
+/**
+ * The exact geometry of one layer, in composition (design-space) pixels.
+ *
+ * Mirrors the runtime's `LayerBoundsReport`: the box is UNROTATED and the
+ * rotation travels beside it as a number, so a consumer never rotates the box
+ * twice.
+ */
 export interface LayerBounds {
+  /** UNROTATED local box LEFT, composition px */
   x: number;
+  /** UNROTATED local box TOP, composition px */
   y: number;
+  /** VISUAL width (layout width × scaleX), composition px */
   width: number;
+  /** VISUAL height (layout height × scaleY), composition px */
   height: number;
+  /** unscaled layout width, composition px */
+  layoutWidth: number;
+  /** unscaled layout height, composition px */
+  layoutHeight: number;
+  /** exact transformed CENTER x, composition px */
+  cx: number;
+  /** exact transformed CENTER y, composition px */
+  cy: number;
+  /** current rotation, degrees */
   rotation: number;
+  scaleX: number;
+  scaleY: number;
 }
 
 /**

@@ -61,7 +61,7 @@ export const StatusBar: Component = () => {
       <div class="mf-status-item" id="status-layers">
         {state.scene?.layers?.length ?? 0} layers
       </div>
-      <div class="mf-status-item" id="status-engine">
+      <div class="mf-status-item mf-status-engine" id="status-engine">
         <span
           class={`mf-status-dot ${state.engine.online ? 'is-online' : 'is-offline'}`}
           id="status-dot"

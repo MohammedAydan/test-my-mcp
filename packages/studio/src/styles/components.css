@@ -1,6 +1,14 @@
 /* ==========================================================================
    MotionForge Pro NLE — Components
    Reusable, high-density control classes. Everything inherits the tokens.
+
+   RADIUS SCALE
+     --radius-xs (4px) badges, swatches, mini tags, clip inner bars, chips
+     --radius-sm (6px) buttons, ScrubInput fields, selects, search inputs,
+                       segmented pills, menu items, tool buttons
+     --radius-md (8px) docked panels, cards, vault thumbnails, the floating
+                       HUD, dropdown menus, the tool dock pill
+     --radius-lg (12px) modals, the render queue dialog, the shortcuts sheet
    ========================================================================== */
 
 /* --------------------------------------------------------------------------
@@ -18,15 +26,18 @@
   color: var(--mf-text-1);
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border);
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-sm);
   white-space: nowrap;
 }
 .mf-btn:hover {
   background: var(--mf-bg-hover);
   border-color: var(--mf-border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--hover-lift);
 }
 .mf-btn:active {
   background: var(--mf-bg-active);
+  transform: translateY(0);
 }
 .mf-btn[disabled] {
   opacity: 0.4;
@@ -69,6 +80,37 @@
 }
 
 /* --------------------------------------------------------------------------
+   Segmented control — a pill of small segments, the active one filled
+   -------------------------------------------------------------------------- */
+.mf-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--mf-bg-sunken);
+  border: 1px solid var(--mf-border);
+  border-radius: var(--radius-sm);
+}
+.mf-segment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 16px;
+  color: var(--mf-text-3);
+  background: transparent;
+}
+.mf-segment:hover {
+  color: var(--mf-text-1);
+  background: var(--mf-bg-hover);
+}
+.mf-segment.is-active {
+  color: var(--mf-text-inverse);
+  background: var(--mf-accent);
+  box-shadow: 0 1px 4px rgba(45, 140, 235, 0.4);
+}
+
+/* --------------------------------------------------------------------------
    Chips / badges
    -------------------------------------------------------------------------- */
 .mf-chip {
@@ -82,7 +124,7 @@
   color: var(--mf-text-2);
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border);
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-xs);
   font-family: var(--mf-font-mono);
   font-variant-numeric: tabular-nums;
 }
@@ -141,8 +183,10 @@
   color: var(--mf-text-1);
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border);
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-sm);
   outline: none;
+  transition: border-color var(--mf-dur-ui) var(--mf-ease),
+    box-shadow var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-textarea {
   height: auto;
@@ -180,8 +224,31 @@
   padding: 1px;
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border);
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-sm);
   cursor: pointer;
+}
+
+/* the search field — a rounded input with a leading glyph */
+.mf-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.mf-search-icon {
+  position: absolute;
+  left: 7px;
+  display: flex;
+  color: var(--mf-text-3);
+  pointer-events: none;
+}
+.mf-search .mf-input {
+  padding-left: 24px;
+  border-radius: var(--radius-sm);
+}
+.mf-search .mf-input:focus {
+  box-shadow: 0 0 0 3px rgba(45, 140, 235, 0.1);
 }
 .mf-grid-2 {
   display: grid;
@@ -203,6 +270,7 @@
    Scrub input — the Pro NLE numeric field
    -------------------------------------------------------------------------- */
 .mf-scrub {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -210,14 +278,33 @@
   padding: 0 5px;
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border);
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: border-color var(--mf-dur-ui) var(--mf-ease),
+    box-shadow var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-scrub:hover {
   border-color: var(--mf-border-strong);
+  box-shadow: 0 0 0 3px rgba(45, 140, 235, 0.1);
 }
 .mf-scrub.is-scrubbing {
   border-color: var(--mf-accent);
   background: var(--mf-bg-active);
+}
+/* the fill bar: where the value sits inside its min..max range */
+.mf-scrub-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    var(--mf-accent) 0 var(--scrub-fill, 0%),
+    rgba(255, 255, 255, 0.07) var(--scrub-fill, 0%) 100%
+  );
+  transition: width var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-scrub.is-disabled {
   opacity: 0.45;
@@ -231,6 +318,8 @@
   cursor: ew-resize;
   user-select: none;
   flex: none;
+  position: relative;
+  z-index: 1;
 }
 .mf-scrub-label:hover {
   color: var(--mf-accent);
@@ -248,6 +337,8 @@
   color: var(--mf-text-1);
   cursor: text;
   overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 .mf-scrub-unit {
   font-family: var(--mf-font-ui);
@@ -265,6 +356,8 @@
   font-variant-numeric: tabular-nums;
   font-size: var(--mf-text-sm);
   color: var(--mf-text-1);
+  position: relative;
+  z-index: 1;
 }
 
 /* --------------------------------------------------------------------------
@@ -280,6 +373,8 @@
   color: var(--mf-text-2);
   border-bottom: 1px solid rgba(38, 42, 52, 0.6);
   cursor: default;
+  transition: background var(--mf-dur-ui) var(--mf-ease),
+    color var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-row:hover {
   background: var(--mf-bg-hover);
@@ -305,7 +400,7 @@
 .mf-swatch {
   width: 8px;
   height: 8px;
-  border-radius: 1px;
+  border-radius: var(--radius-xs);
   flex: none;
 }
 .mf-icon-btn {
@@ -314,9 +409,12 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--mf-radius-sm);
+  border-radius: var(--radius-sm);
   color: var(--mf-text-3);
   flex: none;
+  transition: background var(--mf-dur-ui) var(--mf-ease),
+    color var(--mf-dur-ui) var(--mf-ease),
+    box-shadow var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-icon-btn:hover {
   background: var(--mf-bg-active);
@@ -324,13 +422,106 @@
 }
 .mf-icon-btn.is-on {
   color: var(--mf-accent-text);
+  background: var(--mf-accent-dim);
+  box-shadow: 0 0 0 1px rgba(45, 140, 235, 0.28);
 }
 .mf-icon-btn.is-locked {
   color: var(--mf-warning);
+  background: rgba(245, 158, 11, 0.12);
 }
 .mf-icon-btn.is-danger:hover {
   background: var(--mf-record-dim);
   color: var(--mf-record);
+}
+
+/* --------------------------------------------------------------------------
+   Field header — the label plus the keyframe controls of a property
+   -------------------------------------------------------------------------- */
+.mf-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 14px;
+}
+.mf-field-head .mf-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* one animatable property: label + keyframe cluster, then the field */
+.mf-prop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mf-prop-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 3px 6px;
+}
+.mf-prop-row > .mf-label {
+  grid-column: 1;
+  grid-row: 1;
+}
+.mf-prop-row > .mf-kf-controls {
+  grid-column: 2;
+  grid-row: 1;
+}
+.mf-prop-row > .mf-scrub {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/* the inspector's layer header strip */
+.mf-layer-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--mf-border);
+  background: var(--mf-bg-header);
+}
+
+/* the keyframe cluster: [<] [stopwatch/diamond] [>] */
+.mf-kf-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex: none;
+}
+.mf-kf-btn {
+  width: 15px;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--mf-text-3);
+  background: transparent;
+}
+.mf-kf-btn:hover {
+  background: var(--mf-bg-hover);
+  color: var(--mf-text-1);
+}
+.mf-kf-btn[disabled] {
+  opacity: 0.3;
+  pointer-events: none;
+}
+.mf-kf-btn.is-keyed {
+  color: var(--mf-keyframe);
+  background: rgba(56, 189, 248, 0.12);
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.25);
+}
+.mf-kf-btn.is-keyed:hover {
+  background: rgba(56, 189, 248, 0.2);
+  color: var(--mf-keyframe);
+}
+/* the stopwatch button keeps a hairline ring so it reads as a control even
+   when the glyph is not painted */
+.mf-kf-btn[data-action='keyframe-toggle']:not(.is-keyed) {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 
 /* --------------------------------------------------------------------------
@@ -386,6 +577,7 @@
 }
 .mf-accordion-head:hover {
   color: var(--mf-text-1);
+  background: var(--mf-bg-hover);
 }
 .mf-accordion-body {
   padding: 8px;
@@ -395,7 +587,7 @@
 }
 .mf-accordion-chevron {
   color: var(--mf-text-3);
-  transition: transform var(--mf-dur) var(--mf-ease);
+  transition: transform var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-accordion.is-open .mf-accordion-chevron {
   transform: rotate(90deg);
@@ -404,6 +596,13 @@
 /* --------------------------------------------------------------------------
    Program monitor
    -------------------------------------------------------------------------- */
+.mf-monitor-canvas {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--radius-xs);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
 .mf-monitor-bar {
   display: flex;
   align-items: center;
@@ -459,7 +658,7 @@
   padding: 3px 8px;
   background: rgba(9, 10, 13, 0.88);
   border: 1px solid var(--mf-border-strong);
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-md);
   font-family: var(--mf-font-mono);
   font-variant-numeric: tabular-nums;
   font-size: var(--mf-text-xs);
@@ -504,11 +703,12 @@
   color: var(--mf-text-2);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-sm);
 }
 .mf-transport-btn:hover {
   background: var(--mf-bg-hover);
   color: var(--mf-text-1);
+  transform: translateY(-1px);
 }
 .mf-transport-btn.is-active {
   color: var(--mf-accent-text);
@@ -536,7 +736,7 @@
   letter-spacing: 0.04em;
   background: var(--mf-bg-sunken);
   border: 1px solid var(--mf-border);
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-sm);
   padding: 2px 8px;
 }
 .mf-timecode.is-lg {
@@ -599,7 +799,7 @@
   color: var(--mf-accent-text);
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border);
-  border-radius: 1px;
+  border-radius: var(--radius-xs);
   padding: 0 4px;
   flex: none;
 }
@@ -704,8 +904,8 @@
 .mf-modal {
   background: var(--mf-bg-panel);
   border: 1px solid var(--mf-border-strong);
-  border-radius: var(--mf-radius);
-  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg), var(--inner-highlight);
   width: 560px;
   max-width: 92vw;
   max-height: 86vh;
@@ -772,7 +972,7 @@
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border-strong);
   border-left-width: 2px;
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-md);
   font-size: var(--mf-text-sm);
   color: var(--mf-text-1);
   box-shadow: var(--shadow);
@@ -797,7 +997,7 @@
 .mf-bin-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
   padding: 4px;
 }
 .mf-bin-item {
@@ -805,15 +1005,23 @@
   align-items: center;
   gap: 6px;
   padding: 4px 6px;
-  border: 1px solid transparent;
-  border-radius: var(--mf-radius);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-sm);
   font-size: var(--mf-text-sm);
   color: var(--mf-text-2);
   cursor: grab;
+  transition: background var(--mf-dur-ui) var(--mf-ease),
+    border-color var(--mf-dur-ui) var(--mf-ease),
+    color var(--mf-dur-ui) var(--mf-ease),
+    box-shadow var(--mf-dur-ui) var(--mf-ease),
+    transform var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-bin-item:hover {
   background: var(--mf-bg-hover);
+  border-color: var(--mf-border-strong);
   color: var(--mf-text-1);
+  transform: translateY(-1px);
+  box-shadow: var(--hover-lift);
 }
 .mf-bin-item.is-active {
   background: var(--mf-accent-dim);
@@ -829,7 +1037,7 @@
   justify-content: center;
   background: var(--mf-bg-sunken);
   border: 1px solid var(--mf-border);
-  border-radius: 1px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   color: var(--mf-text-3);
 }
@@ -851,6 +1059,22 @@
   font-family: var(--mf-font-mono);
   font-size: 9px;
   color: var(--mf-text-3);
+}
+/* the action cluster — revealed on hover, sliding in from the right */
+.mf-bin-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: none;
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity var(--mf-dur-ui) var(--mf-ease),
+    transform var(--mf-dur-ui) var(--mf-ease);
+}
+.mf-bin-item:hover .mf-bin-actions,
+.mf-bin-item:focus-within .mf-bin-actions {
+  opacity: 1;
+  transform: translateX(0);
 }
 .mf-bin-section {
   padding: 6px 8px 3px;
@@ -887,11 +1111,17 @@
   align-items: center;
   gap: 4px;
   height: var(--mf-row-h);
+  margin: 0 4px;
   padding: 0 6px;
   border-bottom: 1px solid rgba(38, 42, 52, 0.55);
+  border-radius: var(--radius-sm);
   font-size: var(--mf-text-sm);
   color: var(--mf-text-2);
   cursor: default;
+  position: relative;
+  transition: background var(--mf-dur-ui) var(--mf-ease),
+    color var(--mf-dur-ui) var(--mf-ease),
+    box-shadow var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-stack-row:hover {
   background: var(--mf-bg-hover);
@@ -899,6 +1129,8 @@
 .mf-stack-row.is-selected {
   background: var(--mf-accent-dim);
   color: var(--mf-text-1);
+  /* the 2px accent bar on the left edge of the selected row */
+  box-shadow: inset 2px 0 0 var(--mf-accent);
 }
 .mf-stack-row.is-hidden {
   opacity: 0.45;
@@ -915,7 +1147,7 @@
   font-size: var(--mf-text-sm);
   background: var(--mf-bg-sunken);
   border: 1px solid var(--mf-accent);
-  border-radius: 1px;
+  border-radius: var(--radius-xs);
   color: var(--mf-text-1);
   outline: none;
 }
@@ -956,7 +1188,7 @@
   color: var(--mf-text-1);
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border-strong);
-  border-radius: var(--mf-radius-sm);
+  border-radius: var(--radius-xs);
   padding: 1px 6px;
   white-space: nowrap;
 }
@@ -968,7 +1200,7 @@
   height: 6px;
   background: var(--mf-bg-sunken);
   border: 1px solid var(--mf-border);
-  border-radius: 1px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 .mf-progress-bar {
@@ -985,7 +1217,7 @@
   padding: 6px 8px;
   background: var(--mf-bg-elevated);
   border: 1px solid var(--mf-border);
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-md);
 }
 .mf-stat-k {
   font-size: 9px;

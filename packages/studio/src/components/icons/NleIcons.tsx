@@ -28,6 +28,24 @@ export interface NleIconProps {
   onClick?: (e: MouseEvent) => void;
 }
 
+/**
+ * Clone the icon's path so EVERY instance owns its DOM nodes.
+ *
+ * A DOM node can only live in ONE place: inserting a shared node MOVES it, so
+ * a glyph built once at module scope would paint in its LAST instance and be
+ * blank in every other one. Each icon therefore clones its path on render.
+ */
+function cloneIconPath(path: JSX.Element): JSX.Element {
+  if (typeof path === 'function') return (path as () => JSX.Element)();
+  if (Array.isArray(path)) {
+    return path.map((node) => cloneIconPath(node as JSX.Element)) as unknown as JSX.Element;
+  }
+  if (typeof Node !== 'undefined' && (path as unknown as Node) instanceof Node) {
+    return (path as unknown as Node).cloneNode(true) as unknown as JSX.Element;
+  }
+  return path;
+}
+
 function makeIcon(displayName: string, path: JSX.Element, extra?: Partial<NleIconProps>) {
   const Icon: Component<NleIconProps> = (props) => {
     const size = () => props.size ?? 14;
@@ -52,7 +70,7 @@ function makeIcon(displayName: string, path: JSX.Element, extra?: Partial<NleIco
     return (
       <svg {...attributes}>
         {props.title ? <title>{props.title}</title> : null}
-        {path}
+        {cloneIconPath(path)}
       </svg>
     );
   };
@@ -572,6 +590,40 @@ export const IconReset = makeIcon(
   <>
     <path d="M4 12a8 8 0 1013.7-5.7L20 8" />
     <path d="M20 3v5h-5" />
+  </>
+);
+export const IconPencil = makeIcon(
+  'IconPencil',
+  <>
+    <path d="M4 20h4L19.5 8.5a2.12 2.12 0 00-3-3L5 17v3z" />
+    <path d="M14.5 6.5l3 3" />
+  </>
+);
+export const IconCrop = makeIcon(
+  'IconCrop',
+  <>
+    <path d="M6 2v16h16" />
+    <path d="M2 6h16v16" />
+  </>
+);
+export const IconSliders = makeIcon(
+  'IconSliders',
+  <>
+    <path d="M4 7h5M13 7h7" />
+    <path d="M4 12h9M17 12h3" />
+    <path d="M4 17h3M11 17h9" />
+    <circle cx="11" cy="7" r="2" />
+    <circle cx="15" cy="12" r="2" />
+    <circle cx="9" cy="17" r="2" />
+  </>
+);
+export const IconMaximizePanel = makeIcon(
+  'IconMaximizePanel',
+  <>
+    <path d="M4 9V5.5A1.5 1.5 0 015.5 4H9" />
+    <path d="M15 4h3.5A1.5 1.5 0 0120 5.5V9" />
+    <path d="M20 15v3.5a1.5 1.5 0 01-1.5 1.5H15" />
+    <path d="M9 20H5.5A1.5 1.5 0 014 18.5V15" />
   </>
 );
 

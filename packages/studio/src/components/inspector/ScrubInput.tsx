@@ -51,6 +51,21 @@ export const ScrubInput: Component<ScrubInputProps> = (props) => {
     return result;
   };
 
+  /**
+   * Where the value sits inside its `min..max` range, as a percentage.
+   *
+   * `null` when the field has no range — the fill bar is then meaningless.
+   */
+  const fillPercent = (): number | null => {
+    const min = props.min;
+    const max = props.max;
+    if (typeof min !== 'number' || typeof max !== 'number' || max === min) return null;
+    const value = Number(props.value);
+    if (!Number.isFinite(value)) return null;
+    const ratio = (value - min) / (max - min);
+    return Math.max(0, Math.min(100, ratio * 100));
+  };
+
   const handlePointerDown = (event: PointerEvent) => {
     if (props.disabled || isEditing()) return;
     event.preventDefault();
@@ -118,6 +133,14 @@ export const ScrubInput: Component<ScrubInputProps> = (props) => {
       class={`mf-scrub ${isScrubbing() ? 'is-scrubbing' : ''} ${props.disabled ? 'is-disabled' : ''}`}
       id={props.id}
     >
+      <Show when={fillPercent() !== null}>
+        <span
+          class="mf-scrub-fill"
+          style={`--scrub-fill:${(fillPercent() ?? 0).toFixed(2)}%`}
+          aria-hidden="true"
+        />
+      </Show>
+
       <span
         class="mf-scrub-label"
         title="Drag to scrub (Shift = 10x, Alt = 0.1x)"

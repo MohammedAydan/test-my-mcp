@@ -1,6 +1,12 @@
 import { createSignal } from 'solid-js';
 import { createStore } from 'solid-js/store';
-import type { KeyframeTrack } from '@motionforge/scene-spec';
+import type {
+  KeyframeEasing,
+  KeyframeProperty,
+  KeyframeTrack,
+  LayerFilterKey,
+  LayerKeyframe,
+} from '@motionforge/scene-spec';
 import { api } from '../api.js';
 import type {
   AssetVaultItem,
@@ -26,12 +32,34 @@ export type ActiveTool = 'select' | 'hand' | 'razor' | 'text' | 'shape' | 'zoom'
 
 export type WorkspacePreset = 'editing' | 'motion' | 'audio' | 'effects' | 'export';
 
+/**
+ * The bounds the runtime reports for one layer.
+ *
+ * The box is UNROTATED and the rotation travels beside it as a number, so a
+ * consumer never rotates the box twice. `cx`/`cy` are the exact transformed
+ * centre in composition pixels — the gizmo is drawn around THAT point.
+ */
 export interface LayerBounds {
+  /** UNROTATED local box LEFT, composition px */
   x: number;
+  /** UNROTATED local box TOP, composition px */
   y: number;
+  /** VISUAL width (layout width × scaleX), composition px */
   width: number;
+  /** VISUAL height (layout height × scaleY), composition px */
   height: number;
+  /** unscaled layout width, composition px */
+  layoutWidth: number;
+  /** unscaled layout height, composition px */
+  layoutHeight: number;
+  /** exact transformed CENTER x, composition px */
+  cx: number;
+  /** exact transformed CENTER y, composition px */
+  cy: number;
+  /** current rotation, degrees */
   rotation: number;
+  scaleX: number;
+  scaleY: number;
 }
 
 export interface WorkspaceLayout {
@@ -47,6 +75,21 @@ export interface Toast {
   id: string;
   message: string;
   type: 'info' | 'success' | 'warning' | 'error';
+}
+
+/**
+ * One row of the timeline.
+ *
+ * `index` is the lane number; `layers` are the clips on it. A layer with no
+ * explicit `trackIndex` gets its own lane — see `resolveTrackLanes()`.
+ */
+export interface TrackLane {
+  index: number;
+  name: string;
+  kind: 'video' | 'audio';
+  layers: StudioLayer[];
+  y: number;
+  h: number;
 }
 
 export interface StudioState {
@@ -434,7 +477,9 @@ export const store = {
   },
 
   setViewportZoom(zoom: number): void {
-    setState('viewportZoom', Math.max(0.25, Math.min(4, zoom)));
+    // The monitor's fit scale can fall well below 0.25 in a small panel, so
+    // the clamp is wide — the monitor keeps its own exact value.
+    setState('viewportZoom', Math.max(0.05, Math.min(8, zoom)));
   },
 
   setViewportPan(pan: { x: number; y: number } | ((prev: { x: number; y: number }) => { x: number; y: number })): void {
@@ -792,6 +837,246 @@ export const store = {
       }
     }, `Delete keyframe from ${layerId} (${property})`);
     setState('selectedKeyframe', null);
+  },
+
+  /* ── unified keyframes (the flat `layer.keyframes` surface) ────────────── */
+
+  /**
+   * The keyframes of one property of one layer, sorted by time.
+   *
+   * The flat `keyframes` array is the canonical surface; the legacy `tracks`
+   * array is still readable by the runtime, but the Studio writes the flat
+   * form so a property has ONE timeline in the inspector.
+   */
+  layerKeyframes(layerId: string, property?: KeyframeProperty): LayerKeyframe[] {
+    const layer = state.scene?.layers.find((l) => l.id === layerId);
+    const flat = ((layer?.keyframes ?? []) as LayerKeyframe[]).filter(
+      (k) => !property || k.property === property
+    );
+    return [...flat].sort((a, b) => a.timeMs - b.timeMs);
+  },
+
+  /** The keyframe on `property` at (or within 20ms of) `timeMs`. */
+  findLayerKeyframe(layerId: string, property: KeyframeProperty, timeMs: number): LayerKeyframe | null {
+    return (
+      this.layerKeyframes(layerId, property).find((k) => Math.abs(k.timeMs - timeMs) < 20) ?? null
+    );
+  },
+
+  /** True when the property already has a keyframe at the playhead. */
+  hasLayerKeyframe(layerId: string, property: KeyframeProperty, timeMs: number): boolean {
+    return this.findLayerKeyframe(layerId, property, timeMs) !== null;
+  },
+
+  /**
+   * Add (or replace) a keyframe at `timeMs`.
+   *
+   * This is what the inspector's stopwatch button calls.
+   */
+  setLayerKeyframe(
+    layerId: string,
+    property: KeyframeProperty,
+    timeMs: number,
+    value: number,
+    easing: KeyframeEasing = 'easeInOut'
+  ): void {
+    this.mutateScene((scene) => {
+      const layer = scene.layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      const list = ((layer.keyframes ?? []) as LayerKeyframe[]).slice();
+      const existing = list.find(
+        (k) => k.property === property && Math.abs(k.timeMs - timeMs) < 20
+      );
+      if (existing) {
+        existing.value = value;
+        existing.timeMs = Math.round(timeMs);
+      } else {
+        list.push({
+          id: `kf_${property}_${Math.round(timeMs)}_${Math.random().toString(36).slice(2, 6)}`,
+          timeMs: Math.round(timeMs),
+          property,
+          value,
+          easing,
+        });
+      }
+      layer.keyframes = list.sort((a, b) => a.timeMs - b.timeMs);
+    }, `Keyframe ${property} of ${layerId} at ${Math.round(timeMs)}ms`);
+  },
+
+  /** Remove one keyframe. */
+  removeLayerKeyframe(layerId: string, keyframeId: string): void {
+    this.mutateScene((scene) => {
+      const layer = scene.layers.find((l) => l.id === layerId);
+      if (!layer || !layer.keyframes) return;
+      layer.keyframes = (layer.keyframes as LayerKeyframe[]).filter((k) => k.id !== keyframeId);
+    }, `Remove keyframe of ${layerId}`);
+  },
+
+  /** Re-time one keyframe. */
+  moveLayerKeyframe(layerId: string, keyframeId: string, timeMs: number): void {
+    this.updateSceneWithoutHistory((scene) => {
+      const layer = scene.layers.find((l) => l.id === layerId);
+      if (!layer || !layer.keyframes) return;
+      const keyframe = (layer.keyframes as LayerKeyframe[]).find((k) => k.id === keyframeId);
+      if (!keyframe) return;
+      keyframe.timeMs = Math.round(timeMs);
+      layer.keyframes = [...(layer.keyframes as LayerKeyframe[])].sort((a, b) => a.timeMs - b.timeMs);
+    });
+  },
+
+  /** The next keyframe of `property` strictly after `timeMs`. */
+  nextLayerKeyframe(
+    layerId: string,
+    property: KeyframeProperty,
+    timeMs: number
+  ): LayerKeyframe | null {
+    return (
+      this.layerKeyframes(layerId, property).find((k) => k.timeMs > timeMs + 1) ?? null
+    );
+  },
+
+  /** The previous keyframe of `property` strictly before `timeMs`. */
+  prevLayerKeyframe(
+    layerId: string,
+    property: KeyframeProperty,
+    timeMs: number
+  ): LayerKeyframe | null {
+    const list = this.layerKeyframes(layerId, property);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const candidate = list[i];
+      if (candidate && candidate.timeMs < timeMs - 1) return candidate;
+    }
+    return null;
+  },
+
+  /* ── visual filters ──────────────────────────────────────────────────── */
+
+  /**
+   * Set (or clear, with `undefined`) one visual filter on a layer.
+   *
+   * `filters` is the layer's CSS-filter bag — blur, brightness, contrast,
+   * saturate, drop shadow and corner radius.
+   */
+  setLayerFilter(
+    layerId: string,
+    key: LayerFilterKey,
+    value: number | string | undefined
+  ): void {
+    this.mutateScene((scene) => {
+      const layer = scene.layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      const filters = { ...((layer.filters ?? {}) as Record<string, unknown>) };
+      if (value === undefined) delete filters[key];
+      else filters[key] = value;
+      layer.filters = filters as never;
+    }, `Set ${key} of ${layerId}`);
+  },
+
+  /* ── track lanes ──────────────────────────────────────────────────────── */
+
+  /**
+   * The deterministic track-lane layout of the timeline.
+   *
+   * A layer that declares NO `trackIndex` gets its OWN lane — layers are
+   * never crammed onto one row. Two clips share a row only when they declare
+   * the same `trackIndex` AND their time ranges do not overlap.
+   */
+  resolveTrackLanes(): TrackLane[] {
+    const layers = state.scene?.layers ?? [];
+    const declared = state.scene?.trackLanes ?? [];
+
+    // explicit lanes first, in declaration order
+    const lanes: TrackLane[] = declared.map((lane, index) => {
+      const explicitIndex = (lane as { index?: number }).index;
+      return {
+        index: typeof explicitIndex === 'number' ? explicitIndex : index,
+        name: lane.name ?? `V${index + 1}`,
+        kind: lane.kind === 'audio' ? 'audio' : 'video',
+        layers: [],
+        y: 0,
+        h: 0,
+      };
+    });
+
+    const laneFor = (index: number): TrackLane => {
+      let lane = lanes.find((l) => l.index === index);
+      if (!lane) {
+        lane = { index, name: `V${index + 1}`, kind: 'video', layers: [], y: 0, h: 0 };
+        lanes.push(lane);
+      }
+      return lane;
+    };
+
+    // A free lane index — never an index that is already taken, so two
+    // OVERLAPPING clips can never land on the same row.
+    let nextLaneIndex = lanes.reduce((max, lane) => Math.max(max, lane.index), -1) + 1;
+    const allocLane = (): TrackLane => {
+      while (lanes.some((lane) => lane.index === nextLaneIndex)) nextLaneIndex++;
+      return laneFor(nextLaneIndex++);
+    };
+
+    for (const layer of layers) {
+      const explicit = layer.trackIndex;
+      if (typeof explicit === 'number') {
+        laneFor(explicit).layers.push(layer);
+        continue;
+      }
+      // NO explicit lane → the layer gets its OWN dedicated row. Two clips
+      // only share a row when they declare the same `trackIndex` AND their
+      // time ranges do not overlap.
+      allocLane().layers.push(layer);
+    }
+
+    for (const lane of lanes) lane.layers.sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+    return lanes.sort((a, b) => a.index - b.index);
+  },
+
+  /**
+   * Move a clip on the timeline.
+   *
+   * A clip's keyframes travel WITH it (Premiere behaviour): the keyframes are
+   * absolute scene times, so leaving them behind would strand them outside the
+   * clip's window — unreachable from the timeline and no longer animating the
+   * layer. The whole set shifts by the same delta.
+   */
+  moveClip(layerId: string, newAt: number, recordHistory = true): void {
+    const apply = (scene: StudioScene) => {
+      const layer = scene.layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      const from = layer.at ?? 0;
+      const delta = Math.round(newAt) - from;
+      layer.at = Math.round(newAt);
+      if (delta === 0) return;
+      if (layer.keyframes && layer.keyframes.length > 0) {
+        layer.keyframes = (layer.keyframes as LayerKeyframe[]).map((k) => ({
+          ...k,
+          timeMs: Math.max(0, Math.round(k.timeMs + delta)),
+        }));
+      }
+      if (layer.tracks && layer.tracks.length > 0) {
+        layer.tracks = (layer.tracks as KeyframeTrack[]).map((track) => ({
+          ...track,
+          keyframes: track.keyframes.map((k) => ({
+            ...k,
+            at: Math.max(0, Math.round(k.at + delta)),
+          })),
+        }));
+      }
+    };
+    if (recordHistory) {
+      this.mutateScene(apply, `Move clip ${layerId}`);
+    } else {
+      this.updateSceneWithoutHistory(apply);
+    }
+  },
+
+  /** Reassign a clip to another video track. */
+  moveClipToTrack(layerId: string, trackIndex: number): void {
+    this.mutateScene((scene) => {
+      const layer = scene.layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      layer.trackIndex = Math.max(0, Math.round(trackIndex));
+    }, `Move ${layerId} to track V${trackIndex + 1}`);
   },
 
   toggleLayerExpanded(layerId: string): void {

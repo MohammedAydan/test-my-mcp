@@ -46,6 +46,11 @@ const browserFallback: MotionForgeEngineBridge = {
     }
     if (method === 'listScenes') return [];
     if (method === 'listAssets') return [];
+    if (method === 'saveScene') {
+      // the browser dev mode has no engine — report a successful no-op so the
+      // editor stays usable instead of failing every save
+      return { id: 'browser-dev', revision: 1, status: 'ok' };
+    }
     return null;
   },
   onEvent: () => () => undefined,

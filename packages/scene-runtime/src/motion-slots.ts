@@ -20,6 +20,7 @@
 import { isFinalActHold, type SceneSpec } from "@motionforge/scene-spec";
 
 import { PRESET_DEFAULTS } from "./presets.js";
+import { isFullBleedLayer } from "./transform.js";
 
 export type SceneLayer = SceneSpec["layers"][number];
 
@@ -171,19 +172,31 @@ export function createMotionWrappers(root: HTMLElement): MotionWrappers {
  * the inner wrappers, and CSS composes a parent's opacity with a child's, so
  * an entrance that fades to `autoAlpha: 1` still ends at the authored opacity.
  *
+ * THEY ARE NOT WRITTEN HERE for a content layer: the unified transform
+ * pipeline owns `opacity` and `scale` for every layer that paints content,
+ * because it owns the element they belong to. Writing them here as well would
+ * apply them TWICE (the wrapper's alpha multiplied by the content's alpha),
+ * which is exactly how a layer authored at `opacity: 0.5` used to render at
+ * 0.25.
+ *
+ * A FULL-BLEED layer (`background`, `foregroundFX`) is the exception: the
+ * pipeline never touches it, so its authored opacity and scale stay here.
+ *
  * `visible: false` removes the layer from the frame entirely — the Studio
  * persists it as a real field, so the runtime has to honour it.
  */
 export function applyLayerStatics(slot: HTMLElement, layer: SceneLayer): void {
-  const opacity = layer.opacity;
-  if (typeof opacity === "number") {
-    slot.style.opacity = `${Math.min(1, Math.max(0, opacity))}`;
-  }
+  if (isFullBleedLayer(layer)) {
+    const opacity = layer.opacity;
+    if (typeof opacity === "number") {
+      slot.style.opacity = `${Math.min(1, Math.max(0, opacity))}`;
+    }
 
-  const scale = layer.scale;
-  if (typeof scale === "number" && scale !== 1) {
-    slot.style.transform = `scale(${Math.min(10, Math.max(0.05, scale))})`;
-    slot.style.transformOrigin = "50% 50%";
+    const scale = layer.scale;
+    if (typeof scale === "number" && scale !== 1) {
+      slot.style.transform = `scale(${Math.min(10, Math.max(0.05, scale))})`;
+      slot.style.transformOrigin = "50% 50%";
+    }
   }
 
   const blend = layer.blendMode;

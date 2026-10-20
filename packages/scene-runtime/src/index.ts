@@ -17,7 +17,8 @@ import {
   type FrameSettler,
 } from "./determinism.js";
 import type { LayerLifecycle } from "./motion-slots.js";
-import type { RenderConfig, Seekable } from "./types.js";
+import { TransformPipeline, type TransformOverride } from "./transform.js";
+import type { LayerBoundsReport, RenderConfig, Seekable } from "./types.js";
 
 // Must run before any timeline exists: disables GSAP's clock compensation and
 // forced 3D promotion (see determinism.ts for why each one matters).
@@ -42,6 +43,8 @@ interface MountedScene {
   tl: gsap.core.Timeline;
   lifecycle: LayerLifecycle;
   describeFrame: (timeMs: number) => FrameDescription;
+  /** the single owner of every layer's transform */
+  pipeline: TransformPipeline;
   settle: FrameSettler;
   ui: TimelineUIHandle | null;
 }
@@ -50,10 +53,44 @@ let stage: Stage | null = null;
 let mounted: MountedScene | null = null;
 
 /** Bounding box of every mounted layer, in design-space pixels. */
-export type LayerBounds = Record<
-  string,
-  { x: number; y: number; width: number; height: number; rotation: number }
->;
+export type LayerBounds = Record<string, LayerBoundsReport>;
+
+/**
+ * The `ephemeralTransform` message the Studio sends for live manipulation.
+ *
+ * EVERY field except `layerId` is optional, and ONLY the supplied fields are
+ * overridden. A message that carries no transform field at all CLEARS the
+ * layer's live override.
+ *
+ * The message is a LIVE override: it applies until the scene is pushed back
+ * (`motionforge:initScene` / `motionforge:updateScene`) or until a later
+ * message for the same layer replaces the fields it carries.
+ */
+export interface EphemeralTransformMessage {
+  layerId?: string;
+  /** anchor x, in percent of the canvas */
+  xPct?: number;
+  /** anchor y, in percent of the canvas */
+  yPct?: number;
+  /** uniform scale multiplier */
+  scale?: number;
+  /** non-uniform scale on X (wins over `scale`) */
+  scaleX?: number;
+  /** non-uniform scale on Y (wins over `scale`) */
+  scaleY?: number;
+  /** rotation, in degrees */
+  rotation?: number;
+  /** opacity, 0..1 */
+  opacity?: number;
+  /** layout width, in percent of the canvas */
+  widthPct?: number;
+  /** layout height, in percent of the canvas */
+  heightPct?: number;
+  /** LEGACY layout width, in design pixels */
+  widthPx?: number;
+  /** LEGACY layout height, in design pixels */
+  heightPx?: number;
+}
 
 /** Canvas used before any scene is known (zero-port boot without an id). */
 const DEFAULT_CANVAS: Canvas = { shape: "16:9", scale: 1080 };
@@ -200,20 +237,7 @@ async function boot(): Promise<void> {
       }
       postBoundsReport(computeLayerBounds(), data.frame ?? 0);
     } else if (data.type === "ephemeralTransform" || data.type === "motionforge:ephemeralTransform") {
-      const { layerId, xPct, yPct, rotation, widthPx, heightPx } = data;
-      const layerEl = stage?.content.querySelector<HTMLElement>(`.mf-layer[data-layer-id="${layerId}"]`);
-      if (layerEl) {
-        const exitWrapper = layerEl.querySelector<HTMLElement>(".mf-exit");
-        const contentEl = (exitWrapper?.firstElementChild ?? exitWrapper ?? layerEl) as HTMLElement;
-        if (typeof xPct === "number") contentEl.style.left = `${xPct}%`;
-        if (typeof yPct === "number") contentEl.style.top = `${yPct}%`;
-        if (typeof widthPx === "number") contentEl.style.width = `${widthPx}px`;
-        if (typeof heightPx === "number") contentEl.style.height = `${heightPx}px`;
-        if (typeof rotation === "number") {
-          contentEl.style.transform = `translate(-50%, -50%)${rotation ? ` rotate(${rotation}deg)` : ""}`;
-        }
-        postBoundsReport(computeLayerBounds());
-      }
+      applyEphemeralTransform(data as EphemeralTransformMessage);
     } else if (
       data.type === "motionforge:initScene" ||
       data.type === "motionforge:updateScene"
@@ -232,8 +256,7 @@ async function boot(): Promise<void> {
           await window.seekToFrame(Math.round((data.atMs / 1000) * activeFps));
         }
         const bounds = computeLayerBounds();
-        window.parent?.postMessage({ type: "layerBounds", bounds }, "*");
-        window.parent?.postMessage({ type: "layerBoundsReport", bounds }, "*");
+        postBoundsReport(bounds);
       }
     }
   });
@@ -262,7 +285,7 @@ async function mountScene(
   const srcById = new Map((scene.assets ?? []).map((asset) => [asset.id, asset.src]));
 
   const seekables: Seekable[] = [];
-  const { tl, lifecycle, describeFrame } = buildScene(scene, stage, {
+  const { tl, lifecycle, describeFrame, pipeline } = buildScene(scene, stage, {
     fonts,
     resolveAsset: (assetId) => {
       const src = srcById.get(assetId);
@@ -318,6 +341,7 @@ async function mountScene(
     tl,
     lifecycle,
     describeFrame,
+    pipeline,
     settle: async (timeSec: number) => {
       targetTimeSec = timeSec;
       await settle(timeSec);
@@ -327,6 +351,17 @@ async function mountScene(
   // numeric per-frame description for `inspect_scene_keyframes`
   window.describeFrame = describeFrame;
   window.getLayerBounds = computeLayerBounds;
+
+  // A web font changes the size of the text it renders, so every text layer's
+  // box changes with it. The bounds report is re-published once the fonts are
+  // in, or the Studio's gizmo would sit on the pre-font box forever.
+  void document.fonts.ready
+    .then(() => undefined)
+    .then(() => {
+      if (!mounted || mounted.sceneId !== sceneId) return;
+      postBoundsReport(computeLayerBounds(), Math.round(mounted.tl.time() * fps));
+    })
+    .catch(() => undefined);
 
   if (renderMode) {
     // headless render entry: settle on frame 0, then signal readiness
@@ -360,40 +395,123 @@ function isEmbedded(): boolean {
   }
 }
 
+/**
+ * Apply a live manipulation override from the Studio.
+ *
+ * THE ZERO-JUMP RULE: this path and the scene path use the SAME math
+ * ({@link resolveTransform} + {@link applyLayerTransform}), so the values the
+ * Studio previews are the values the renderer draws. When the Studio saves the
+ * scene and pushes it back, the authored values ARE the dragged values — the
+ * layer does not move by a pixel.
+ *
+ * The override is stored on the pipeline (not written straight onto the
+ * element) so the master timeline cannot overwrite it on the next tick: a
+ * direct style write was fought by the very next frame whenever the timeline
+ * was playing.
+ */
+function applyEphemeralTransform(message: EphemeralTransformMessage): void {
+  if (!mounted) return;
+  const layerId = typeof message.layerId === "string" ? message.layerId : undefined;
+  if (!layerId) return;
+
+  const pipeline = mounted.pipeline;
+  const layer = pipeline.layerFor(layerId);
+  const element = pipeline.elementFor(layerId);
+  if (!layer || !element) return;
+
+  const override: TransformOverride = { ...(pipeline.overrideFor(layerId) ?? {}) };
+  let touched = false;
+
+  const take = <K extends keyof TransformOverride>(key: K, value: unknown): void => {
+    if (typeof value !== "number" || !Number.isFinite(value)) return;
+    override[key] = value as TransformOverride[K];
+    touched = true;
+  };
+
+  take("xPct", message.xPct);
+  take("yPct", message.yPct);
+  take("scale", message.scale);
+  take("scaleX", message.scaleX);
+  take("scaleY", message.scaleY);
+  take("rotation", message.rotation);
+  take("opacity", message.opacity);
+  take("widthPct", message.widthPct);
+  take("heightPct", message.heightPct);
+  take("widthPx", message.widthPx);
+  take("heightPx", message.heightPx);
+
+  if (!touched) {
+    // a message that carries no transform field CLEARS the override
+    pipeline.setOverride(layerId, {});
+    pipeline.applyAt(mounted.tl.time() * 1000);
+    postBoundsReport(computeLayerBounds());
+    return;
+  }
+
+  pipeline.setOverride(layerId, override);
+  pipeline.applyAt(mounted.tl.time() * 1000);
+  postBoundsReport(computeLayerBounds());
+}
+
+/**
+ * The EXACT geometry of every mounted layer, in composition pixels.
+ *
+ * NOTHING IS MEASURED OFF THE SCREEN. The rotated screen rectangle is
+ * useless to a consumer that wants to draw a gizmo: it is already rotated,
+ * it is in screen pixels, and applying the rotation to it again produces the
+ * double-rotation that made the selection box escape the stage.
+ *
+ * So the box is computed from the LAYOUT size (`offsetWidth` /
+ * `offsetHeight`, which transforms do not affect) and the resolved transform:
+ *
+ *   centre = the anchor (the content is centred on it)
+ *   size   = layout size × the visual scale
+ *   box    = the centre minus half the size — UNROTATED
+ *
+ * The rotation travels alongside as a NUMBER, so the consumer applies it once.
+ */
 export function computeLayerBounds(): LayerBounds {
   if (!stage || !mounted) return {};
-  const stageBox = stage.stage.getBoundingClientRect();
   const designW = stage.width || 1;
-  const scale = stageBox.width / designW || 1;
+  const designH = stage.height || 1;
+  const timeMs = mounted.tl.time() * 1000;
 
   const result: LayerBounds = {};
-  const sceneLayers = new Map(mounted.scene.layers.map((l) => [l.id, l]));
+  const pipeline = mounted.pipeline;
 
-  const layerElements = stage.content.querySelectorAll<HTMLElement>(".mf-layer[data-layer-id]");
-  for (const layerEl of Array.from(layerElements)) {
-    const id = layerEl.dataset.layerId;
-    if (!id) continue;
-    const layer = sceneLayers.get(id);
-    const rotation =
-      layer && "rotation" in layer && typeof layer.rotation === "number"
-        ? layer.rotation
-        : 0;
+  for (const layerId of pipeline.layerIds) {
+    const element = pipeline.elementFor(layerId);
+    if (!element) continue;
+    const resolved = pipeline.resolveAt(layerId, timeMs);
+    if (!resolved) continue;
 
-    const exitWrapper = layerEl.querySelector<HTMLElement>(".mf-exit");
-    const content =
-      (exitWrapper?.firstElementChild as HTMLElement | null) ?? exitWrapper ?? layerEl;
+    const layoutWidth = element.offsetWidth;
+    const layoutHeight = element.offsetHeight;
+    const width = layoutWidth * resolved.scaleX;
+    const height = layoutHeight * resolved.scaleY;
+    const cx = (resolved.xPct / 100) * designW;
+    const cy = (resolved.yPct / 100) * designH;
 
-    const rect = content.getBoundingClientRect();
-    result[id] = {
-      x: Math.round(((rect.left - stageBox.left) / scale) * 10) / 10,
-      y: Math.round(((rect.top - stageBox.top) / scale) * 10) / 10,
-      width: Math.round((rect.width / scale) * 10) / 10,
-      height: Math.round((rect.height / scale) * 10) / 10,
-      rotation,
+    result[layerId] = {
+      x: round1(cx - width / 2),
+      y: round1(cy - height / 2),
+      width: round1(width),
+      height: round1(height),
+      layoutWidth: round1(layoutWidth),
+      layoutHeight: round1(layoutHeight),
+      cx: round1(cx),
+      cy: round1(cy),
+      rotation: round1(resolved.rotation),
+      scaleX: round1(resolved.scaleX),
+      scaleY: round1(resolved.scaleY),
     };
   }
 
   return result;
+}
+
+function round1(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 function unmountScene(): void {

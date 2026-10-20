@@ -30,12 +30,26 @@ export interface StudioLayer {
   position?: { xPct: number; yPct: number };
   rotation?: number;
   scale?: number;
+  scaleX?: number;
+  scaleY?: number;
   opacity?: number;
   visible?: boolean;
   locked?: boolean;
   blendMode?: string;
   trackIndex?: number;
   trackLane?: number;
+  /** explicit layout box, in percent of the composition */
+  size?: { widthPct?: number; heightPct?: number };
+  /** CSS visual filters (blur, brightness, contrast, saturate, shadow, radius) */
+  filters?: Record<string, number | string | undefined>;
+  /** the flat, unified keyframe surface */
+  keyframes?: Array<{
+    id: string;
+    timeMs: number;
+    property: string;
+    value: number;
+    easing?: string;
+  }>;
 
   /* ---- motion & audio ---- */
   direction?: 'ltr' | 'rtl';

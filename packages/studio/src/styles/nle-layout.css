@@ -26,26 +26,38 @@
 
 /* --------------------------------------------------------------------------
    App grid — 32px title bar / workspace / timeline / 22px status bar
+
+   The app background is the VOID: every docked surface floats on top of it,
+   so the gaps between panels read as space instead of as seams.
    -------------------------------------------------------------------------- */
 .app {
   display: grid;
-  grid-template-rows: var(--mf-titlebar-h) 1fr var(--mf-splitter) var(--timeline-height, 240px) var(--mf-statusbar-h);
+  grid-template-rows:
+    calc(var(--mf-titlebar-h) + 6px)
+    1fr
+    var(--mf-splitter)
+    var(--timeline-height, 240px)
+    var(--mf-statusbar-h);
   grid-template-columns: 100%;
   height: 100vh;
   width: 100vw;
-  background: var(--mf-bg-gutter);
+  background: var(--bg-canvas-void);
   overflow: hidden;
 }
 
 /* --------------------------------------------------------------------------
-   Frameless title bar
+   Frameless title bar — a floating island, inset from the window edge
    -------------------------------------------------------------------------- */
 .mf-titlebar {
   display: flex;
   align-items: stretch;
   height: var(--mf-titlebar-h);
+  margin: 6px 6px 0;
   background: var(--mf-bg-header);
-  border-bottom: 1px solid var(--mf-border);
+  border: var(--panel-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--panel-shadow), var(--inner-highlight);
+  overflow: hidden;
   position: relative;
   z-index: 40;
 }
@@ -123,9 +135,10 @@
   position: fixed;
   min-width: 220px;
   background: var(--mf-bg-elevated);
-  border: 1px solid var(--mf-border-strong);
-  box-shadow: var(--shadow-lg);
-  padding: 4px 0;
+  border: var(--panel-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg), var(--inner-highlight);
+  padding: 4px;
   z-index: 100000;
 }
 .mf-menu-row {
@@ -134,10 +147,11 @@
   justify-content: space-between;
   gap: 20px;
   width: 100%;
-  padding: 5px 12px;
+  padding: 5px 8px;
   font-size: var(--mf-text-sm);
   color: var(--mf-text-1);
   text-align: left;
+  border-radius: var(--radius-sm);
 }
 .mf-menu-row:hover {
   background: var(--mf-accent-dim);
@@ -198,22 +212,22 @@
 .mf-workspace-pills {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   background: var(--mf-bg-sunken);
   border: 1px solid var(--mf-border);
-  border-radius: var(--mf-radius);
-  padding: 1px;
+  border-radius: var(--radius-md);
+  padding: 2px;
   -webkit-app-region: no-drag;
 }
 .mf-workspace-pill {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 2px 9px;
+  padding: 3px 10px;
   font-size: var(--mf-text-xs);
   font-weight: 500;
   color: var(--mf-text-2);
-  border-radius: var(--mf-radius-sm);
+  border-radius: var(--radius-sm);
   white-space: nowrap;
 }
 .mf-workspace-pill:hover {
@@ -224,6 +238,7 @@
   background: var(--mf-accent);
   color: var(--mf-text-inverse);
   font-weight: 600;
+  box-shadow: 0 2px 8px rgba(45, 140, 235, 0.35);
 }
 .mf-workspace-pill svg {
   flex: none;
@@ -232,18 +247,21 @@
 /* --- window controls ------------------------------------------------------ */
 .mf-window-controls {
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  gap: 3px;
   height: 100%;
+  padding-right: 5px;
   margin-left: 6px;
 }
 .mf-window-btn {
-  width: 40px;
-  height: 100%;
+  width: 34px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--mf-text-2);
   background: transparent;
+  border-radius: var(--radius-sm);
 }
 .mf-window-btn:hover {
   background: var(--mf-bg-hover);
@@ -256,11 +274,15 @@
 
 /* --------------------------------------------------------------------------
    Workspace row — a flex row of rails, splitters and the centre monitor
+
+   The workspace is PADDED: every docked surface inside it is a floating
+   island with a 4px void between it and its neighbours.
    -------------------------------------------------------------------------- */
 .mf-workspace {
   display: flex;
   min-height: 0;
-  background: var(--mf-bg-gutter);
+  padding: 5px;
+  background: var(--bg-canvas-void);
   overflow: hidden;
 }
 .mf-workspace-center {
@@ -269,7 +291,6 @@
   min-height: 0;
   display: flex;
   gap: var(--mf-gutter);
-  padding: var(--mf-gutter) 0;
 }
 .mf-workspace-center > * {
   flex: 1;
@@ -281,7 +302,6 @@
   gap: var(--mf-gutter);
   min-height: 0;
   overflow: hidden;
-  padding: var(--mf-gutter) 0;
 }
 .mf-rail-left {
   width: var(--left-panel-width, 280px);
@@ -320,7 +340,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   Tool dock (vertical rail)
+   Tool dock — a floating vertical pill
    -------------------------------------------------------------------------- */
 .mf-tool-dock {
   width: var(--mf-tool-dock-w);
@@ -328,10 +348,12 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 4px 0;
+  gap: 3px;
+  padding: 6px 0;
   background: var(--mf-bg-panel);
-  border-right: 1px solid var(--mf-border);
+  border: var(--panel-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--panel-shadow), var(--inner-highlight);
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -341,7 +363,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--mf-radius);
+  border-radius: var(--radius-sm);
   color: var(--mf-text-2);
   background: transparent;
   position: relative;
@@ -349,11 +371,13 @@
 .mf-tool-btn:hover {
   background: var(--mf-bg-hover);
   color: var(--mf-text-1);
+  transform: translateY(-1px);
+  box-shadow: var(--hover-lift);
 }
 .mf-tool-btn.is-active {
   background: var(--mf-accent-dim);
   color: var(--mf-accent-text);
-  box-shadow: inset 2px 0 0 var(--mf-accent);
+  box-shadow: 0 0 0 1px rgba(45, 140, 235, 0.35), 0 0 14px rgba(45, 140, 235, 0.28);
 }
 .mf-tool-btn[disabled] {
   opacity: 0.35;
@@ -369,11 +393,15 @@
   position: absolute;
   right: 2px;
   bottom: 0;
+  padding: 0 2px;
   font-family: var(--mf-font-mono);
   font-size: 8px;
+  line-height: 1.3;
   color: var(--mf-text-3);
+  background: var(--mf-bg-sunken);
+  border-radius: var(--radius-xs);
   opacity: 0;
-  transition: opacity var(--mf-dur) var(--mf-ease);
+  transition: opacity var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-tool-btn:hover .mf-tool-key,
 .mf-tool-btn.is-active .mf-tool-key {
@@ -400,7 +428,7 @@
 }
 
 /* --------------------------------------------------------------------------
-   Panels
+   Panels — floating islands
    -------------------------------------------------------------------------- */
 .mf-panel {
   display: flex;
@@ -409,11 +437,16 @@
   min-width: 0;
   overflow: hidden;
   background: var(--mf-bg-panel);
-  border: 1px solid var(--mf-border);
+  border: var(--panel-border);
+  border-radius: var(--panel-radius);
+  box-shadow: var(--panel-shadow), var(--inner-highlight);
   position: relative;
+  transition: border-color var(--mf-dur-ui) var(--mf-ease),
+    box-shadow var(--mf-dur-ui) var(--mf-ease);
 }
 .mf-panel.is-focused {
-  border-color: var(--mf-border-focus);
+  border-color: var(--panel-focus-border);
+  box-shadow: var(--panel-focus-shadow), var(--inner-highlight);
 }
 .mf-panel.is-sunken {
   background: var(--mf-bg-sunken);
@@ -432,6 +465,7 @@
   align-items: stretch;
   min-width: 0;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
 }
 .mf-panel-tab {
   display: flex;
@@ -446,6 +480,7 @@
   border-right: 1px solid var(--mf-border);
   background: transparent;
   white-space: nowrap;
+  position: relative;
 }
 .mf-panel-tab:hover {
   color: var(--mf-text-1);
@@ -454,7 +489,17 @@
 .mf-panel-tab.is-active {
   color: var(--mf-accent-text);
   background: var(--mf-bg-panel);
-  box-shadow: inset 0 -2px 0 var(--mf-accent);
+}
+.mf-panel-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--mf-accent);
+  box-shadow: 0 0 8px rgba(45, 140, 235, 0.55);
 }
 .mf-panel-tab svg {
   flex: none;
@@ -463,8 +508,8 @@
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding-right: 4px;
+  gap: 4px;
+  padding-right: 6px;
 }
 .mf-panel-body {
   flex: 1;
@@ -478,10 +523,10 @@
 }
 
 /* --------------------------------------------------------------------------
-   Splitters
+   Splitters — the void BETWEEN the islands, so they are invisible
    -------------------------------------------------------------------------- */
 .mf-splitter {
-  background: var(--mf-bg-gutter);
+  background: transparent;
   position: relative;
   z-index: 15;
 }
@@ -515,7 +560,8 @@
 .mf-timeline-region {
   display: flex;
   min-height: 0;
-  background: var(--mf-bg-gutter);
+  padding: 0 5px 4px;
+  background: var(--bg-canvas-void);
 }
 .mf-timeline-host {
   flex: 1;
@@ -527,14 +573,14 @@
 }
 
 /* --------------------------------------------------------------------------
-   Status bar
+   Status bar — 22px, monospaced, items separated by subtle dots
    -------------------------------------------------------------------------- */
 .mf-statusbar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   height: var(--mf-statusbar-h);
-  padding: 0 10px;
+  padding: 0 12px;
   background: var(--mf-bg-header);
   border-top: 1px solid var(--mf-border);
   font-size: var(--mf-text-xs);
@@ -548,6 +594,12 @@
   display: flex;
   align-items: center;
   gap: 5px;
+  border-radius: var(--radius-xs);
+}
+.mf-status-item + .mf-status-item::before {
+  content: '·';
+  color: var(--mf-text-3);
+  margin-right: 5px;
 }
 .mf-status-spacer {
   flex: 1;
@@ -567,4 +619,25 @@
 }
 .mf-status-dot.is-busy {
   background: var(--mf-warning);
+}
+
+/* the engine badge — a soft green/red glow around the state dot */
+.mf-status-engine .mf-status-dot {
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.16);
+}
+.mf-status-engine:has(.is-offline) .mf-status-dot {
+  box-shadow: 0 0 0 2px rgba(255, 75, 75, 0.16);
+}
+
+/* the title bar's engine chip — 4px rounded with a soft state glow */
+.mf-engine-badge {
+  border-radius: var(--radius-xs);
+  transition: box-shadow var(--mf-dur-ui) var(--mf-ease),
+    background var(--mf-dur-ui) var(--mf-ease);
+}
+.mf-engine-badge.is-success {
+  box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.22), 0 0 10px rgba(34, 197, 94, 0.18);
+}
+.mf-engine-badge.is-danger {
+  box-shadow: 0 0 0 1px rgba(255, 75, 75, 0.22), 0 0 10px rgba(255, 75, 75, 0.18);
 }

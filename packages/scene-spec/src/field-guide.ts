@@ -24,7 +24,12 @@ import { FOREGROUND_FX_KINDS, foregroundFxLayerSchema } from "./layers/foregroun
 import { imageLogoLayerSchema, LOGO_MASKS } from "./layers/image-logo.js";
 import { kineticTextLayerSchema } from "./layers/kinetic-text.js";
 import { lottieLayerSchema } from "./layers/lottie.js";
-import { layerBaseSchema } from "./layers/base.js";
+import {
+  KEYFRAME_EASINGS,
+  KEYFRAME_PROPERTIES,
+  LAYER_FILTER_KEYS,
+  layerBaseSchema,
+} from "./layers/base.js";
 import { CANVAS_SCALES, CANVAS_SHAPES, LAYER_TYPES, TRANSITION_KINDS, type LayerType } from "./scene.js";
 import type { SceneSpecInput } from "./validate.js";
 
@@ -52,6 +57,11 @@ export const COMMON_LAYER_OPTIONAL = [
   "at (start time in ms, default 0)",
   "duration (visible window in ms, default: until scene end)",
   "trackIndex (0-indexed timeline track lane; non-overlapping clips sharing a trackIndex share a row)",
+  "position ({ xPct, yPct } — center anchor in percent of the canvas; -300..300 so a layer can start off-screen)",
+  "scale (uniform multiplier, 0.05-10) / scaleX / scaleY (non-uniform; scaleX/scaleY win over scale)",
+  "size ({ widthPct?, heightPct? } — LAYOUT size in percent of the canvas)",
+  "filters ({ blur?, brightness?, contrast?, saturate?, shadowBlur?, shadowColor?, cornerRadius? } — VISUAL filters on the painted content)",
+  "keyframes ([{ id, timeMs, property, value, easing? }] — the unified animation surface; property is xPct | yPct | scale | rotation | opacity)",
   "entrance ({ name: <preset>, strength?, staggerMs?, durationMs?, ease?, delayMs? })",
   "emphasis ({ name: <preset>, ... })",
   "exit ({ name: <preset>, ... })",
@@ -197,6 +207,8 @@ export const NESTED_SHAPE_NOTES: string[] = [
   '`background.variant` is an OBJECT discriminated by its own `variant` key, not a string: {"variant":"solid","color":"#000"}. Same for `card.variant`: {"variant":"glassCard", ...}.',
   'Motion is objects, never a bare string: `entrance`, `emphasis` and `exit` take `{ "name": "<preset>" }` plus optional strength / staggerMs / durationMs / ease / delayMs. There is no `preset` field.',
   'Positions are OBJECTS of canvas percent: `"position": { "xPct": 50, "yPct": 45 }`. Sizes carry a unit suffix in the key: `sizePx`, `widthPx`, `heightPx`, `blurPx`, `radiusPx`, `paddingPx`.',
+  'The VISUAL filter bag is `filters` (an object), NOT `effects`: `filters: { "blur": 6, "saturate": 120 }`. `effects` on a `foregroundFX` layer is a different thing entirely — an ARRAY of vignette / filmGrain / colorGrade overlays.',
+  'A unified keyframe is `{ "id": "k1", "timeMs": 1200, "property": "xPct", "value": 40, "easing": "easeInOut" }` — `property` is one of xPct | yPct | scale | rotation | opacity, and `value` must be inside that property\'s range (xPct/yPct -300..300, scale 0.05..10, rotation -3600..3600, opacity 0..1).',
   'ALL times are milliseconds: `at`, `durationMs`, `delayMs`, `audio.cues[].at`, `camera.moves[].at`.',
   'Gradients are objects: `{ "type": "linear", "angleDeg": 90, "stops": [{ "color": "#fff", "at": 0 }, ...] }`; a plain string is a solid color.',
   'Assets must be declared in `scene.assets` ({id, kind, src}) before a layer can reference them by id. `src` starts with https://, data: or vault:.',
@@ -409,6 +421,9 @@ export function authoringDigest(): Record<string, unknown> {
       textRoles: FONT_ROLES,
       logoMasks: LOGO_MASKS,
       assetKinds: ASSET_KINDS,
+      layerFilterKeys: LAYER_FILTER_KEYS,
+      keyframeProperties: KEYFRAME_PROPERTIES,
+      keyframeEasings: KEYFRAME_EASINGS,
     },
     notes: {
       howToStart:

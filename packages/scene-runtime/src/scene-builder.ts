@@ -8,7 +8,13 @@ import {
   type ActWindow,
   type DeadGap,
 } from "@motionforge/scene-spec";
-import type { AssetKind, FontRole, SceneSpec, KeyframeTrack } from "@motionforge/scene-spec";
+import type {
+  AssetKind,
+  FontRole,
+  KeyframeProperty,
+  SceneSpec,
+  KeyframeTrack,
+} from "@motionforge/scene-spec";
 import type { Stage } from "./stage.js";
 import {
   applyCamera,
@@ -38,6 +44,11 @@ import {
   type ActiveTransition,
   type TransitionOverlay,
 } from "./transitions.js";
+import {
+  GSAP_EASES,
+  keyframeSamplesFor,
+  TransformPipeline,
+} from "./transform.js";
 import type { Seekable } from "./types.js";
 
 export interface SceneBuildOptions {
@@ -58,6 +69,13 @@ export interface BuiltScene {
   describeFrame: FrameDescriber;
   /** seam bridges applied at build time, for `framesMeta` / diagnostics */
   coverage: CoverageReport;
+  /**
+   * The unified 2D transform pipeline.
+   *
+   * It owns the element every layer's transform is written on, and it holds
+   * the live overrides the Studio's direct manipulation produces.
+   */
+  pipeline: TransformPipeline;
 }
 
 /**
@@ -147,6 +165,7 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
   const layerFocus = new Map<string, HTMLElement>();
   const lifecycle = new LayerLifecycle();
   const descriptors: LayerDescriptor[] = [];
+  const pipeline = new TransformPipeline();
 
   /**
    * SEAM BRIDGING — decided before a single tween exists.
@@ -202,6 +221,9 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
     };
 
     const built = renderLayer(layer, ctx);
+    // The pipeline owns this element's transform from here on: no renderer and
+    // no message handler may write a competing value on it.
+    pipeline.register(layer, built.content);
     const bridge = bridges.get(layer.id);
     const planned: PlannedWindow = {
       startMs: windows[layer.id]!.startMs,
@@ -210,7 +232,18 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
       // cover, so its exit (authored or auto) must not run as well
       suppressExit: bridge?.mode === "holdOutgoing",
     };
-    const plan = applyLayerTiming(tl, scene, layer, built, wrappers, stage.rig, layerFocus, lifecycle, planned);
+    const plan = applyLayerTiming(
+      tl,
+      scene,
+      layer,
+      built,
+      wrappers,
+      stage.rig,
+      layerFocus,
+      lifecycle,
+      planned,
+      pipeline
+    );
     descriptors.push({ layer, built, wrappers, plan });
   });
 
@@ -243,6 +276,10 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
   }
 
   const cameraCtx: CameraContext = { ...emptyCameraContext(), layerAnchors, shakes, widthPx: stage.width, heightPx: stage.height };
+  // The transform pipeline is installed BEFORE the camera, so the camera's
+  // composed `onUpdate` (which must be the LAST thing applied in a frame)
+  // chains ON TOP of it instead of replacing it.
+  pipeline.install(tl);
   applyCamera(tl, scene, stage.rig, cameraCtx);
   const overlays = applyTransitions(tl, scene, stage.rig);
 
@@ -256,6 +293,7 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
     overlays,
     coverage: { windows, deadGaps, ok: deadGaps.length === 0 },
     describeFrame: makeFrameDescriber(scene, stage, overlays, descriptors),
+    pipeline,
   };
 }
 
@@ -266,6 +304,29 @@ interface LayerDescriptor {
   plan: MotionSlotPlan;
 }
 
+/**
+ * The legacy properties the unified transform pipeline owns.
+ *
+ * A legacy track that keyframes one of these is NOT applied here: the
+ * pipeline resolves those properties from the scene on every frame, so a
+ * second writer would fight it (and the two would disagree about the pose
+ * whenever the seek order changed).
+ */
+export const PIPELINE_OWNED_PROPERTIES: readonly string[] = [
+  "opacity",
+  "scale",
+  "rotation",
+  "position.xPct",
+  "position.yPct",
+];
+
+/**
+ * Apply the legacy `tracks` of a layer — for the properties the unified
+ * transform pipeline does NOT own.
+ *
+ * `widthPx` / `heightPx` (and any custom property) still travel the old
+ * route: they are layout writes, not transform writes.
+ */
 export function applyKeyframeTracks(
   tl: gsap.core.Timeline,
   tracks: KeyframeTrack[],
@@ -273,21 +334,12 @@ export function applyKeyframeTracks(
 ): void {
   for (const track of tracks) {
     if (!track.keyframes || track.keyframes.length === 0) continue;
+    if (PIPELINE_OWNED_PROPERTIES.includes(track.property)) continue;
     const sorted = [...track.keyframes].sort((a, b) => a.at - b.at);
     const prop = track.property;
 
     const mapProp = (val: number | string) => {
       switch (prop) {
-        case "opacity":
-          return { opacity: Number(val) };
-        case "scale":
-          return { scale: Number(val) };
-        case "rotation":
-          return { rotation: Number(val) };
-        case "position.xPct":
-          return { left: `${val}%` };
-        case "position.yPct":
-          return { top: `${val}%` };
         case "widthPx":
           return { width: `${val}px` };
         case "heightPx":
@@ -322,6 +374,89 @@ export function applyKeyframeTracks(
   }
 }
 
+/**
+ * Put a layer's keyframes ON the master timeline.
+ *
+ * THE RUNTIME IS A SEEKED TIMELINE. A keyframe that lives in a
+ * `requestAnimationFrame` loop renders a different frame on every machine; a
+ * keyframe that lives on the GSAP master timeline is seeked, captured and
+ * reproduced exactly.
+ *
+ * The tween target is a PLAIN OBJECT — never the element. GSAP would write a
+ * `transform` on the element and fight the pipeline for it; on a plain proxy
+ * it can only write numbers.
+ *
+ * The rendered VALUE never comes from the proxy: it comes from
+ * `resolveTransform(layer, t)`, which is the same pure function the Studio
+ * uses. The proxy exists so the keyframes are part of the timeline's own
+ * structure (and so the timeline reports them), not to be a second source of
+ * truth for the pose.
+ */
+export function applyLayerKeyframes(
+  tl: gsap.core.Timeline,
+  layer: SceneLayer,
+  pipeline: TransformPipeline,
+  sceneDurationMs: number
+): void {
+  const properties: readonly KeyframeProperty[] = ["xPct", "yPct", "scale", "rotation", "opacity"];
+  const proxy: Record<string, number> = {
+    xPct: 0,
+    yPct: 0,
+    scale: 1,
+    rotation: 0,
+    opacity: 1,
+    __t: 0,
+  };
+
+  let animated = false;
+  for (const property of properties) {
+    const samples = keyframeSamplesFor(layer, property);
+    if (samples.length === 0) continue;
+    const first = samples[0]!;
+    // the value BEFORE the first keyframe IS the first keyframe's value
+    proxy[property] = first.value;
+    for (let i = 1; i < samples.length; i++) {
+      const left = samples[i - 1]!;
+      const right = samples[i]!;
+      animated = true;
+      tl.to(
+        proxy,
+        {
+          [property]: right.value,
+          duration: Math.max(0.001, (right.timeMs - left.timeMs) / 1000),
+          ease: GSAP_EASES[left.easing],
+          onUpdate: () => {
+            proxy.__t = tl.time() * 1000;
+            pipeline.applyAt(proxy.__t);
+          },
+        } as gsap.TweenVars,
+        left.timeMs / 1000
+      );
+    }
+  }
+
+  if (!animated) return;
+
+  // A driver that spans the WHOLE scene.
+  //
+  // The per-segment tweens only render inside their own window, so the
+  // transform would be stale before the first keyframe and after the last one.
+  // The driver keeps the pipeline in step with the timeline at EVERY instant.
+  tl.to(
+    proxy,
+    {
+      __t: 1,
+      duration: Math.max(0.001, sceneDurationMs / 1000),
+      ease: "none",
+      onUpdate: () => {
+        proxy.__t = tl.time() * 1000;
+        pipeline.applyAt(proxy.__t);
+      },
+    } as gsap.TweenVars,
+    0
+  );
+}
+
 function applyLayerTiming(
   tl: gsap.core.Timeline,
   scene: SceneSpec,
@@ -331,7 +466,8 @@ function applyLayerTiming(
   rig: HTMLElement,
   layerFocus: Map<string, HTMLElement>,
   lifecycle: LayerLifecycle,
-  planned: PlannedWindow
+  planned: PlannedWindow,
+  pipeline: TransformPipeline
 ): MotionSlotPlan {
   const plan = planMotionSlots(layer, scene.durationMs, planned);
   const staggerMs =
@@ -398,8 +534,13 @@ function applyLayerTiming(
   }
 
   if (layer.tracks && layer.tracks.length > 0) {
+    // only the properties the pipeline does NOT own travel this road
     applyKeyframeTracks(tl, layer.tracks, built.content);
   }
+
+  // The unified keyframes (flat `keyframes` OR legacy `tracks`) live ON the
+  // master timeline, so the renderer seeks them exactly like everything else.
+  applyLayerKeyframes(tl, layer, pipeline, scene.durationMs);
 
   // camera `focusTarget` centers on the painted content, not the full-bleed wrapper
   layerFocus.set(layer.id, built.content);

@@ -5,7 +5,6 @@ import { listAssets, SFX_BANK, type VaultAsset } from '../../services/asset-serv
 import { createDefaultScene } from '../../services/commands.js';
 import { writeAssetPayload } from '../../services/drag-payload.js';
 import {
-  IconChevronRight,
   IconComposition,
   IconCopy,
   IconFilePlus,
@@ -13,6 +12,7 @@ import {
   IconImage,
   IconImport,
   IconList,
+  IconPencil,
   IconPlus,
   IconSearch,
   IconTrash,
@@ -179,6 +179,7 @@ export const ProjectBinPanel: Component = () => {
   return (
     <PanelContainer
       id="project-bin"
+      class="panel-container"
       tabs={['Compositions', 'Media', 'SFX']}
       activeTab={tab() === 'compositions' ? 'Compositions' : tab() === 'media' ? 'Media' : 'SFX'}
       onTabChange={(next) =>
@@ -186,26 +187,28 @@ export const ProjectBinPanel: Component = () => {
       }
       label="Project bin"
       actions={
-        <>
+        <div class="mf-segmented" role="group" aria-label="Bin view">
           <button
-            class="mf-btn is-icon is-ghost"
+            class={`mf-segment ${view() === 'list' ? 'is-active' : ''}`}
             id="bin-view-list"
             title="List view"
             aria-label="List view"
+            aria-pressed={view() === 'list'}
             onClick={() => setView('list')}
           >
-            <IconList size={13} />
+            <IconList size={12} />
           </button>
           <button
-            class="mf-btn is-icon is-ghost"
+            class={`mf-segment ${view() === 'grid' ? 'is-active' : ''}`}
             id="bin-view-grid"
             title="Grid view"
             aria-label="Grid view"
+            aria-pressed={view() === 'grid'}
             onClick={() => setView('grid')}
           >
-            <IconGrid size={13} />
+            <IconGrid size={12} />
           </button>
-        </>
+        </div>
       }
     >
       {/* ── Compositions ─────────────────────────────────────────────── */}
@@ -265,40 +268,42 @@ export const ProjectBinPanel: Component = () => {
                       {scene.layerCount}L · {(scene.durationMs / 1000).toFixed(1)}s · rev {scene.revision}
                     </div>
                   </div>
-                  <button
-                    class="mf-icon-btn"
-                    title="Rename composition"
-                    aria-label="Rename composition"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setRenaming(scene.id);
-                      setRenameText(scene.name);
-                    }}
-                  >
-                    <IconChevronRight size={12} />
-                  </button>
-                  <button
-                    class="mf-icon-btn"
-                    title="Duplicate composition"
-                    aria-label="Duplicate composition"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      duplicateComposition(scene.id);
-                    }}
-                  >
-                    <IconCopy size={12} />
-                  </button>
-                  <button
-                    class="mf-icon-btn is-danger"
-                    title="Delete composition"
-                    aria-label="Delete composition"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteComposition(scene.id);
-                    }}
-                  >
-                    <IconTrash size={12} />
-                  </button>
+                  <div class="mf-bin-actions">
+                    <button
+                      class="mf-icon-btn"
+                      title="Rename composition"
+                      aria-label="Rename composition"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRenaming(scene.id);
+                        setRenameText(scene.name);
+                      }}
+                    >
+                      <IconPencil size={12} />
+                    </button>
+                    <button
+                      class="mf-icon-btn"
+                      title="Duplicate composition"
+                      aria-label="Duplicate composition"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        duplicateComposition(scene.id);
+                      }}
+                    >
+                      <IconCopy size={12} />
+                    </button>
+                    <button
+                      class="mf-icon-btn is-danger"
+                      title="Delete composition"
+                      aria-label="Delete composition"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteComposition(scene.id);
+                      }}
+                    >
+                      <IconTrash size={12} />
+                    </button>
+                  </div>
                 </div>
               )}
             </For>
@@ -310,15 +315,14 @@ export const ProjectBinPanel: Component = () => {
       <Show when={tab() === 'media'}>
         <div class="mf-panel-body is-scrollable" id="bin-media">
           <div style={{ padding: '6px 8px', display: 'flex', gap: '4px', 'align-items': 'center' }}>
-            <div style={{ position: 'relative', flex: '1' }}>
-              <IconSearch
-                size={12}
-                style={{ position: 'absolute', left: '6px', top: '5px', color: 'var(--mf-text-3)' }}
-              />
+            <div class="mf-search">
+              <span class="mf-search-icon">
+                <IconSearch size={12} />
+              </span>
               <input
                 class="mf-input"
-                style={{ 'padding-left': '22px' }}
                 placeholder="Search media"
+                aria-label="Search media"
                 value={search()}
                 onInput={(e) => setSearch(e.currentTarget.value)}
               />

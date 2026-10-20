@@ -136,6 +136,13 @@ export type Layer = z.infer<typeof layerSchema>;
 
 export const trackLaneSchema = z.strictObject({
   id: idSchema,
+  /**
+   * The 0-indexed timeline row this lane occupies.
+   *
+   * Without it, a declared lane's row is implied by its array position, which
+   * collides with the lanes the Studio allocates implicitly.
+   */
+  index: z.number().int().min(0).max(99).optional(),
   name: z.string().max(80).optional(),
   kind: z.enum(["video", "audio"]).default("video"),
   locked: z.boolean().default(false),

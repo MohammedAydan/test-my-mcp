@@ -46,7 +46,60 @@ export type SceneStoreLoadIssue = {
   error: string;
 };
 
+/**
+ * The result of a store hydration.
+ *
+ * `dropped` lists the scenes that were removed because a NEWER scene with the
+ * same name existed — they are gone from the store AND from disk.
+ */
+export interface SceneStoreLoadResult {
+  loaded: number;
+  issues: SceneStoreLoadIssue[];
+  /** ids of the scenes the de-duplication removed */
+  dropped: string[];
+}
+
 export const SCENE_STORE_SCHEMA_VERSION = 1;
+
+/**
+ * The key scenes are grouped by when they are de-duplicated.
+ *
+ * Two scenes called "MotionForge Demo" and "  motionforge demo " are the same
+ * scene as far as a human is concerned, so the comparison ignores case and the
+ * surrounding whitespace.
+ */
+export function normalizeSceneName(name: string | undefined): string {
+  return (name ?? "").trim().toLowerCase();
+}
+
+/**
+ * True when a scene id belongs to a SEEDED (auto-generated) scene.
+ *
+ * Only seeded scenes may be collapsed by the de-duplication pass. Two
+ * compositions the USER created are never merged, even when they are
+ * byte-identical — identical content is not proof of a duplicate.
+ */
+export function isSeededSceneId(id: string): boolean {
+  return /^(demo|mf-demo|scene-motionforge-demo|showcase)[-_]/i.test(id) ||
+    /^demo$/i.test(id) ||
+    /^mf-demo$/i.test(id) ||
+    /^scene-motionforge-demo$/i.test(id) ||
+    /^showcase$/i.test(id);
+}
+
+/**
+ * Order two scenes by recency: newest first.
+ *
+ * `updatedAt` is the primary key; `revision` breaks a tie (a legacy file
+ * written before the envelope existed has no `updatedAt`, so it reads 0), and
+ * the id is the final tie-break so the result is DETERMINISTIC — two boots on
+ * the same folder always keep the same scene.
+ */
+export function compareSceneRecency(a: StoredScene, b: StoredScene): number {
+  if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
+  if (a.revision !== b.revision) return b.revision - a.revision;
+  return (a.scene.id ?? "").localeCompare(b.scene.id ?? "");
+}
 
 export function sceneIdFromName(name: string): string {
   const slug = name
@@ -61,6 +114,24 @@ export function sceneIdFromName(name: string): string {
 /** Stable content hash of a scene (key order does not affect it). */
 export function sceneHash(scene: SceneSpec): string {
   return createHash("sha256").update(stableStringify(scene)).digest("hex").slice(0, 16);
+}
+
+/**
+ * A hash of the scene's CONTENT, ignoring its id and its name.
+ *
+ * Two copies of the same composition differ only by their id (the seeder
+ * stamps a random one) and by the exact spelling of the name (the de-dup
+ * groups them case- and whitespace-insensitively), so both are excluded for
+ * the two to be recognised as the same scene. A scene that shares a NAME with
+ * another but differs in content gets a different hash — and is therefore
+ * never deleted.
+ */
+export function sceneContentHash(scene: SceneSpec): string {
+  const { id: _ignoredId, name: _ignoredName, ...rest } = scene as SceneSpec & {
+    id?: string;
+    name?: string;
+  };
+  return createHash("sha256").update(stableStringify(rest)).digest("hex").slice(0, 16);
 }
 
 /** JSON with sorted keys, so two structurally equal scenes hash identically. */
@@ -118,10 +189,15 @@ export class SceneStore {
    * Hydrate from disk. Every file is re-validated with the real schema, so a
    * scene hand-edited into an illegal state is rejected (and reported) instead
    * of crashing a later render.
+   *
+   * After hydration the store DE-DUPLICATES by name: repeated test / seed runs
+   * leave several scenes with the same name, and the Studio's Project Bin
+   * lists every one of them. The newest survives; the rest are dropped from
+   * the store and deleted from disk.
    */
-  async load(): Promise<{ loaded: number; issues: SceneStoreLoadIssue[] }> {
+  async load(): Promise<SceneStoreLoadResult> {
     this.loadIssues.length = 0;
-    if (!this.scenesDir) return { loaded: 0, issues: this.loadIssues };
+    if (!this.scenesDir) return { loaded: 0, issues: this.loadIssues, dropped: [] };
     const dir = this.scenesDir;
     let entries: string[];
     try {
@@ -129,9 +205,11 @@ export class SceneStore {
       entries = await readdir(dir);
     } catch (error) {
       this.loadIssues.push({ file: dir, error: `cannot read scene store: ${describe(error)}` });
-      return { loaded: 0, issues: this.loadIssues };
+      return { loaded: 0, issues: this.loadIssues, dropped: [] };
     }
 
+    /** the file each hydrated scene came from, so a dropped scene can be deleted */
+    const sourceFiles = new Map<string, string>();
     let loaded = 0;
     for (const name of entries.filter((f) => f.endsWith(".json")).sort()) {
       const file = path.join(dir, name);
@@ -169,9 +247,82 @@ export class SceneStore {
         hash: typeof envelope?.hash === "string" ? envelope.hash : sceneHash(scene),
         ...(typeof envelope?.projectPath === "string" ? { projectPath: envelope.projectPath } : {}),
       });
+      sourceFiles.set(id, file);
       loaded++;
     }
-    return { loaded, issues: this.loadIssues };
+
+    const dropped = await this.dropDuplicateScenes(sourceFiles);
+    return { loaded: this.scenes.size, issues: this.loadIssues, dropped };
+  }
+
+  /**
+   * Remove every scene that is an EXACT duplicate of a newer twin.
+   *
+   * The rule is deliberately narrow, because the broad version destroys data:
+   *
+   * - Two scenes that merely share a NAME are NOT duplicates. Renaming a
+   *   composition onto an existing name must never delete the older one.
+   * - A scene is a duplicate only when its CONTENT matches the keeper's
+   *   (compared with a content hash that IGNORES the scene id and the exact
+   *   spelling of the name — a seeded copy differs only by those).
+   * - AND the victim must be a SEEDED scene (its id matches the demo
+   *   pattern). Two compositions the USER created that happen to be identical
+   *   are two compositions, not one — they are never collapsed.
+   *
+   * The removed scenes are deleted from disk as well, so the next boot does
+   * not have to repeat the cleanup.
+   */
+  private async dropDuplicateScenes(sourceFiles: Map<string, string>): Promise<string[]> {
+    const groups = new Map<string, Array<{ key: string; entry: StoredScene }>>();
+    for (const [key, entry] of this.scenes) {
+      const name = normalizeSceneName(entry.scene.name);
+      const group = groups.get(name) ?? [];
+      group.push({ key, entry });
+      groups.set(name, group);
+    }
+
+    const dropped: string[] = [];
+    for (const [name, group] of groups) {
+      if (group.length <= 1) continue;
+      const ordered = [...group].sort((a, b) => compareSceneRecency(a.entry, b.entry));
+      const keeper = ordered[0]!;
+      const keeperContent = sceneContentHash(keeper.entry.scene);
+      for (const victim of ordered.slice(1)) {
+        // SAME NAME but DIFFERENT CONTENT → a different composition that
+        // happens to share a title. It is NOT a duplicate and must survive.
+        if (sceneContentHash(victim.entry.scene) !== keeperContent) {
+          continue;
+        }
+        // NOT a seeded copy → the user made it. Identical content is not
+        // proof of a duplicate, so it is left alone.
+        if (!isSeededSceneId(victim.entry.scene.id ?? victim.key)) {
+          continue;
+        }
+        this.scenes.delete(victim.key);
+        dropped.push(victim.key);
+        const file = sourceFiles.get(victim.key);
+        if (file) {
+          try {
+            await unlink(file);
+          } catch (error) {
+            this.loadIssues.push({
+              file: path.basename(file),
+              error: `could not delete duplicate scene: ${describe(error)}`,
+            });
+          }
+        }
+        console.warn(
+          `[scene-store] dropped duplicate scene "${victim.entry.scene.name}" (${victim.key}) — ` +
+            `kept the newer "${keeper.entry.scene.id}"`
+        );
+        this.bus.emit(`scene:${victim.key}`, {
+          type: "deleted",
+          reason: "duplicate-content",
+          kept: keeper.entry.scene.id,
+        });
+      }
+    }
+    return dropped;
   }
 
   async upsert(scene: SceneSpec, meta: { projectPath?: string } = {}): Promise<UpsertResult> {

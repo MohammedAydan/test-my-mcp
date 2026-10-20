@@ -9,11 +9,12 @@ import type { LayerContext } from "./context.js";
  */
 export function renderLottie(layer: LottieLayer, ctx: LayerContext): { content: HTMLElement } {
   const host = document.createElement("div");
+  // The anchor is authored here; the transform belongs to the unified
+  // pipeline (`../transform.js`), which is the only writer of it.
   host.style.cssText = [
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
-    `transform:translate(-50%,-50%)${layer.rotation ? ` rotate(${layer.rotation}deg)` : ""}`,
     layer.widthPx ? `width:${layer.widthPx}px` : "width:25%",
     "max-width:100%",
   ].join(";");

@@ -1,6 +1,7 @@
 import { Component, For, Show, createSignal } from 'solid-js';
 import { store } from '../../state/store.js';
 import { formatFrameCount, formatTimecode } from '../../state/timecode.js';
+import { loopPlayback, setLoopPlayback } from './transport-state.js';
 import {
   IconGoToEnd,
   IconGoToStart,
@@ -22,7 +23,6 @@ import {
 
 export const TransportBar: Component = () => {
   const state = store.state;
-  const [looping, setLooping] = createSignal(false);
 
   const fps = () => 30;
   const duration = () => state.scene?.durationMs ?? 0;
@@ -46,6 +46,12 @@ export const TransportBar: Component = () => {
       store.setPlaying(true);
     }
   };
+
+  /**
+   * The loop is a REAL behaviour: the playback clock (the Program Monitor)
+   * wraps at the out point when the loop is armed.
+   */
+  const looping = () => loopPlayback();
 
   return (
     <div class="mf-transport" role="toolbar" aria-label="Playback controls" id="transport-bar">
@@ -107,7 +113,7 @@ export const TransportBar: Component = () => {
         title="Loop playback"
         aria-label="Loop playback"
         aria-pressed={looping()}
-        onClick={() => setLooping(!looping())}
+        onClick={() => setLoopPlayback(!looping())}
       >
         <IconLoop size={14} />
       </button>
@@ -131,6 +137,17 @@ export const TransportBar: Component = () => {
       </button>
 
       <div class="mf-transport-spacer" style={{ flex: '1' }} />
+
+      <Show when={state.inPoint !== null}>
+        <span class="mf-frame-count" id="transport-in-point">
+          IN {formatTimecode(state.inPoint ?? 0, fps())}
+        </span>
+      </Show>
+      <Show when={state.outPoint !== null}>
+        <span class="mf-frame-count" id="transport-out-point">
+          OUT {formatTimecode(state.outPoint ?? 0, fps())}
+        </span>
+      </Show>
 
       <span class="mf-frame-count" id="transport-frame-count">
         {formatFrameCount(state.playhead, fps())}

@@ -287,6 +287,19 @@ export const commands: Command[] = [
     shortcut: 'S',
     run: () => store.setSnapEnabled(!store.state.snapEnabled),
   },
+  {
+    id: 'timeline.zoom-fit',
+    title: 'Zoom to Fit',
+    category: 'Timeline',
+    shortcut: 'Shift+Z',
+    run: () => {
+      const width = document.querySelector<HTMLCanvasElement>('#timeline-canvas')?.clientWidth ?? 0;
+      const duration = store.state.scene?.durationMs ?? 0;
+      if (width <= 0 || duration <= 0) return;
+      store.setZoom(Math.max(0.2, Math.min(12, duration / width)));
+      store.setPanOffset(0);
+    },
+  },
 
   /* ── View ─────────────────────────────────────────────────────────────── */
   {
@@ -295,8 +308,9 @@ export const commands: Command[] = [
     category: 'View',
     shortcut: 'Ctrl+0',
     run: () => {
-      store.setViewportZoom(1);
       store.setViewportPan({ x: 0, y: 0 });
+      // the monitor owns the fit maths (it needs the panel's real size)
+      window.dispatchEvent(new CustomEvent('motionforge:fit-canvas'));
     },
   },
   {

@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { colorSchema } from "./common.js";
+import { KEYFRAME_VALUE_RANGES } from "./layers/base.js";
 import { sceneShapeSchema } from "./scene.js";
 
 /**
@@ -78,6 +80,135 @@ const clamp = (value: number, min: number, max: number): number =>
 const finiteOr = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
+/** Legal range of every numeric entry of the `filters` bag. */
+const FILTER_RANGES: Record<string, { min: number; max: number }> = {
+  blur: { min: 0, max: 200 },
+  brightness: { min: 0, max: 400 },
+  contrast: { min: 0, max: 400 },
+  saturate: { min: 0, max: 400 },
+  shadowBlur: { min: 0, max: 200 },
+  cornerRadius: { min: 0, max: 400 },
+};
+
+/**
+ * Normalize the `filters` bag of ONE layer.
+ *
+ * A filter whose value is not a number (or not a colour, for `shadowColor`) is
+ * DROPPED rather than carried into the schema, where it would fail the whole
+ * save: a half-authored filter must not make a scene unloadable.
+ */
+function normalizeFilters(layer: Record<string, unknown>, path: string, report: SanitizeReport): void {
+  const filters = layer.filters;
+  if (!isPlainObject(filters)) {
+    if (filters !== undefined) {
+      delete layer.filters;
+      report.clamped.push(`${path}.filters`);
+    }
+    return;
+  }
+
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    if (key === "shadowColor") {
+      if (typeof value === "string" && colorSchema.safeParse(value).success) {
+        out.shadowColor = value;
+      } else {
+        report.clamped.push(`${path}.filters.shadowColor`);
+      }
+      continue;
+    }
+    const range = FILTER_RANGES[key];
+    if (!range) {
+      // an unknown filter key is a hallucinated field: drop it
+      report.clamped.push(`${path}.filters.${key}`);
+      continue;
+    }
+    const numeric = finiteOr(value);
+    if (numeric === undefined) {
+      report.clamped.push(`${path}.filters.${key}`);
+      continue;
+    }
+    const clamped = clamp(numeric, range.min, range.max);
+    if (clamped !== numeric) report.clamped.push(`${path}.filters.${key}`);
+    out[key] = clamped;
+  }
+  layer.filters = out;
+}
+
+/**
+ * Normalize the flat `keyframes` list of ONE layer.
+ *
+ * Each value is clamped into the range its PROPERTY allows (a keyframe's
+ * `value` is a plain number, so the legal range depends on what it drives),
+ * and a keyframe whose property is unknown is dropped — it cannot be
+ * interpolated, so keeping it would only produce a confusing validation error
+ * about a value that was never going to be used.
+ */
+function normalizeKeyframes(layer: Record<string, unknown>, path: string, report: SanitizeReport): void {
+  const keyframes = layer.keyframes;
+  if (!Array.isArray(keyframes)) {
+    if (keyframes !== undefined) {
+      delete layer.keyframes;
+      report.clamped.push(`${path}.keyframes`);
+    }
+    return;
+  }
+
+  const kept: Record<string, unknown>[] = [];
+  keyframes.forEach((raw, i) => {
+    if (!isPlainObject(raw)) {
+      report.clamped.push(`${path}.keyframes.${i}`);
+      return;
+    }
+    const property = typeof raw.property === "string" ? raw.property : undefined;
+    const range = property ? KEYFRAME_VALUE_RANGES[property as keyof typeof KEYFRAME_VALUE_RANGES] : undefined;
+    if (!range) {
+      report.clamped.push(`${path}.keyframes.${i}`);
+      return;
+    }
+    const value = finiteOr(raw.value);
+    if (value === undefined) {
+      report.clamped.push(`${path}.keyframes.${i}.value`);
+      return;
+    }
+    const clamped = clamp(value, range.min, range.max);
+    if (clamped !== value) report.clamped.push(`${path}.keyframes.${i}.value`);
+    kept.push({ ...raw, value: clamped });
+  });
+  layer.keyframes = kept;
+}
+
+/**
+ * Normalize the `size` bag of ONE layer (layout size, in canvas percent).
+ */
+function normalizeSize(layer: Record<string, unknown>, path: string, report: SanitizeReport): void {
+  const size = layer.size;
+  if (!isPlainObject(size)) {
+    if (size !== undefined) {
+      delete layer.size;
+      report.clamped.push(`${path}.size`);
+    }
+    return;
+  }
+  const out: Record<string, unknown> = {};
+  for (const key of ["widthPct", "heightPct"] as const) {
+    if (!(key in size)) continue;
+    const numeric = finiteOr(size[key]);
+    if (numeric === undefined) {
+      report.clamped.push(`${path}.size.${key}`);
+      continue;
+    }
+    const clamped = clamp(numeric, 0, 400);
+    if (clamped !== numeric) report.clamped.push(`${path}.size.${key}`);
+    out[key] = clamped;
+  }
+  if (Object.keys(out).length === 0) {
+    delete layer.size;
+  } else {
+    layer.size = out;
+  }
+}
+
 /**
  * Normalize the spatial / NLE fields of ONE layer.
  *
@@ -105,6 +236,18 @@ function normalizeLayerFields(layer: Record<string, unknown>, path: string, repo
     delete layer.scale;
   }
 
+  if (finiteOr(layer.scaleX) !== undefined) {
+    setClamped("scaleX", layer.scaleX as number, 0.05, 10);
+  } else if ("scaleX" in layer) {
+    delete layer.scaleX;
+  }
+
+  if (finiteOr(layer.scaleY) !== undefined) {
+    setClamped("scaleY", layer.scaleY as number, 0.05, 10);
+  } else if ("scaleY" in layer) {
+    delete layer.scaleY;
+  }
+
   if (finiteOr(layer.opacity) !== undefined) {
     setClamped("opacity", layer.opacity as number, 0, 1);
   } else if ("opacity" in layer) {
@@ -126,8 +269,8 @@ function normalizeLayerFields(layer: Record<string, unknown>, path: string, repo
       delete layer.position;
       report.clamped.push(`${path}.position`);
     } else {
-      const nx = clamp(xPct, -200, 200);
-      const ny = clamp(yPct, -200, 200);
+      const nx = clamp(xPct, -300, 300);
+      const ny = clamp(yPct, -300, 300);
       if (nx !== xPct || ny !== yPct) report.clamped.push(`${path}.position`);
       layer.position = { xPct: nx, yPct: ny };
     }
@@ -135,6 +278,10 @@ function normalizeLayerFields(layer: Record<string, unknown>, path: string, repo
     delete layer.position;
     report.clamped.push(`${path}.position`);
   }
+
+  normalizeSize(layer, path, report);
+  normalizeFilters(layer, path, report);
+  normalizeKeyframes(layer, path, report);
 
   const rawTrackIndex = layer.trackIndex;
   if (typeof rawTrackIndex === "number") {
@@ -228,6 +375,13 @@ function toStripSchema(schema: z.ZodTypeAny): z.ZodTypeAny {
     case z.ZodFirstPartyTypeKind.ZodDefault: {
       const defaultValue = resolveDef<unknown>(def.defaultValue);
       return toStripSchema(resolveDef<z.ZodTypeAny>(def.innerType)).default(defaultValue as never);
+    }
+    case z.ZodFirstPartyTypeKind.ZodEffects: {
+      // A refinement (e.g. the keyframe value-range check) is DROPPED in the
+      // strip twin: the strict schema still applies it afterwards, and keeping
+      // it here would make the "drop what we do not know" pass fail on a value
+      // that is perfectly legal.
+      return toStripSchema(resolveDef<z.ZodTypeAny>(def.schema));
     }
     default:
       return schema;

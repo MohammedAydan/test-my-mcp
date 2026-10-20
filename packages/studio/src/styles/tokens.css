@@ -9,9 +9,9 @@
 
 :root {
   /* ---------------------------------------------------------------------
-     Surfaces — 2–3px gutters between docked panels, never big rounded cards
+     Surfaces — the void shows THROUGH the gaps between the floating panels
      --------------------------------------------------------------------- */
-  --mf-bg-gutter: #090a0d;   /* the gap between docked panels / app backdrop */
+  --mf-bg-gutter: #07080a;   /* the void between docked panels / app backdrop */
   --mf-bg-panel: #14161a;    /* panel surfaces */
   --mf-bg-header: #1a1d23;   /* panel header + tab bar (26px) */
   --mf-bg-elevated: #20242c; /* inputs, dropdowns, raised controls */
@@ -71,13 +71,44 @@
   --mf-track-h: 28px;
   --mf-audio-track-h: 26px;
   --mf-ruler-h: 28px;
-  --mf-gutter: 2px;
+  --mf-gutter: 4px;
   --mf-splitter: 4px;
-  --mf-radius: 2px;
-  --mf-radius-sm: 1px;
+  /* legacy radius aliases — they resolve to the modern scale below */
+  --mf-radius: var(--radius-sm);
+  --mf-radius-sm: var(--radius-xs);
 
   --mf-ease: cubic-bezier(0.16, 1, 0.3, 1);
   --mf-dur: 120ms;
+  /* the interactive micro-interaction duration (120–160ms, ease-out) */
+  --mf-dur-ui: 140ms;
+
+  /* a soft 2px focus ring: a 35% accent halo plus a 1px accent edge */
+  --mf-focus-ring: 0 0 0 2px rgba(45, 140, 235, 0.35), 0 0 0 1px var(--mf-accent);
+
+  /* ---------------------------------------------------------------------
+     v4 — modern rounded refinements (DaVinci Resolve 19 / Spectrum 2)
+     --------------------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --bg-canvas-void: #07080a;
+
+  --panel-radius: 8px;
+  --panel-border: 1px solid rgba(255, 255, 255, 0.07);
+  --panel-shadow: 0 4px 20px rgba(0, 0, 0, 0.45);
+  --panel-focus-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25), 0 4px 20px rgba(0, 0, 0, 0.5);
+  --panel-focus-border: rgba(59, 130, 246, 0.65);
+
+  /* the gizmo blue — a lighter sibling of the Adobe blue, used for the
+     selection wireframe, the handles and the focus ring */
+  --mf-gizmo: #3b82f6;
+  --mf-gizmo-soft: rgba(59, 130, 246, 0.65);
+  --mf-gizmo-fill: rgba(59, 130, 246, 0.08);
+
+  --hover-lift: 0 6px 18px rgba(0, 0, 0, 0.35);
+  --inner-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 
   /* ---------------------------------------------------------------------
      Layer-kind swatches (the After Effects column-label convention)
@@ -93,6 +124,9 @@
      Legacy aliases.
      Older class names still reference these; they now resolve to the
      Adobe Spectrum Dark grade instead of the old amber theme.
+
+     NOTE: the modern radius scale owns `--radius-sm` / `--radius-lg`, so
+     the legacy names below point AT it instead of shadowing it.
      --------------------------------------------------------------------- */
   --bg-0: var(--mf-bg-gutter);
   --bg-1: var(--mf-bg-panel);
@@ -116,10 +150,8 @@
   --text-3: var(--mf-text-3);
   --danger: var(--mf-record);
   --info: var(--mf-accent);
-  --radius-sm: var(--mf-radius-sm);
-  --radius: var(--mf-radius);
-  --radius-lg: var(--mf-radius);
-  --radius-xl: var(--mf-radius);
+  --radius: var(--radius-sm);
+  --radius-xl: var(--radius-lg);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.65);
@@ -150,7 +182,7 @@ body {
   font-size: var(--mf-text-md);
   line-height: 1.4;
   color: var(--mf-text-1);
-  background: var(--mf-bg-gutter);
+  background: var(--bg-canvas-void);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   user-select: none;
@@ -163,9 +195,12 @@ button {
   border: none;
   background: none;
   color: inherit;
-  transition: background var(--mf-dur) var(--mf-ease),
-    color var(--mf-dur) var(--mf-ease),
-    border-color var(--mf-dur) var(--mf-ease);
+  border-radius: var(--radius-sm);
+  transition: background var(--mf-dur-ui) var(--mf-ease),
+    color var(--mf-dur-ui) var(--mf-ease),
+    border-color var(--mf-dur-ui) var(--mf-ease),
+    box-shadow var(--mf-dur-ui) var(--mf-ease),
+    transform var(--mf-dur-ui) var(--mf-ease);
 }
 
 button:focus-visible,
@@ -173,8 +208,8 @@ input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 [tabindex]:focus-visible {
-  outline: 1px solid var(--mf-accent);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--mf-focus-ring);
 }
 
 input,
@@ -183,6 +218,7 @@ textarea {
   font-family: inherit;
   font-size: var(--mf-text-sm);
   color: inherit;
+  border-radius: var(--radius-sm);
 }
 
 /* Every number in the UI is monospaced and tabular — digits must never
@@ -209,7 +245,7 @@ input[type='number'],
 }
 ::-webkit-scrollbar-thumb {
   background: #333a47;
-  border-radius: 0;
+  border-radius: var(--radius-xs);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: #414a5c;

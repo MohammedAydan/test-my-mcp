@@ -13,6 +13,8 @@ export * from "./layers/kinetic-text.js";
 export * from "./layers/card.js";
 export * from "./layers/lottie.js";
 export * from "./layers/foreground-fx.js";
+// --- keyframe evaluation (shared by the runtime AND the studio) --------------
+export * from "./keyframes.js";
 // --- scene + validation -----------------------------------------------------
 export * from "./scene.js";
 export * from "./validate.js";

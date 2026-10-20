@@ -37,11 +37,12 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
   const v = layer.variant;
   const isRTL = resolveDirection(layer) === "rtl";
   const host = document.createElement("div");
+  // The anchor is authored here; the transform belongs to the unified
+  // pipeline (`../transform.js`), which is the only writer of it.
   host.style.cssText = [
     "position:absolute",
     `left:${layer.position.xPct}%`,
     `top:${layer.position.yPct}%`,
-    `transform:translate(-50%,-50%)${layer.rotation ? ` rotate(${layer.rotation}deg)` : ""}`,
   ].join(";");
 
   if (v.variant === "glassCard" || v.variant === "callout") {

@@ -101,7 +101,10 @@ export const TitleBar: Component = () => {
       </div>
 
       <div class="mf-titlebar-right">
-        <span class={`mf-chip ${state.engine.online ? 'is-success' : 'is-danger'}`} id="engine-status">
+        <span
+          class={`mf-chip mf-engine-badge ${state.engine.online ? 'is-success' : 'is-danger'}`}
+          id="engine-status"
+        >
           {state.engine.online ? 'In-Process Ready' : 'Engine Offline'}
         </span>
 

@@ -175,6 +175,9 @@ export const App: Component = () => {
         return;
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
+        // a SELECTED KEYFRAME owns the Delete key — the timeline deletes the
+        // keyframe, not the layer
+        if (state.selectedKeyframe) return;
         const id = state.selectedLayerId;
         if (!id) return;
         event.preventDefault();

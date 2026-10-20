@@ -85,8 +85,13 @@ so a kind that does not declare them fails every save with
 
 | field | type | range | notes |
 |---|---|---|---|
-| `position` | `{ xPct, yPct }` | ±200 | center anchor, percent of canvas. Optional here; `kineticText`, `card`, `imageLogo` and `lottie` re-declare it (required or defaulted). |
+| `position` | `{ xPct, yPct }` | ±300 | center anchor, percent of canvas. Optional here; `kineticText`, `card`, `imageLogo` and `lottie` re-declare it (required or defaulted). The range allows an off-screen start/end (`xPct: -120` = "fly in from the left"). |
 | `scale` | number | 0.05 – 10 | uniform multiplier on the authored size |
+| `scaleX` | number | 0.05 – 10 | non-uniform scale on X; overrides `scale` on that axis |
+| `scaleY` | number | 0.05 – 10 | non-uniform scale on Y; overrides `scale` on that axis |
+| `size` | `{ widthPct?, heightPct? }` | 0 – 400 | LAYOUT size, percent of the canvas (a percent of the *canvas*, not of the parent box) |
+| `filters` | object | see below | VISUAL filters on the painted content |
+| `keyframes` | Keyframe[] | ≤ 200 | the unified animation surface (see below) |
 | `rotation` | number | −3600 – 3600 | degrees around the layer centre |
 | `opacity` | number | 0 – 1 | multiplier on the layer's own alpha |
 | `visible` | boolean | `true` | `false` hides the layer without deleting it |
@@ -101,6 +106,81 @@ so a kind that does not declare them fails every save with
 > spatial numbers into their legal range. The engine and the Studio both call
 > it, so a payload can never be rejected for a transient property. A genuinely
 > unknown key is still a validation error.
+
+### The visual filter bag — `filters`
+
+`filters` is a **strict object**; an unknown key is a validation error.
+
+| field | type | range | notes |
+|---|---|---|---|
+| `blur` | number | 0 – 200 | Gaussian blur radius, px |
+| `brightness` | number | 0 – 400 | percent (100 = unchanged) |
+| `contrast` | number | 0 – 400 | percent (100 = unchanged) |
+| `saturate` | number | 0 – 400 | percent (100 = unchanged) |
+| `shadowBlur` | number | 0 – 200 | drop-shadow blur radius, px |
+| `shadowColor` | colour | — | drop-shadow colour |
+| `cornerRadius` | number | 0 – 400 | corner radius of the layer's own box, px |
+
+> **NAMING.** The visual bag is `filters`, NOT `effects`.
+> `foregroundFX.effects` already means something else entirely (an array of
+> `vignette` / `filmGrain` / `colorGrade` overlays) and is untouched.
+
+### Track lanes — `trackLanes`
+
+An optional, explicit declaration of the timeline's rows.
+
+| field | type | default | notes |
+|---|---|---|---|
+| `id` | string | required | unique within the scene |
+| `index` | int 0–99 | — | the 0-indexed row the lane occupies. Without it a declared lane's row is implied by its array position, which collides with the lanes the Studio allocates implicitly. |
+| `name` | string | — | the display label (`V1`, `A1`, …) |
+| `kind` | `video` \| `audio` | `video` | |
+| `locked` / `muted` / `collapsed` | boolean | `false` | |
+
+> **Lane rule.** A layer WITHOUT an explicit `trackIndex` gets its OWN row. Two
+> clips share a row only when they declare the same `trackIndex` AND their time
+> ranges do not overlap.
+
+### The unified keyframes — `keyframes`
+A flat list of keyframes; each one is a property, a time and a value.
+
+```jsonc
+{ "id": "k1", "timeMs": 1200, "property": "xPct", "value": 40, "easing": "easeInOut" }
+```
+
+| field | type | notes |
+|---|---|---|
+| `id` | string | unique within the layer |
+| `timeMs` | number | absolute time on the scene timeline, ms |
+| `property` | enum | `xPct` \| `yPct` \| `scale` \| `rotation` \| `opacity` |
+| `value` | number | range depends on the property (below) |
+| `easing` | enum | `linear` \| `easeIn` \| `easeOut` \| `easeInOut` \| `cubic` — defaults to `easeInOut` |
+
+| property | legal range |
+|---|---|
+| `xPct`, `yPct` | −300 – 300 |
+| `scale` | 0.05 – 10 |
+| `rotation` | −3600 – 3600 |
+| `opacity` | 0 – 1 |
+
+**Interpolation.** Before the first keyframe the value is the first keyframe's
+value; after the last one it is the last keyframe's value; on a keyframe it is
+that keyframe's value. Between two keyframes the **left** keyframe's easing is
+applied to the normalized progress.
+
+**Precedence.** The flat `keyframes` array wins over the legacy
+`tracks` system when both keyframe the same property. The legacy system is
+still supported: `tracks: [{ property, keyframes: [{ at, value, ease }] }]`,
+where `position.xPct` → `xPct`, `position.yPct` → `yPct`, `scale` → `scale`,
+`rotation` → `rotation`, `opacity` → `opacity`, `at` → `timeMs`, and the GSAP
+ease name maps onto one of the five easings (`linear`/`none` → `linear`,
+`*.in` → `easeIn`, `*.out` → `easeOut`, `*.inOut` → `easeInOut`, anything else
+→ `easeInOut`).
+
+**Scale.** `scale` is the uniform base: the effective `scaleX` is
+`scaleX ?? scale` and the effective `scaleY` is `scaleY ?? scale`. A `scale`
+keyframe drives both axes unless one of them is authored explicitly.
+
 
 ### Motion presets (PresetRef)
 `{ name, durationMs?, delayMs?, ease?, staggerMs?, strength? }` — `strength` is a

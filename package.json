@@ -23,6 +23,7 @@
     "test:ui": "node scripts/test-phase2.cjs",
     "verify:no-emoji": "node scripts/verify-no-emoji.cjs",
     "verify:pro-nle": "node scripts/test-pro-nle-redesign.cjs",
+    "verify:ux-gizmo": "node scripts/test-full-ux-and-gizmo.cjs",
     "init-project": "node --import tsx scripts/init-project.mjs",
     "sync-scene": "node --import tsx scripts/sync-scene.mjs",
     "pull-render": "node --import tsx scripts/pull-render.mjs",

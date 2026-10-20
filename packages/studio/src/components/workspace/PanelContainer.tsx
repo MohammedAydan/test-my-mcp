@@ -39,9 +39,9 @@ export const PanelContainer: Component<PanelContainerProps> = (props) => {
 
   return (
     <section
-      class={`mf-panel ${isFocused() ? 'is-focused' : ''} ${props.sunken ? 'is-sunken' : ''} ${
-        props.class ?? ''
-      } ${isMaximized() ? 'mf-maximized-host' : ''}`}
+      class={`mf-panel panel-container ${isFocused() ? 'is-focused' : ''} ${
+        props.sunken ? 'is-sunken' : ''
+      } ${props.class ?? ''} ${isMaximized() ? 'mf-maximized-host' : ''}`}
       data-panel={props.id}
       aria-label={props.label ?? props.tabs[0]}
       onPointerDown={() => store.setActivePanel(props.id)}
