@@ -1,21 +1,20 @@
 /**
- * End-to-end smoke: boots the engine on a test port, uploads a generated logo,
- * stores a small scene, renders it at DRAFT quality through the full
+ * End-to-end smoke: runs entirely in-process using EngineCore, uploads a generated logo,
+ * stores a small scene, inspects keyframes, renders it at DRAFT quality through the full
  * Playwright→pipe→FFmpeg pipeline, and verifies the output file with ffprobe.
  *
  *   npm run smoke -w @motionforge/core-engine
  */
 import { execFile } from "node:child_process";
 import { statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { engineConfig } from "./config.js";
-import { startEngine } from "./server.js";
+import { createEngineCore } from "./engine-core.js";
 import type { SceneSpecInput } from "@motionforge/scene-spec";
 
 const exec = promisify(execFile);
-const PORT = 4123;
 
 async function ffprobeInfo(file: string): Promise<{ duration: number; videoCodec: string; audioCodec: string | null; width: number; height: number }> {
   const { stdout } = await exec("ffprobe", [
@@ -41,25 +40,19 @@ async function ffprobeInfo(file: string): Promise<{ duration: number; videoCodec
 }
 
 async function main(): Promise<void> {
-  const config = engineConfig({ port: PORT, maxRenderWorkers: 2 });
-  const engine = await startEngine({ config, log: (msg) => console.log(`[engine] ${msg}`) });
-  const base = `http://127.0.0.1:${PORT}`;
+  const core = await createEngineCore({
+    maxRenderWorkers: 2,
+    log: (msg) => console.log(`[engine] ${msg}`),
+  });
 
   // 1. generate a real brand-blue PNG via ffmpeg, upload it into the vault
-  const pngPath = path.join(config.paths.vaultDir, "smoke-logo.png");
+  const pngPath = path.join(core.paths.vaultDir, "smoke-logo.png");
   await exec("ffmpeg", [
     "-hide_banner", "-loglevel", "error",
     "-f", "lavfi", "-i", "color=c=0x1a2a6c:s=192x192,format=rgb24",
     "-frames:v", "1", "-y", pngPath,
   ]);
-  const { readFile } = await import("node:fs/promises");
-  const upload = await engine.app.inject({
-    method: "POST",
-    url: "/api/assets?filename=smoke-logo.png",
-    payload: await readFile(pngPath),
-    headers: { "content-type": "application/octet-stream" },
-  });
-  if (upload.statusCode !== 201) throw new Error(`asset upload failed: ${upload.statusCode} ${upload.body}`);
+  await core.ingestAsset(await readFile(pngPath), "smoke-logo.png");
 
   // 2. store a compact scene (all layer types that need no external deps)
   const scene: SceneSpecInput = {
@@ -128,48 +121,23 @@ async function main(): Promise<void> {
     audio: { cues: [{ at: 2000, sfx: "click" }] },
   };
 
-  const stored = await engine.app.inject({
-    method: "POST",
-    url: "/api/scenes",
-    payload: scene,
-  });
-  // 201 = created, 200 = updated (the scene store is disk-backed, so a repeated
-  // smoke run finds the scene already there)
-  if (stored.statusCode !== 201 && stored.statusCode !== 200) {
-    throw new Error(`scene rejected: ${stored.body}`);
-  }
-  const storedBody = stored.json() as { id: string; warnings: Array<{ code: string }> };
-  if (storedBody.warnings.length > 0) {
-    console.log(`smoke: ${storedBody.warnings.length} warning(s) — ${storedBody.warnings.map((w) => w.code).join(", ")}`);
+  const stored = await core.saveScene(scene);
+  if (stored.warnings && stored.warnings.length > 0) {
+    console.log(`smoke: ${stored.warnings.length} warning(s) — ${stored.warnings.map((w) => w.code).join(", ")}`);
   }
 
   // 3. inspect keyframes (UI verification path)
-  const kfs = await engine.app.inject({
-    method: "POST",
-    url: "/api/scenes/smoke-test/keyframes",
-    payload: { at: [500, 1500, 3000] },
-  });
-  if (kfs.statusCode !== 200) throw new Error(`keyframes failed: ${kfs.body}`);
-  const kfFrames = (kfs.json() as { frames: Array<{ image: string }> }).frames;
-  console.log(`smoke: ${kfFrames.length} keyframe screenshots captured`);
+  const kfs = await core.inspectKeyframes("smoke-test", { at: [500, 1500, 3000] });
+  console.log(`smoke: ${kfs.frames.length} keyframe screenshots captured`);
 
   // 4. render draft
-  const render = await engine.app.inject({
-    method: "POST",
-    url: "/api/renders",
-    payload: { sceneId: "smoke-test", quality: "draft" },
-  });
-  if (render.statusCode !== 202) throw new Error(`render enqueue failed: ${render.body}`);
-  const { jobId } = render.json() as { jobId: string };
+  const render = await core.startRender("smoke-test", "draft");
+  const jobId = render.jobId;
 
   let job;
   for (let i = 0; i < 120; i++) {
-    job = (await (await fetch(`${base}/api/renders/${jobId}`)).json()) as {
-      status: string;
-      error?: string;
-      result?: { mp4Path: string; frames: number; wallMs: number; effectiveFps: number; encoder: string; workerCount: number };
-    };
-    if (job.status === "succeeded" || job.status === "failed") break;
+    job = core.getRenderStatus(jobId);
+    if (job && (job.status === "succeeded" || job.status === "failed")) break;
     await new Promise((r) => setTimeout(r, 1000));
   }
   if (job?.status !== "succeeded" || !job.result) {
@@ -188,13 +156,14 @@ async function main(): Promise<void> {
   if (!info.audioCodec) problems.push("audio stream missing");
   if (bytes < 20_000) problems.push("output suspiciously small");
 
+  core.dispose();
+
   if (problems.length > 0) {
     console.error("smoke: FAILED", problems);
     process.exitCode = 1;
   } else {
     console.log("smoke: OK — full pipeline works end-to-end");
   }
-  await engine.app.close();
   process.exit(process.exitCode ?? 0);
 }
 

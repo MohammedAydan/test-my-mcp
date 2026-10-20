@@ -12,29 +12,28 @@
  *   1. the INLINE response stays small (previews, not PNGs), and
  *   2. the FULL-RESOLUTION frames + the numeric sidecar still land on disk.
  *
- * It drives a REAL listening engine, because the frame renderer loads the
- * preview page over HTTP — `app.inject` cannot exercise this path.
- *
- * Skipped (not failed) when Chromium is unavailable, so the suite stays green on
- * a bare machine — but it RUNS wherever the bug appeared.
+ * Runs via in-process EngineCore with zero-port routes.
+ * Skipped (not failed) when Chromium is unavailable.
  */
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import Fastify from "fastify";
 
 import { validateScene, type SceneSpecInput } from "@motionforge/scene-spec";
 import { enginePaths } from "../src/config.js";
 import { PREVIEW_JPEG_QUALITY, PREVIEW_MAX_WIDTH } from "../src/keyframes.js";
-import { registerPreviewRoutes, registerProjectRoutes, registerSceneRoutes } from "../src/server.js";
-import { SceneStore } from "../src/scene-store.js";
+import { EngineCore } from "../src/engine-core.js";
+import {
+  initCreativeProject,
+  saveFramesMetaToDisk,
+  saveStillsToDisk,
+} from "../src/project-workspace.js";
 
 let workdir: string;
 let project: string;
-let baseUrl: string;
 let hasChromium = true;
-let app: Fastify.FastifyInstance | undefined;
+let core: EngineCore | undefined;
 
 const FRAMES = 12;
 
@@ -50,29 +49,31 @@ beforeAll(async () => {
     return;
   }
 
-  const paths = { ...enginePaths(), dataDir: path.join(workdir, "data") };
-  const store = new SceneStore(paths.dataDir);
-  app = Fastify();
-  expect(
-    await registerPreviewRoutes(app, paths.runtimeDistDir),
-    "scene-runtime must be built before inspecting frames"
-  ).toBe(true);
-  await registerSceneRoutes(app, { store, port: 0, paths });
-  await registerProjectRoutes(app, { store, port: 0, paths });
-  await app.listen({ port: 0, host: "127.0.0.1" });
-  const address = app.server.address();
-  baseUrl = typeof address === "object" && address ? `http://127.0.0.1:${address.port}` : "";
+  const paths = {
+    ...enginePaths(),
+    dataDir: path.join(workdir, "data"),
+    storageDir: path.join(workdir, "scenes"),
+    vaultDir: path.join(workdir, "vault"),
+  };
+  core = new EngineCore(
+    { port: 4000, maxRenderWorkers: 1, paths },
+    paths,
+    { enableWatcher: false }
+  );
+  await core.init();
 
-  const init = await app.inject({
-    method: "POST",
-    url: "/projects/init",
-    payload: { name: "inspect-project", targetPath: project },
-  });
-  if (init.statusCode !== 201) throw new Error(`init -> ${init.statusCode}: ${init.body}`);
+  await initCreativeProject(
+    { name: "inspect-project", targetPath: project },
+    {
+      seedScene: async (s) => (await core!.store.upsert(s)).id,
+      // the manifest schema only accepts an http(s) engine URL
+      engineBaseUrl: "http://127.0.0.1:4000",
+    }
+  );
 }, 120_000);
 
 afterAll(async () => {
-  await app?.close();
+  core?.dispose();
   await fsp.rm(workdir, { recursive: true, force: true });
 });
 
@@ -109,19 +110,15 @@ const STAMPS = Array.from({ length: FRAMES }, (_, i) => Math.round(i * 500 + 250
 
 interface InspectBody {
   frames: Array<{ atMs: number; image: string; preview: string }>;
-  framesMeta: Array<{ atMs: number; camera: { scale: number; clampedVoid: boolean } }>;
+  framesMeta: Array<{ atMs: number; camera?: { scale: number; clampedVoid: boolean } }>;
 }
 
 async function inspect(includeFullResolution: boolean): Promise<InspectBody> {
-  const res = await fetch(`${baseUrl}/api/scenes/inspect-12/keyframes`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ at: STAMPS, includeFullResolution }),
+  const res = await core!.inspectKeyframes("inspect-12", {
+    at: STAMPS,
+    includeFullResolution,
   });
-  if (res.status !== 200) {
-    throw new Error(`inspect ${includeFullResolution} -> ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  }
-  return (await res.json()) as InspectBody;
+  return res as InspectBody;
 }
 
 describe("inspect_scene_keyframes: a twelve-frame inspection", () => {
@@ -136,12 +133,9 @@ describe("inspect_scene_keyframes: a twelve-frame inspection", () => {
     const parsed = validateScene(SCENE);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    const stored = await app!.inject({
-      method: "POST",
-      url: "/api/scenes",
-      payload: { ...parsed.scene, projectPath: project },
-    });
-    expect(stored.statusCode).toBe(201);
+
+    const stored = await core!.saveScene({ ...parsed.scene }, project);
+    expect(stored.id).toBe("inspect-12");
 
     const body = await inspect(false);
     expect(body.frames).toHaveLength(FRAMES);
@@ -152,7 +146,7 @@ describe("inspect_scene_keyframes: a twelve-frame inspection", () => {
     }
     for (const meta of body.framesMeta) {
       expect(meta.camera).toBeDefined();
-      expect(meta.camera.scale).toBeCloseTo(1.04, 2);
+      expect(meta.camera!.scale).toBeCloseTo(1.04, 2);
     }
   }, 180_000);
 
@@ -169,9 +163,6 @@ describe("inspect_scene_keyframes: a twelve-frame inspection", () => {
     ).toBeLessThan(1024 * 1024);
 
     // …and the previews really are smaller RENDITIONS, not re-encoded PNGs.
-    // Asserting on byte counts alone would be content-dependent — PNG beats
-    // JPEG on a flat background — so the invariant is stated in pixels: an
-    // inline preview may never carry more than the configured budget.
     for (const frame of body.frames) {
       const dims = jpegDimensions(Buffer.from(frame.preview.split(",")[1] ?? "", "base64"));
       expect(dims.width, `preview at ${frame.atMs}ms is ${dims.width}px wide`).toBeLessThanOrEqual(PREVIEW_MAX_WIDTH);
@@ -192,21 +183,15 @@ describe("inspect_scene_keyframes: a twelve-frame inspection", () => {
   it("writes full-resolution stills AND a frames-meta sidecar to the project", async () => {
     if (!hasChromium) return;
     const body = await inspect(true);
-    const saved = await app!.inject({
-      method: "POST",
-      url: "/projects/stills",
-      headers: { "x-motionforge-project": project },
-      payload: { sceneId: "inspect-12", frames: body.frames, framesMeta: body.framesMeta },
-    });
-    if (saved.statusCode !== 201) throw new Error(`stills -> ${saved.statusCode}: ${saved.body}`);
-    const savedBody = saved.json() as { files: string[]; metaFile?: string };
+    const files = await saveStillsToDisk(project, "inspect-12", body.frames);
+    const metaFile = await saveFramesMetaToDisk(project, "inspect-12", body.framesMeta);
 
     const stillsDir = path.join(project, "renders", "stills");
     const onDisk = await fsp.readdir(stillsDir);
     for (const atMs of STAMPS) {
       expect(onDisk, `missing still for ${atMs}ms`).toContain(`inspect-12-${atMs}ms.png`);
     }
-    expect(savedBody.metaFile).toBe("renders/stills/inspect-12-frames-meta.json");
+    expect(metaFile).toBe("renders/stills/inspect-12-frames-meta.json");
     expect(onDisk).toContain("inspect-12-frames-meta.json");
 
     const meta = JSON.parse(
@@ -227,12 +212,9 @@ describe("inspect_scene_keyframes: a twelve-frame inspection", () => {
     expect(PREVIEW_JPEG_QUALITY).toBeLessThanOrEqual(85);
   });
 });
+
 /**
  * Read a JPEG's pixel dimensions straight out of its SOF marker.
- *
- * Deliberately dependency-free: the assertion is about the transport contract
- * (an inline preview is a bounded-size rendition), and a test that needed an
- * image library to prove that would be a worse test.
  */
 function jpegDimensions(buf: Buffer): { width: number; height: number } {
   let offset = 2; // SOI

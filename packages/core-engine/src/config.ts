@@ -1,8 +1,27 @@
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const PACKAGE_DIR = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+
+function findRuntimeDistDir(): string {
+  const candidates = [
+    process.env.MOTIONFORGE_RUNTIME_DIST_DIR,
+    path.resolve(PACKAGE_DIR, "..", "scene-runtime", "dist"),
+    path.resolve(PACKAGE_DIR, "..", "..", "scene-runtime", "dist"),
+    path.resolve(PACKAGE_DIR, "..", "..", "..", "scene-runtime", "dist"),
+    path.resolve(PACKAGE_DIR, "..", "..", "packages", "scene-runtime", "dist"),
+    path.resolve(process.cwd(), "packages", "scene-runtime", "dist"),
+    path.resolve(process.cwd(), "scene-runtime", "dist"),
+  ];
+  for (const c of candidates) {
+    if (c && fs.existsSync(path.join(c, "index.html"))) {
+      return c;
+    }
+  }
+  return path.resolve(PACKAGE_DIR, "..", "scene-runtime", "dist");
+}
 
 export interface EnginePaths {
   packageDir: string;
@@ -24,7 +43,7 @@ export function enginePaths(overrides?: Partial<EnginePaths>): EnginePaths {
     sfxDir: overrides?.sfxDir ?? path.join(dataDir, "vault", "_sfx"),
     rendersDir: overrides?.rendersDir ?? path.join(dataDir, "renders"),
     // sibling workspace package (always) — built by `npm run build -w @motionforge/scene-runtime`
-    runtimeDistDir: overrides?.runtimeDistDir ?? path.resolve(PACKAGE_DIR, "..", "scene-runtime", "dist"),
+    runtimeDistDir: overrides?.runtimeDistDir ?? findRuntimeDistDir(),
   };
 }
 
@@ -72,7 +91,7 @@ export function resolveEnginePaths(options?: EnginePathOptions): EnginePaths {
 
   const runtimeDistDir =
     options?.runtimeDistDir ??
-    path.resolve(PACKAGE_DIR, "..", "scene-runtime", "dist");
+    findRuntimeDistDir();
 
   return {
     packageDir: PACKAGE_DIR,

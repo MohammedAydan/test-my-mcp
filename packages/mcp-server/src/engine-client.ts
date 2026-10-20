@@ -1,7 +1,7 @@
 /**
- * In-process or HTTP client for core-engine.
- * When MOTIONFORGE_ENGINE_URL is not set, invokes EngineCore directly in-process
- * without any REST APIs, resolving to the shared ~/.motionforge canonical path.
+ * Pure in-process client for core-engine.
+ * Invokes EngineCore directly in-process without any REST APIs, resolving
+ * to the shared ~/.motionforge canonical path.
  */
 import { readFile } from "node:fs/promises";
 import {
@@ -13,21 +13,17 @@ import {
   type EngineCore,
 } from "@motionforge/core-engine";
 
-export const ENGINE_URL = process.env.MOTIONFORGE_ENGINE_URL ?? "http://127.0.0.1:4000";
+export const ENGINE_URL = "in-process";
 
 let inProcessCore: EngineCore | null = null;
 
-async function getInProcessCore(): Promise<EngineCore> {
+export async function getInProcessCore(): Promise<EngineCore> {
   if (!inProcessCore) {
     inProcessCore = await createEngineCore({
       enableWatcher: true,
     });
   }
   return inProcessCore;
-}
-
-function useHttp(): boolean {
-  return Boolean(process.env.MOTIONFORGE_ENGINE_URL);
 }
 
 /**
@@ -134,55 +130,13 @@ export interface RenderJobView {
   };
 }
 
-async function request(path: string, init?: RequestInit): Promise<unknown> {
-  let response: Response;
-  try {
-    response = await fetch(`${ENGINE_URL}${path}`, {
-      ...init,
-      headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
-    });
-  } catch (error) {
-    throw new EngineError(0, `unreachable (${error instanceof Error ? error.message : String(error)}) — is core-engine running on ${ENGINE_URL}?`);
-  }
-  const text = await response.text();
-  let body: unknown = undefined;
-  try {
-    body = text ? JSON.parse(text) : undefined;
-  } catch {
-    body = undefined;
-  }
-  if (!response.ok) {
-    const issues =
-      body && typeof body === "object" && "issues" in body && Array.isArray((body as { issues: unknown }).issues)
-        ? ((body as { issues: string[] }).issues)
-        : undefined;
-    const message =
-      body && typeof body === "object" && "error" in body
-        ? String((body as { error: unknown }).error)
-        : text.slice(0, 400) || response.statusText;
-    throw new EngineError(response.status, message, issues);
-  }
-  return body;
-}
-
-/** Header the engine reads to associate an out-of-band call with a project. */
-const PROJECT_HEADER = "x-motionforge-project";
-
 export const engineClient = {
   capabilities: async (): Promise<unknown> => {
-    if (useHttp()) return request("/api/capabilities");
     const core = await getInProcessCore();
     return core.getCapabilities();
   },
 
   putScene: async (scene: unknown, projectPath?: string): Promise<SceneUploadResult> => {
-    if (useHttp()) {
-      return request("/api/scenes", {
-        method: "POST",
-        body: JSON.stringify(projectPath ? { ...(scene as object), projectPath } : scene),
-        headers: projectPath ? { [PROJECT_HEADER]: projectPath } : undefined,
-      }) as Promise<SceneUploadResult>;
-    }
     const core = await getInProcessCore();
     try {
       const res = await core.saveScene(scene, projectPath);
@@ -193,24 +147,14 @@ export const engineClient = {
   },
 
   initProject: async (options: unknown): Promise<ProjectInitResult> => {
-    if (useHttp()) {
-      return request("/projects/init", { method: "POST", body: JSON.stringify(options) }) as Promise<ProjectInitResult>;
-    }
     const core = await getInProcessCore();
     return (await initCreativeProject(options as any, {
       seedScene: async (s) => (await core.store.upsert(s)).id,
-      engineBaseUrl: `http://127.0.0.1:${core.config.port}`,
+      engineBaseUrl: "mf-runtime://app",
     })) as ProjectInitResult;
   },
 
   syncScene: async (scene: unknown, projectPath: string): Promise<SceneUploadResult> => {
-    if (useHttp()) {
-      return request("/projects/sync", {
-        method: "POST",
-        body: JSON.stringify({ scene, projectPath }),
-        headers: { [PROJECT_HEADER]: projectPath },
-      }) as Promise<SceneUploadResult>;
-    }
     const core = await getInProcessCore();
     try {
       const res = await core.saveScene(scene, projectPath);
@@ -226,13 +170,6 @@ export const engineClient = {
     mp4Base64: string,
     projectPath: string
   ): Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }> => {
-    if (useHttp()) {
-      return request("/projects/renders", {
-        method: "POST",
-        body: JSON.stringify({ sceneId, quality, mp4Base64 }),
-        headers: { [PROJECT_HEADER]: projectPath },
-      }) as Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }>;
-    }
     const saved = await saveRenderToDisk(projectPath, sceneId, quality, Buffer.from(mp4Base64, "base64"));
     return {
       file: saved.file,
@@ -248,13 +185,6 @@ export const engineClient = {
     projectPath: string,
     framesMeta: unknown[] = []
   ): Promise<{ files: string[]; savedStillsFilePaths: string[]; metaFile?: string }> => {
-    if (useHttp()) {
-      return request("/projects/stills", {
-        method: "POST",
-        body: JSON.stringify({ sceneId, frames, framesMeta }),
-        headers: { [PROJECT_HEADER]: projectPath },
-      }) as Promise<{ files: string[]; savedStillsFilePaths: string[]; metaFile?: string }>;
-    }
     const files = await saveStillsToDisk(projectPath, sceneId, frames);
     let metaFile: string | null = null;
     if (Array.isArray(framesMeta) && framesMeta.length > 0) {
@@ -272,34 +202,19 @@ export const engineClient = {
     at: number[],
     includeFullResolution = false
   ): Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }> => {
-    if (useHttp()) {
-      return request(`/api/scenes/${encodeURIComponent(sceneId)}/keyframes`, {
-        method: "POST",
-        body: JSON.stringify({ at, includeFullResolution }),
-      }) as Promise<{ frames: KeyframeFrame[]; framesMeta: KeyframeFrameMeta[] }>;
-    }
     const core = await getInProcessCore();
     return (await core.inspectKeyframes(sceneId, { at, includeFullResolution })) as any;
   },
 
   previewUrl: (sceneId: string): string =>
-    `${ENGINE_URL}/preview/?scene=${encodeURIComponent(sceneId)}`,
+    `mf-runtime://app/index.html?scene=${encodeURIComponent(sceneId)}`,
 
   enqueueRender: async (sceneId: string, quality: "draft" | "production"): Promise<{ jobId: string; status: string }> => {
-    if (useHttp()) {
-      return request("/api/renders", {
-        method: "POST",
-        body: JSON.stringify({ sceneId, quality }),
-      }) as Promise<{ jobId: string; status: string }>;
-    }
     const core = await getInProcessCore();
     return await core.startRender(sceneId, quality);
   },
 
   renderJob: async (jobId: string): Promise<RenderJobView> => {
-    if (useHttp()) {
-      return request(`/api/renders/${encodeURIComponent(jobId)}`) as Promise<RenderJobView>;
-    }
     const core = await getInProcessCore();
     const job = core.getRenderStatus(jobId);
     if (!job) throw new EngineError(404, `unknown render job "${jobId}"`);
@@ -307,13 +222,6 @@ export const engineClient = {
   },
 
   renderFileBase64: async (jobId: string): Promise<{ mp4Base64: string; sceneId: string; quality: string }> => {
-    if (useHttp()) {
-      return request(`/api/renders/${encodeURIComponent(jobId)}/file/base64`) as Promise<{
-        mp4Base64: string;
-        sceneId: string;
-        quality: string;
-      }>;
-    }
     const core = await getInProcessCore();
     const job = core.getRenderStatus(jobId);
     if (!job || job.status !== "succeeded" || !job.result) {

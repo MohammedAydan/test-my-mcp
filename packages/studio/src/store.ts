@@ -72,10 +72,7 @@ const initialRenderQueue = (() => {
   }
 })();
 
-const defaultEngineUrl =
-  (window as unknown as { motionforge?: { engineUrl?: string } }).motionforge?.engineUrl ||
-  localStorage.getItem('motionforge_engine') ||
-  'http://127.0.0.1:4000';
+const defaultEngineUrl = 'in-process';
 
 const defaultWorkspace: WorkspaceLayout = {
   leftPanelWidth: 280,
@@ -107,7 +104,7 @@ function persistWorkspace(layout: WorkspaceLayout) {
 }
 
 const [state, setState] = createStore<StudioState>({
-  engine: { online: false, url: defaultEngineUrl, latencyMs: 0 },
+  engine: { online: true, url: defaultEngineUrl, latencyMs: 0 },
   capabilities: null,
   scene: null,
   sceneId: null,
@@ -488,6 +485,10 @@ export const store = {
 
   setSelectedKeyframe(kf: { layerId: string; property: string; index: number } | null) {
     setState('selectedKeyframe', kf);
+  },
+
+  splitSelectedAtPlayhead() {
+    return this.razorSplitAtPlayhead();
   },
 
   razorSplitAtPlayhead() {

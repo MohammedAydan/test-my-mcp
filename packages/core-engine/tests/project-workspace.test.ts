@@ -2,7 +2,6 @@ import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import Fastify from "fastify";
 import {
   validateProjectManifest,
   validateScene,
@@ -41,7 +40,7 @@ import {
 } from "../src/project-workspace.js";
 import { SceneStore } from "../src/scene-store.js";
 import { enginePaths } from "../src/config.js";
-import { registerProjectRoutes } from "../src/server.js";
+import { storeScene } from "../src/scene-operations.js";
 
 let workdir: string;
 
@@ -437,99 +436,66 @@ describe("readProjectManifest", () => {
   });
 });
 
-describe("POST /projects/init + /projects/sync (HTTP parity)", () => {
-  it("initializes a project over HTTP with the in-process store as seeder", async () => {
-    const app = Fastify();
-    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000, paths: testPaths });
-    try {
-      const target = path.join(workdir, "http-init");
-      const res = await app.inject({
-        method: "POST",
-        url: "/projects/init",
-        payload: { name: "http-job", targetPath: target, autoSeedScene: true },
-      });
-      expect(res.statusCode).toBe(201);
-      const body = res.json() as {
-        initialSceneId: string | null;
-        previewUrl: string | null;
-        seedError: string | null;
-      };
-      expect(body.initialSceneId).toBe("scene-01"); // scene-01.json carries its own id
-      expect(body.previewUrl).toBe("http://127.0.0.1:4000/preview/?scene=scene-01");
-      expect(await readFile(path.join(target, "scenes/scene-01.json"), "utf8")).toContain("http-job");
-    } finally {
-      await app.close();
-    }
+describe("initCreativeProject + storeScene (direct in-process parity)", () => {
+  it("initializes a project with the in-process store as seeder", async () => {
+    const store = new SceneStore();
+    const target = path.join(workdir, "http-init");
+    const result = await initCreativeProject(
+      { name: "http-job", targetPath: target, autoSeedScene: true },
+      {
+        seedScene: async (scene) => (await store.upsert(scene)).id,
+        engineBaseUrl: "http://127.0.0.1:4000",
+      }
+    );
+    expect(result.initialSceneId).toBe("scene-01"); // scene-01.json carries its own id
+    expect(result.previewUrl).toBe("http://127.0.0.1:4000/preview/?scene=scene-01");
+    expect(await readFile(path.join(target, "scenes/scene-01.json"), "utf8")).toContain("http-job");
   });
 
-  it("returns 409 when the target is not empty and force is not set", async () => {
-    const app = Fastify();
-    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000, paths: testPaths });
-    try {
-      const target = path.join(workdir, "http-guard");
-      await scaffold("http-guard");
-      const res = await app.inject({
-        method: "POST",
-        url: "/projects/init",
-        payload: { name: "http-guard", targetPath: target },
-      });
-      expect(res.statusCode).toBe(409);
-      expect(res.json().error).toMatch(/is not empty/);
-    } finally {
-      await app.close();
-    }
+  it("returns error when the target is not empty and force is not set", async () => {
+    const target = path.join(workdir, "http-guard");
+    await scaffold("http-guard");
+    await expect(
+      initCreativeProject({ name: "http-guard", targetPath: target })
+    ).rejects.toThrow(/is not empty/);
   });
 
-  it("rejects invalid options with 400 + issues", async () => {
-    const app = Fastify();
-    await registerProjectRoutes(app, { store: new SceneStore(), port: 4000, paths: testPaths });
-    try {
-      const res = await app.inject({
-        method: "POST",
-        url: "/projects/init",
-        payload: { name: "", targetPath: path.join(workdir, "never") },
-      });
-      expect(res.statusCode).toBe(400);
-      const body = res.json();
-      expect(body.error).toContain("name");
-    } finally {
-      await app.close();
-    }
+  it("rejects invalid options with ProjectWorkspaceError", async () => {
+    await expect(
+      initCreativeProject({ name: "", targetPath: path.join(workdir, "never") })
+    ).rejects.toThrow(/name/);
   });
 
   it("syncs a stored scene to the project disk", async () => {
-    const app = Fastify();
     const store = new SceneStore();
-    await registerProjectRoutes(app, { store, port: 4000, paths: testPaths });
-    try {
-      const dir = path.join(workdir, "http-sync");
-      await scaffold("http-sync");
-      await seedManifest(dir);
+    const dir = path.join(workdir, "http-sync");
+    await scaffold("http-sync");
+    await seedManifest(dir);
 
-      const res = await app.inject({
-        method: "POST",
-        url: "/projects/sync",
-        payload: { projectPath: dir, scene: { ...validatedScene, id: "scene-01" } },
-      });
-      expect(res.statusCode).toBe(201);
-      const body = res.json() as {
-        id: string;
-        status: string;
-        revision: number;
-        hash: string;
-        warnings: unknown[];
-        savedSceneFilePath: string;
-      };
-      expect(body.id).toBe("scene-01");
-      expect(body.status).toBe("created"); // fresh store, first time this id is stored
-      expect(body.revision).toBeGreaterThan(0);
-      expect(body.hash).toMatch(/^[0-9a-f]{16}$/);
-      expect(body.warnings).toEqual([]);
-      expect(body.savedSceneFilePath).toBe(`${dir}/scenes/scene-01.json`);
-      const scene = JSON.parse(await readFile(path.join(dir, "scenes/scene-01.json"), "utf8")) as { id?: string };
-      expect(scene.id).toBe("scene-01");
-    } finally {
-      await app.close();
-    }
+    const res = await storeScene({
+      body: { ...validatedScene, id: "scene-01" },
+      store,
+      paths: testPaths,
+      port: 4000,
+      projectPath: dir,
+    });
+    expect(res.status).toBe(201);
+    expect("body" in res).toBe(true);
+    const body = res.body as {
+      id: string;
+      status: string;
+      revision: number;
+      hash: string;
+      warnings: unknown[];
+      savedSceneFilePath?: string;
+    };
+    expect(body.id).toBe("scene-01");
+    expect(body.status).toBe("created"); // fresh store, first time this id is stored
+    expect(body.revision).toBeGreaterThan(0);
+    expect(body.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(body.warnings).toEqual([]);
+    expect(body.savedSceneFilePath).toBe(`${dir}/scenes/scene-01.json`);
+    const scene = JSON.parse(await readFile(path.join(dir, "scenes/scene-01.json"), "utf8")) as { id?: string };
+    expect(scene.id).toBe("scene-01");
   });
 });

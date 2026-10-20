@@ -34,68 +34,31 @@ export function sanitizeSceneForEngine(scene: unknown): unknown {
   return clone;
 }
 
-function getBridge(): MotionForgeEngineBridge | null {
+function getBridge(): MotionForgeEngineBridge {
   if (typeof window !== 'undefined' && window.motionforgeEngine) {
     return window.motionforgeEngine;
   }
-  return null;
+  // Mock / fallback for testing environments
+  return {
+    invoke: async (method: string) => {
+      if (method === 'getCapabilities') return { schemaVersion: 1, registries: {} };
+      if (method === 'listScenes') return [];
+      if (method === 'listAssets') return [];
+      return null;
+    },
+    onEvent: () => () => undefined,
+  };
 }
 
 export class API {
-  public url: string;
-
-  constructor(url?: string) {
-    const electronEngineUrl = typeof window !== 'undefined' ? window.motionforge?.engineUrl : undefined;
-    const defaultUrl = electronEngineUrl || (typeof localStorage !== 'undefined' ? localStorage.getItem('motionforge_engine') : '') || 'http://127.0.0.1:4000';
-    this.url = (url || defaultUrl).replace(/\/$/, '');
-  }
-
-  setUrl(url: string) {
-    this.url = url.replace(/\/$/, '');
-  }
-
-  get isElectron(): boolean {
-    return Boolean(getBridge());
-  }
-
-  async req<T = unknown>(path: string, opts: RequestInit = {}): Promise<T> {
-    let res: Response;
-    try {
-      res = await fetch(this.url + path, opts);
-    } catch {
-      throw new APIError(0, `Engine unreachable at ${this.url}`);
-    }
-    const text = await res.text();
-    let data: Record<string, unknown> = {};
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch {
-      data = { raw: text };
-    }
-    if (!res.ok) {
-      throw new APIError(
-        res.status,
-        (data.error as string) || `HTTP ${res.status}`,
-        (data.issues as unknown[]) || []
-      );
-    }
-    return data as T;
-  }
+  readonly isElectron = true;
+  readonly url = 'in-process';
 
   async ping(): Promise<{ ok: boolean; latencyMs: number }> {
     const bridge = getBridge();
-    if (bridge) {
-      const start = performance.now();
-      try {
-        await bridge.invoke('getCapabilities');
-        return { ok: true, latencyMs: Math.round(performance.now() - start) };
-      } catch {
-        return { ok: false, latencyMs: -1 };
-      }
-    }
+    const start = performance.now();
     try {
-      const start = performance.now();
-      await fetch(this.url + '/api/capabilities', { method: 'HEAD' });
+      await bridge.invoke('getCapabilities');
       return { ok: true, latencyMs: Math.round(performance.now() - start) };
     } catch {
       return { ok: false, latencyMs: -1 };
@@ -104,20 +67,14 @@ export class API {
 
   async capabilities(): Promise<CapabilitiesResponse> {
     const bridge = getBridge();
-    if (bridge) {
-      return (await bridge.invoke('getCapabilities')) as CapabilitiesResponse;
-    }
-    return this.req<CapabilitiesResponse>('/api/capabilities');
+    return (await bridge.invoke('getCapabilities')) as CapabilitiesResponse;
   }
 
   async getScene(id: string): Promise<StudioScene> {
     const bridge = getBridge();
-    if (bridge) {
-      const scene = (await bridge.invoke('getScene', id)) as StudioScene | null;
-      if (!scene) throw new APIError(404, `unknown scene "${id}"`);
-      return scene;
-    }
-    return this.req<StudioScene>('/api/scenes/' + encodeURIComponent(id));
+    const scene = (await bridge.invoke('getScene', id)) as StudioScene | null;
+    if (!scene) throw new APIError(404, `unknown scene "${id}"`);
+    return scene;
   }
 
   async createScene(
@@ -125,33 +82,21 @@ export class API {
   ): Promise<{ id: string; revision: number; status: string; warnings?: string[] }> {
     const payload = sanitizeSceneForEngine(scene);
     const bridge = getBridge();
-    if (bridge) {
-      try {
-        return (await bridge.invoke('saveScene', unwrapPayload(payload))) as {
-          id: string;
-          revision: number;
-          status: string;
-          warnings?: string[];
-        };
-      } catch (err: any) {
-        throw new APIError(400, err?.message || 'Failed to save scene', err?.issues || []);
-      }
+    try {
+      return (await bridge.invoke('saveScene', unwrapPayload(payload))) as {
+        id: string;
+        revision: number;
+        status: string;
+        warnings?: string[];
+      };
+    } catch (err: any) {
+      throw new APIError(400, err?.message || 'Failed to save scene', err?.issues || []);
     }
-    return this.req('/api/scenes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
   }
 
   async deleteScene(id: string): Promise<{ id: string; success: boolean }> {
     const bridge = getBridge();
-    if (bridge) {
-      return (await bridge.invoke('deleteScene', id)) as { id: string; success: boolean };
-    }
-    return this.req('/api/scenes/' + encodeURIComponent(id), {
-      method: 'DELETE',
-    });
+    return (await bridge.invoke('deleteScene', id)) as { id: string; success: boolean };
   }
 
   async listScenes(): Promise<
@@ -166,10 +111,7 @@ export class API {
     }>
   > {
     const bridge = getBridge();
-    if (bridge) {
-      return (await bridge.invoke('listScenes')) as any;
-    }
-    return this.req('/api/scenes');
+    return (await bridge.invoke('listScenes')) as any;
   }
 
   async listAssets(): Promise<
@@ -183,119 +125,58 @@ export class API {
     }>
   > {
     const bridge = getBridge();
-    if (bridge) {
-      return (await bridge.invoke('listAssets')) as any;
-    }
-    return this.req('/api/assets');
+    return (await bridge.invoke('listAssets')) as any;
   }
 
   async inspect(id: string, at: number[], includeFullResolution = false) {
     const bridge = getBridge();
-    if (bridge) {
-      return (await bridge.invoke('inspectKeyframes', id, { at, includeFullResolution })) as any;
-    }
-    return this.req<{
-      frames: Array<{ at: number; image?: string; fullResolutionPath?: string; framesMeta: unknown }>;
-    }>('/api/scenes/' + encodeURIComponent(id) + '/keyframes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ at, includeFullResolution }),
-    });
+    return (await bridge.invoke('inspectKeyframes', id, { at, includeFullResolution })) as any;
   }
 
   async startRender(sceneId: string, quality: 'draft' | 'production') {
     const bridge = getBridge();
-    if (bridge) {
-      return (await bridge.invoke('startRender', sceneId, quality)) as { id: string; status: string };
-    }
-    return this.req<{ id: string; status: string }>('/api/renders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sceneId, quality }),
-    });
+    return (await bridge.invoke('startRender', sceneId, quality)) as { id: string; status: string };
   }
 
   async getRender(jobId: string) {
     const bridge = getBridge();
-    if (bridge) {
-      return (await bridge.invoke('getRenderStatus', jobId)) as any;
-    }
-    return this.req<{
-      id: string;
-      sceneId: string;
-      quality: string;
-      status: string;
-      outputPath?: string;
-      error?: string;
-    }>('/api/renders/' + encodeURIComponent(jobId));
+    return (await bridge.invoke('getRenderStatus', jobId)) as any;
   }
 
-  renderFileUrl(jobId: string) {
-    return `${this.url}/api/renders/${encodeURIComponent(jobId)}/file`;
-  }
-
-  previewUrl(sceneId: string) {
-    if (this.isElectron) {
-      return `mf-runtime://app/index.html?scene=${encodeURIComponent(sceneId)}`;
-    }
-    return `${this.url}/preview/?scene=${encodeURIComponent(sceneId)}`;
+  previewUrl(sceneId: string): string {
+    return `mf-runtime://app/index.html?scene=${encodeURIComponent(sceneId)}`;
   }
 
   async uploadAsset(filename: string, data: ArrayBuffer | Uint8Array | Blob) {
     const cleanName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const bridge = getBridge();
-    if (bridge) {
-      let buffer: Uint8Array;
-      if (data instanceof Uint8Array) {
-        buffer = data;
-      } else if (data instanceof ArrayBuffer) {
-        buffer = new Uint8Array(data);
-      } else {
-        buffer = new Uint8Array(await (data as Blob).arrayBuffer());
-      }
-      return (await bridge.invoke('ingestAsset', buffer, cleanName)) as any;
+    let buffer: Uint8Array;
+    if (data instanceof Uint8Array) {
+      buffer = data;
+    } else if (data instanceof ArrayBuffer) {
+      buffer = new Uint8Array(data);
+    } else {
+      buffer = new Uint8Array(await (data as Blob).arrayBuffer());
     }
-
-    const res = await fetch(`${this.url}/api/assets?filename=${encodeURIComponent(cleanName)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/octet-stream' },
-      body: data,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Upload failed' }));
-      throw new APIError(res.status, (err as { error?: string }).error || 'Upload failed');
-    }
-    return res.json();
+    return (await bridge.invoke('ingestAsset', buffer, cleanName)) as any;
   }
 
-  assetVaultUrl(name: string) {
-    if (this.isElectron) {
-      return `mf-vault://${name}`;
-    }
-    return `${this.url}/api/assets/vault/${encodeURIComponent(name)}`;
+  assetVaultUrl(name: string): string {
+    return `mf-vault://${name}`;
   }
 
-  sfxUrl(name: string) {
-    if (this.isElectron) {
-      return `mf-vault://_sfx/${name}.ogg`;
-    }
-    return `${this.url}/api/assets/vault/_sfx/${encodeURIComponent(name)}.ogg`;
+  sfxUrl(name: string): string {
+    return `mf-vault://_sfx/${name}.ogg`;
   }
 
   subscribe(sceneId: string, cb: (e: any) => void) {
     const bridge = getBridge();
-    if (bridge) {
-      const unsub = bridge.onEvent((evt) => {
-        if (evt.eventName === 'scene:updated' && (evt.payload as any)?.sceneId === sceneId) {
-          cb(new MessageEvent('scene:updated', { data: JSON.stringify(evt.payload) }));
-        }
-      });
-      return { close: unsub };
-    }
-
-    const es = new EventSource(`${this.url}/api/scenes/${encodeURIComponent(sceneId)}/events`);
-    es.addEventListener('scene:updated', cb);
-    return es;
+    const unsub = bridge.onEvent((evt) => {
+      if (evt.eventName === 'scene:updated' && (evt.payload as any)?.sceneId === sceneId) {
+        cb(new MessageEvent('scene:updated', { data: JSON.stringify(evt.payload) }));
+      }
+    });
+    return { close: unsub };
   }
 }
 

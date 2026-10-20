@@ -3,7 +3,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
 import { registerAuthoringResource, registerTools } from "./tools.js";
-import { ENGINE_URL } from "./engine-client.js";
 
 /**
  * MCP stdio entrypoint (`npm run start -w @motionforge/mcp-server`).
@@ -39,7 +38,7 @@ const server = new McpServer({ name: "motionforge", version: "0.1.0" });
 registerTools(server);
 registerAuthoringResource(server);
 
-console.error(`[motionforge-mcp] core-engine: ${ENGINE_URL}`);
+console.error("[motionforge-mcp] core-engine: in-process (canonical shared store)");
 const transport = new StdioServerTransport();
 await server.connect(transport);
 

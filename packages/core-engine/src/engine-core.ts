@@ -16,7 +16,7 @@ import { getFrameBounds, inspectKeyframes, type InspectedFrame } from "./keyfram
 import { resolveProjectAssets } from "./project-assets.js";
 import { RenderRunner, type RenderJob, type RenderQuality } from "./render-runner.js";
 import { SceneStore, sceneHash, type StoredScene } from "./scene-store.js";
-import { storeScene, type SceneStoreResponse } from "./server.js";
+import { storeScene, type SceneStoreResponse } from "./scene-operations.js";
 import { ensureSfxBank } from "./sfx-bank.js";
 import {
   ensureDirs,
@@ -135,17 +135,18 @@ export class EngineCore extends EventEmitter {
       port: this.config.port,
       projectPath,
     });
+    const { body } = res;
 
-    if ("error" in res.body) {
+    if ("error" in body) {
       const err = new Error(
-        res.body.error + (res.body.issues?.length ? ": " + res.body.issues.join("; ") : "")
+        body.error + (body.issues.length ? ": " + body.issues.join("; ") : "")
       ) as Error & { issues?: string[]; status?: number };
-      err.issues = res.body.issues;
+      err.issues = body.issues;
       err.status = res.status;
       throw err;
     }
 
-    const saved = res.body as SceneStoreResponse;
+    const saved: SceneStoreResponse = body;
     this.emit("scene:updated", {
       sceneId: saved.id,
       revision: saved.revision,

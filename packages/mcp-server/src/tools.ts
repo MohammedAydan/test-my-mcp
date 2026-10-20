@@ -359,7 +359,7 @@ export async function handleRenderVideo(args: {
     const started = Date.now();
     while (job.status === "queued" || job.status === "running") {
       if (Date.now() - started > budgetMs) {
-        return ok(`render ${jobId} still ${job.status} — poll GET /api/renders/${jobId}`);
+        return ok(`render ${jobId} still ${job.status} — check status via render_video tool`);
       }
       await new Promise((r) => setTimeout(r, job.status === "queued" ? 500 : 400));
       job = await engineClient.renderJob(jobId);

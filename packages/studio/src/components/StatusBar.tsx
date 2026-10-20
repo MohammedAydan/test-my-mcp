@@ -7,12 +7,8 @@ export const StatusBar: Component = () => {
   const sceneLabel = () => state.scene?.id || 'No scene';
   const layersLabel = () => `${state.scene?.layers?.length || 0} layers`;
   const engineUrlLabel = () => {
-    try {
-      const u = new URL(state.engine.url);
-      return `:${u.port || '80'}`;
-    } catch {
-      return state.engine.url;
-    }
+    if (state.engine.url === 'in-process') return 'IPC (In-Process)';
+    return state.engine.url;
   };
 
   return (

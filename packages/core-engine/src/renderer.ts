@@ -72,6 +72,8 @@ export class RendererPool {
       ...(opts.paths ? { paths: opts.paths } : {}),
     });
     const page = await context.newPage();
+    page.on("console", (msg) => console.log(`[renderer:console] ${msg.text()}`));
+    page.on("pageerror", (err) => console.error(`[renderer:pageerror]`, err));
     const url =
       `${opts.baseUrl}/preview?scene=${encodeURIComponent(opts.sceneId)}` +
       `&render=1&fps=${opts.profile.fps}` +

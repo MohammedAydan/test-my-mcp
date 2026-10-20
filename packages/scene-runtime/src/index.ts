@@ -134,8 +134,7 @@ async function boot(): Promise<void> {
         window.parent?.postMessage({ type: "motionforge:ready", fps, durationMs: 0 }, "*");
       } else {
         showError(
-          `Could not load scene "${sceneId}": ${error instanceof Error ? error.message : String(error)}. ` +
-            "Is core-engine running (default http://localhost:4000)?"
+          `Could not load scene "${sceneId}": ${error instanceof Error ? error.message : String(error)}.`
         );
       }
     }
@@ -238,21 +237,6 @@ async function boot(): Promise<void> {
       }
     }
   });
-
-  // A zero-port host has no engine HTTP origin to subscribe to — it pushes
-  // scene updates over postMessage instead (`motionforge:updateScene`).
-  if (sceneId && !isLocal && !renderMode) {
-    // Live preview: rebuild in place when the engine pushes an update. A full
-    // page reload would drop the scrubber position and flash a blank stage;
-    // more importantly, a rebuild MUST start from a clean stage or the previous
-    // scene's DOM and inline camera styles bleed into the new one.
-    const events = new EventSource(`/api/scenes/${encodeURIComponent(sceneId)}/events`);
-    let pending: Promise<void> = Promise.resolve();
-    events.addEventListener("updated", () => {
-      pending = pending.then(() => void rebuild(sceneId, fps)).catch(() => undefined);
-    });
-    events.onerror = () => events.close(); // engine restarts must not spam the console
-  }
 }
 
 async function mountScene(

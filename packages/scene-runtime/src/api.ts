@@ -143,8 +143,6 @@ export async function fetchScene(id: string): Promise<SceneSpec> {
   const failures: string[] = [];
 
   if (typeof window !== "undefined") {
-    // Zero-port host: the engine lives in the host process, reachable over
-    // the `motionforgeEngine` IPC bridge instead of an HTTP endpoint.
     const parentBridge = readParentBridge();
     if (parentBridge?.invoke) {
       try {
@@ -163,29 +161,23 @@ export async function fetchScene(id: string): Promise<SceneSpec> {
         failures.push(`engine bridge: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    // The `mf-runtime:` host owns the engine in-process: there is no HTTP
-    // origin to fetch the scene from, and a cross-origin parent cannot be
-    // reached over the bridge either. Ask the host for the scene over
-    // postMessage and wait for it to be pushed back.
-    if (window.location.protocol === "mf-runtime:") {
-      const pushed = await requestSceneFromHost(id);
-      if (pushed) return pushed;
-    }
+    const pushed = await requestSceneFromHost(id);
+    if (pushed) return pushed;
   }
 
+  // Headless zero-port Playwright capture route interception
   try {
     const res = await fetch(`/api/scenes/${encodeURIComponent(id)}`);
-    if (!res.ok) {
-      throw new Error(`core-engine responded ${res.status} for scene "${id}"`);
+    if (res.ok) {
+      return (await res.json()) as SceneSpec;
     }
-    return (await res.json()) as SceneSpec;
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    if (failures.length === 0) throw error;
-    throw new Error(
-      `could not load scene "${id}": ${reason} (${failures.join("; ")})`
-    );
+  } catch (err) {
+    failures.push(`zero-port route: ${err instanceof Error ? err.message : String(err)}`);
   }
+
+  throw new Error(
+    `could not load scene "${id}": in-process engine bridge, host postMessage, and zero-port route all failed (${failures.join("; ")})`
+  );
 }
 
 export interface AssetPreload {

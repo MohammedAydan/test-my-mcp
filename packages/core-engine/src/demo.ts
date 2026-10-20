@@ -11,13 +11,11 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import { createEngineCore } from "./engine-core.js";
 import type { EnginePaths } from "./config.js";
-import { engineConfig } from "./config.js";
-import { startEngine } from "./server.js";
 import type { SceneSpecInput } from "@motionforge/scene-spec";
 
 const exec = promisify(execFile);
-const PORT = 4144;
 const DURATION_MS = 12_000;
 const QUALITY = process.env.DEMO_QUALITY === "production" ? "production" : "draft";
 
@@ -226,38 +224,26 @@ function demoScene(): SceneSpecInput {
 }
 
 async function main(): Promise<void> {
-  const config = engineConfig({ port: PORT, maxRenderWorkers: 2 });
-  const engine = await startEngine({ config, log: (msg) => console.log(`[engine] ${msg}`) });
-  const base = `http://127.0.0.1:${PORT}`;
+  const core = await createEngineCore({
+    maxRenderWorkers: 2,
+    log: (msg) => console.log(`[engine] ${msg}`),
+  });
 
   // 1. generate showcase assets straight into the vault
-  await generateAsset(config.paths, "demo-logo.png", "gradients=s=512x512:c0=0x6d28d9:c1=0x2563eb:x0=96:y0=96:x1=416:y1=416:duration=0.05");
-  await generateAsset(config.paths, "demo-icon.png", "gradients=s=256x256:c0=0x22d3ee:c1=0xa78bfa:x0=20:y0=20:x1=236:y1=236:duration=0.05");
+  await generateAsset(core.paths, "demo-logo.png", "gradients=s=512x512:c0=0x6d28d9:c1=0x2563eb:x0=96:y0=96:x1=416:y1=416:duration=0.05");
+  await generateAsset(core.paths, "demo-icon.png", "gradients=s=256x256:c0=0x22d3ee:c1=0xa78bfa:x0=20:y0=20:x1=236:y1=236:duration=0.05");
   console.log("demo: vault assets generated");
 
   // 2. store the scene
-  const stored = await fetch(`${base}/api/scenes`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(demoScene()),
-  });
-  if (!stored.ok) throw new Error(`scene rejected: ${stored.status} ${await stored.text()}`);
+  await core.saveScene(demoScene());
   console.log("demo: scene stored as 'showcase'");
 
   // 3. visual inspection pass — the transport contract, end to end.
-  //    `includeFullResolution` is what separates the two halves of the
-  //    `inspect_scene_keyframes` payload: the inline JPEGs an agent (or this
-  //    script) reads, and the full-resolution PNGs a client deliverable needs.
-  //    Asking for neither used to print "0 KiB" without failing.
-  const kf = await fetch(`${base}/api/scenes/showcase/keyframes`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ at: [700, 1800, 3400, 6300, 9200, 10800], includeFullResolution: true }),
+  const inspected = await core.inspectKeyframes("showcase", {
+    at: [700, 1800, 3400, 6300, 9200, 10800],
+    includeFullResolution: true,
   });
-  if (!kf.ok) throw new Error(`keyframes failed: ${kf.status}`);
-  const inspected = (await kf.json()) as {
-    frames: Array<{ atMs: number; image: string; preview: string }>;
-  };
+
   for (const f of inspected.frames) {
     const size = (dataUrl: string): number =>
       Buffer.from(dataUrl.replace(/^data:image\/(?:jpeg|png);base64,/, ""), "base64").length;
@@ -274,24 +260,19 @@ async function main(): Promise<void> {
   }
 
   // 4. draft render through the full pipeline
-  const enq = await fetch(`${base}/api/renders`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sceneId: "showcase", quality: QUALITY }),
-  });
-  if (!enq.ok) throw new Error(`render enqueue failed: ${enq.status}`);
-  const { jobId } = (await enq.json()) as { jobId: string };
+  const render = await core.startRender("showcase", QUALITY);
+  const jobId = render.jobId;
 
-  let job: { status: string; progress?: number; error?: string; result?: Record<string, unknown> } = {
+  let job: { status: string; progress?: number; error?: string; result?: Record<string, unknown> } | undefined = {
     status: "queued",
   };
   for (let i = 0; i < 1800; i++) {
-    job = (await (await fetch(`${base}/api/renders/${jobId}`)).json()) as { status: string; progress?: number; error?: string; result?: Record<string, unknown> };
-    if (job.status === "succeeded" || job.status === "failed") break;
-    if (i % 30 === 29) console.log(`demo: render ${((job.progress ?? 0) * 100) | 0}% after ${i + 1}s`);
+    job = core.getRenderStatus(jobId);
+    if (job && (job.status === "succeeded" || job.status === "failed")) break;
+    if (i % 30 === 29) console.log(`demo: render ${((job?.progress ?? 0) * 100) | 0}% after ${i + 1}s`);
     await new Promise((r) => setTimeout(r, 1000));
   }
-  if (job?.status !== "succeeded") throw new Error(`demo render failed: ${job?.status} ${job?.error ?? ""}`);
+  if (job?.status !== "succeeded" || !job.result) throw new Error(`demo render failed: ${job?.status} ${job?.error ?? ""}`);
   console.log("demo: telemetry", JSON.stringify(job.result, null, 2));
 
   const info = await ffprobeInfo(job.result!.mp4Path as string);
@@ -302,13 +283,14 @@ async function main(): Promise<void> {
   if (!info.videoCodec.startsWith("h264")) problems.push(`codec ${info.videoCodec}`);
   if (!info.audioCodec) problems.push("audio stream missing");
 
+  core.dispose();
+
   if (problems.length > 0) {
     console.error("demo: FAILED", problems);
     process.exitCode = 1;
   } else {
     console.log("demo: OK — showcase scene rendered end-to-end");
   }
-  await engine.app.close();
   process.exit(process.exitCode ?? 0);
 }
 

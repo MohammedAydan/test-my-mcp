@@ -288,6 +288,21 @@ export const App: Component = () => {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         executeSave();
+      } else if (!e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        store.splitSelectedAtPlayhead();
+      } else if (e.shiftKey && (e.key === 'Delete' || e.key === 'Backspace')) {
+        e.preventDefault();
+        store.rippleDeleteSelected();
+      } else if (e.key.toLowerCase() === 'j') {
+        e.preventDefault();
+        store.setPlayhead(Math.max(0, state.playhead - 200));
+      } else if (e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        store.setPlaying(false);
+      } else if (e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        store.setPlaying(true);
       } else if (e.key === ' ') {
         e.preventDefault();
         store.setPlaying(!state.playing);

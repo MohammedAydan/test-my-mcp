@@ -34,11 +34,11 @@ const isoTimestamp = z
     "must be an ISO-8601 timestamp (e.g. 2026-01-31T09:00:00.000Z)"
   );
 
-const httpUrl = z
+const engineUrl = z
   .string()
   .min(1)
-  .refine((v) => /^https?:\/\/[^\s]+$/.test(v), {
-    message: "must be an http(s) URL (e.g. http://127.0.0.1:4000)",
+  .refine((v) => v === "in-process" || /^https?:\/\/[^\s]+$/.test(v) || /^mf-runtime:\/\/[^\s]+$/.test(v), {
+    message: "must be 'in-process' or an http(s)/mf-runtime URL (e.g. 'in-process' or http://127.0.0.1:4000)",
   });
 
 const projectPath = z
@@ -49,7 +49,7 @@ const projectPath = z
   });
 
 export const projectEngineSchema = z.strictObject({
-  url: httpUrl,
+  url: engineUrl,
   preferredQuality: z.enum(PROJECT_QUALITIES).default("draft"),
 });
 export type ProjectEngine = z.infer<typeof projectEngineSchema>;

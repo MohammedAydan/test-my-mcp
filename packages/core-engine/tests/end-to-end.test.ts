@@ -21,12 +21,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import Fastify from "fastify";
 
 import { validateScene, type SceneSpecInput } from "@motionforge/scene-spec";
 import { enginePaths } from "../src/config.js";
 import { ensureSfxBank } from "../src/sfx-bank.js";
-import { registerProjectRoutes, registerSceneRoutes, storeScene } from "../src/server.js";
+import { storeScene } from "../src/scene-operations.js";
 import { SceneStore } from "../src/scene-store.js";
 import { analyzeScene } from "../src/scene-analysis.js";
 
@@ -134,34 +133,31 @@ describe("end-to-end: the field-report scene renders", () => {
     await fsp.mkdir(engineVault, { recursive: true });
     const paths = { ...enginePaths(), vaultDir: engineVault, dataDir: path.join(workdir, "data") };
 
-    const app = Fastify();
     const store = new SceneStore(paths.dataDir);
-    await registerSceneRoutes(app, { store, port: 4000, paths });
-    await registerProjectRoutes(app, { store, port: 4000, paths });
-    try {
-      const res = await app.inject({
-        method: "POST",
-        url: "/api/scenes",
-        payload: { ...SCENE, projectPath: project },
-      });
-      expect(res.statusCode).toBe(201);
-      const body = res.json() as {
-        id: string;
-        warnings: Array<{ code: string }>;
-        savedSceneFilePath: string;
-        assetsResolved?: Array<{ vaultName: string }>;
-      };
-      expect(body.id).toBe("e2e-scene");
-      expect(body.warnings.map((w) => w.code)).toContain("CAMERA_VIEWPORT_EXCEEDS_CANVAS");
-      // the project asset was pulled into the vault
-      expect(body.assetsResolved?.[0]?.vaultName).toBe("e2e-logo.png");
-      await expect(fsp.stat(path.join(engineVault, "e2e-logo.png"))).resolves.toBeTruthy();
-      // and the scene was written back to the project
-      expect(body.savedSceneFilePath).toBe(`${project}/scenes/e2e-scene.json`);
-      await expect(fsp.stat(path.join(project, "scenes", "e2e-scene.json"))).resolves.toBeTruthy();
-    } finally {
-      await app.close();
-    }
+    const res = await storeScene({
+      // `projectPath` is an envelope field, not part of the SceneSpec — the
+      // route strips it before validating, so a direct call must not carry it
+      body: SCENE,
+      store,
+      paths,
+      port: 4000,
+      projectPath: project,
+    });
+    expect(res.status).toBe(201);
+    const body = res.body as {
+      id: string;
+      warnings: Array<{ code: string }>;
+      savedSceneFilePath?: string;
+      assetsResolved?: Array<{ vaultName: string }>;
+    };
+    expect(body.id).toBe("e2e-scene");
+    expect(body.warnings.map((w) => w.code)).toContain("CAMERA_VIEWPORT_EXCEEDS_CANVAS");
+    // the project asset was pulled into the vault
+    expect(body.assetsResolved?.[0]?.vaultName).toBe("e2e-logo.png");
+    await expect(fsp.stat(path.join(engineVault, "e2e-logo.png"))).resolves.toBeTruthy();
+    // and the scene was written back to the project
+    expect(body.savedSceneFilePath).toBe(`${project}/scenes/e2e-scene.json`);
+    await expect(fsp.stat(path.join(project, "scenes", "e2e-scene.json"))).resolves.toBeTruthy();
   });
 
   it("muxes the panned audio cues through real FFmpeg without a filter error", async () => {

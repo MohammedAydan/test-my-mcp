@@ -2,7 +2,7 @@
   "name": "@motionforge/core-engine",
   "version": "0.1.0",
   "type": "module",
-  "description": "Fastify service: scene validation, asset vault, Playwright frame rendering, FFmpeg encoding, SFX mixing.",
+  "description": "Motion graphics core engine: in-process scene validation, asset vault, Playwright frame rendering, FFmpeg encoding, SFX mixing.",
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts",
@@ -18,10 +18,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@fastify/cors": "^10.0.0",
-    "@fastify/static": "^10.1.6",
     "@motionforge/scene-spec": "*",
-    "fastify": "^5.2.0",
     "playwright": "^1.49.0"
   },
   "devDependencies": {

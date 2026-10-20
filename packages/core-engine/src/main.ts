@@ -1,11 +1,10 @@
-import { engineConfig } from "./config.js";
+import { createEngineCore } from "./engine-core.js";
 import { doctor } from "./doctor.js";
-import { startEngine } from "./server.js";
 
-const config = engineConfig({ port: Number(process.env.PORT ?? 4000) });
 const log = (msg: string) => console.log(`[core-engine] ${msg}`);
 
-const report = await doctor(config);
+const core = await createEngineCore({ log, enableWatcher: true });
+const report = await doctor(core.config);
 if (!report.ok) {
   log("toolchain check FAILED:");
   report.problems.forEach((p) => log(`  - ${p}`));
@@ -13,7 +12,4 @@ if (!report.ok) {
   log("toolchain ok — ffmpeg, chromium, sfx bank, runtime dist all present");
 }
 
-await startEngine({ config, log }).catch((error) => {
-  console.error("[core-engine] fatal:", error);
-  process.exit(1);
-});
+log(`EngineCore initialized in-memory (storage: ${core.paths.storageDir}, vault: ${core.paths.vaultDir})`);
