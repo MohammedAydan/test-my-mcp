@@ -69,6 +69,14 @@ export interface WorkspaceLayout {
   leftPanelCollapsed: boolean;
   rightPanelCollapsed: boolean;
   timelineCollapsed: boolean;
+  /**
+   * How the LEFT RAIL is split between the Project Bin (top) and the Layer
+   * Stack (bottom), as a fraction of the rail's height (0.15 … 0.85).
+   *
+   * The bin grew until the layer stack was squeezed into ~140px, so the split
+   * is now the user's decision rather than a hard-coded layout.
+   */
+  leftDockSplit: number;
 }
 
 export interface Toast {
@@ -162,9 +170,13 @@ const defaultWorkspace: WorkspaceLayout = {
   leftPanelCollapsed: false,
   rightPanelCollapsed: false,
   timelineCollapsed: false,
+  leftDockSplit: 0.5,
 };
 
-const initialWorkspace = readStorage<WorkspaceLayout>('motionforge_workspace_v2', defaultWorkspace);
+const initialWorkspace = readStorage<WorkspaceLayout>('motionforge_workspace_v2', {
+  ...defaultWorkspace,
+  leftDockSplit: readStorage<number>('motionforge_left_dock_split', defaultWorkspace.leftDockSplit),
+});
 const initialOpenScenes = readStorage<string[]>('motionforge_open_scenes', []);
 const initialRecentScenes = readStorage<Array<{ id: string; name: string; lastOpened: number }>>(
   'motionforge_recent_scenes',
@@ -524,6 +536,19 @@ export const store = {
     const clamped = Math.max(260, Math.min(650, Math.round(width)));
     setState('workspace', 'rightPanelWidth', clamped);
     writeStorage('motionforge_workspace_v2', state.workspace);
+  },
+
+  /**
+   * Move the horizontal splitter between the Project Bin and the Layer Stack.
+   *
+   * The fraction is clamped so neither panel can be dragged out of existence,
+   * and it is persisted so the split survives a restart.
+   */
+  setLeftDockSplit(fraction: number): void {
+    const clamped = Math.max(0.15, Math.min(0.85, fraction));
+    setState('workspace', 'leftDockSplit', clamped);
+    writeStorage('motionforge_workspace_v2', state.workspace);
+    writeStorage('motionforge_left_dock_split', clamped);
   },
 
   setTimelineHeight(height: number): void {

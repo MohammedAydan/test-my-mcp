@@ -86,7 +86,9 @@ export const TitleBar: Component = () => {
           <For each={WORKSPACE_PILLS}>
             {(pill) => (
               <button
-                class={`mf-workspace-pill ${state.workspacePreset === pill.id ? 'is-active' : ''}`}
+                class={`mf-workspace-pill mf-titlebar-pill ${
+                  state.workspacePreset === pill.id ? 'is-active' : ''
+                }`}
                 role="tab"
                 aria-selected={state.workspacePreset === pill.id}
                 data-workspace={pill.id}
@@ -102,14 +104,17 @@ export const TitleBar: Component = () => {
 
       <div class="mf-titlebar-right">
         <span
-          class={`mf-chip mf-engine-badge ${state.engine.online ? 'is-success' : 'is-danger'}`}
+          class={`mf-chip mf-engine-badge mf-titlebar-badge ${
+            state.engine.online ? 'is-success' : 'is-danger'
+          }`}
           id="engine-status"
+          title={state.engine.online ? 'The in-process engine is ready' : 'The engine is offline'}
         >
           {state.engine.online ? 'In-Process Ready' : 'Engine Offline'}
         </span>
 
         <button
-          class="mf-btn is-primary"
+          class="mf-btn is-primary mf-titlebar-action"
           id="btn-quick-render"
           title="Open the render queue"
           onClick={() => store.setActiveModal('render')}

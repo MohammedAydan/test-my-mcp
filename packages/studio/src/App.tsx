@@ -2,6 +2,7 @@ import { Component, Show, createEffect, createSignal, onCleanup, onMount } from 
 import { store } from './state/store.js';
 import { api } from './api.js';
 import { onEngineEvent } from './services/engine-bridge.js';
+import { capturePointer, releasePointer } from './services/pointer-capture.js';
 import { TitleBar } from './components/shell/TitleBar.js';
 import { ToolDock } from './components/shell/ToolDock.js';
 import { StatusBar } from './components/shell/StatusBar.js';
@@ -34,6 +35,9 @@ export const App: Component = () => {
   const state = store.state;
   let appRef: HTMLDivElement | undefined;
   let mainRef: HTMLDivElement | undefined;
+  let leftRailRef: HTMLDivElement | undefined;
+  let binPaneRef: HTMLDivElement | undefined;
+  let layersPaneRef: HTMLDivElement | undefined;
   let saveTimeout: number | null = null;
   const [engineError, setEngineError] = createSignal<string | null>(null);
 
@@ -43,6 +47,40 @@ export const App: Component = () => {
     !state.workspace.leftPanelCollapsed && (preset().showProjectBin || preset().showHierarchy);
   const showRightRail = () =>
     !state.workspace.rightPanelCollapsed && preset().showInspector;
+
+  /* ── the left dock: Project Bin over Layer Stack ─────────────────────── */
+
+  const showProjectBin = () => preset().showProjectBin;
+  const showHierarchy = () => preset().showHierarchy;
+  /** a maximised panel takes the whole rail — the sibling pane steps aside */
+  const showBinPane = () => showProjectBin() && state.maximizedPanelId !== 'layer-stack';
+  const showLayersPane = () => showHierarchy() && state.maximizedPanelId !== 'project-bin';
+  /** the splitter only exists when BOTH panes are on screen */
+  const showDockSplitter = () => showBinPane() && showLayersPane();
+  const dockSplit = () => state.workspace.leftDockSplit;
+  /** the bin takes the split's share of the rail, the stack takes the rest */
+  const binFlex = () => (showDockSplitter() ? `${dockSplit()} 1 0` : '1 1 0');
+  const layersFlex = () =>
+    showDockSplitter() ? `${Number((1 - dockSplit()).toFixed(3))} 1 0` : '1 1 0';
+
+  /**
+   * The draggable band of the left dock: from the top of the bin pane to
+   * the bottom of the layer stack. The split is a FRACTION of that band, so
+   * it survives a rail resize and a restart.
+   */
+  const dockTrack = (): { top: number; height: number } | null => {
+    const bin = binPaneRef;
+    const layers = layersPaneRef;
+    if (bin && layers) {
+      const top = bin.getBoundingClientRect().top;
+      const height = layers.getBoundingClientRect().bottom - top;
+      if (height > 0) return { top, height };
+    }
+    const rail = leftRailRef;
+    if (!rail) return null;
+    const rect = rail.getBoundingClientRect();
+    return rect.height > 0 ? { top: rect.top, height: rect.height } : null;
+  };
 
   /* ── auto-save ───────────────────────────────────────────────────────── */
 
@@ -252,12 +290,35 @@ export const App: Component = () => {
         <ToolDock />
 
         <Show when={showLeftRail()}>
-          <div class="mf-rail mf-rail-left" id="left-rail">
-            <Show when={preset().showProjectBin}>
-              <ProjectBinPanel />
+          <div class="mf-rail mf-rail-left" id="left-rail" ref={leftRailRef}>
+            <Show when={showBinPane()}>
+              <div
+                id="left-dock-bin"
+                class="mf-dock-pane"
+                ref={binPaneRef}
+                style={{ flex: binFlex() }}
+              >
+                <ProjectBinPanel />
+              </div>
             </Show>
-            <Show when={preset().showHierarchy}>
-              <LayerStackPanel />
+
+            <Show when={showDockSplitter()}>
+              <LeftDockSplitter
+                fraction={dockSplit()}
+                getTrack={dockTrack}
+                onResize={(fraction) => store.setLeftDockSplit(fraction)}
+              />
+            </Show>
+
+            <Show when={showLayersPane()}>
+              <div
+                id="left-dock-layers"
+                class="mf-dock-pane"
+                ref={layersPaneRef}
+                style={{ flex: layersFlex() }}
+              >
+                <LayerStackPanel />
+              </div>
             </Show>
           </div>
         </Show>
@@ -355,5 +416,94 @@ export const App: Component = () => {
         </div>
       </Show>
     </div>
+  );
+};
+
+/* ── the left-dock splitter ──────────────────────────────────────────────── */
+
+interface LeftDockSplitterProps {
+  /** the current split (0.15 … 0.85 of the track) */
+  fraction: number;
+  /** the draggable band, in client coordinates */
+  getTrack: () => { top: number; height: number } | null;
+  /** called with the new fraction */
+  onResize: (fraction: number) => void;
+}
+
+/**
+ * The separator between the Project Bin and the Layer Stack.
+ *
+ * Unlike the other splitters, this one stores a FRACTION of the track
+ * instead of a pixel size, so the split survives a rail resize — and the
+ * two panes keep their proportion on a 4K display as well as on a laptop.
+ *
+ * It behaves like the rest of the app: a pointer-capture drag, a hover
+ * accent, a double-click reset and a keyboard nudge (ArrowUp / ArrowDown
+ * move it by 16px).
+ */
+const LeftDockSplitter: Component<LeftDockSplitterProps> = (props) => {
+  const [isDragging, setIsDragging] = createSignal(false);
+  let elementRef: HTMLDivElement | undefined;
+
+  const handlePointerDown = (event: PointerEvent) => {
+    event.preventDefault();
+    setIsDragging(true);
+    capturePointer(elementRef, event.pointerId);
+  };
+
+  const handlePointerMove = (event: PointerEvent) => {
+    if (!isDragging()) return;
+    const track = props.getTrack();
+    if (!track || track.height <= 0) return;
+    props.onResize((event.clientY - track.top) / track.height);
+  };
+
+  const handlePointerUp = (event: PointerEvent) => {
+    if (!isDragging()) return;
+    setIsDragging(false);
+    releasePointer(elementRef, event.pointerId);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      event.preventDefault();
+      const track = props.getTrack();
+      if (!track || track.height <= 0) return;
+      const delta = (event.key === 'ArrowUp' ? -16 : 16) / track.height;
+      props.onResize(props.fraction + delta);
+      return;
+    }
+    if (event.key === 'Home') {
+      event.preventDefault();
+      props.onResize(0.15);
+      return;
+    }
+    if (event.key === 'End') {
+      event.preventDefault();
+      props.onResize(0.85);
+    }
+  };
+
+  return (
+    <div
+      ref={elementRef}
+      id="splitter-left-dock"
+      class={`mf-splitter is-horizontal mf-dock-splitter ${isDragging() ? 'is-active' : ''}`}
+      data-orientation="horizontal"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize the project bin and the layer stack"
+      aria-valuemin={15}
+      aria-valuemax={85}
+      aria-valuenow={Math.round(props.fraction * 100)}
+      tabindex="0"
+      title="Drag to resize the bin and the layer stack, double-click to reset"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onDblClick={() => props.onResize(0.5)}
+      onKeyDown={handleKeyDown}
+    />
   );
 };

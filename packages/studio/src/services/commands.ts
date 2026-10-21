@@ -1,6 +1,7 @@
 import { store } from '../state/store.js';
 import type { StudioScene } from '../types.js';
 import { api } from '../api.js';
+import { applyTimelineFit } from '../components/timeline/TimelinePanel.js';
 
 /**
  * The command registry.
@@ -289,15 +290,13 @@ export const commands: Command[] = [
   },
   {
     id: 'timeline.zoom-fit',
-    title: 'Zoom to Fit',
+    title: 'Fit Timeline to All Clips',
     category: 'Timeline',
     shortcut: 'Shift+Z',
     run: () => {
-      const width = document.querySelector<HTMLCanvasElement>('#timeline-canvas')?.clientWidth ?? 0;
-      const duration = store.state.scene?.durationMs ?? 0;
-      if (width <= 0 || duration <= 0) return;
-      store.setZoom(Math.max(0.2, Math.min(12, duration / width)));
-      store.setPanOffset(0);
+      // The monitor owns the fit maths for the canvas; the timeline owns its
+      // own (it must fit the CONTENT extent, not the nominal duration).
+      applyTimelineFit();
     },
   },
 

@@ -133,6 +133,39 @@ Legend: `⬜` not started · `🟡` in progress · `✅` complete · `⛔` block
 
 ---
 
+## PHASE 5 — Production Audit: UI Polish & Test Isolation
+
+> Driven by a screenshot review of `pro-nle-redesign-verified.png` and
+> `pro-nle-v4-polished.png`. Four parallel workstreams, each with exclusive
+> file ownership, followed by an integration pass by the orchestrator.
+
+| Milestone ID | Module Name | Implementation Status | Typecheck & Unit Tests | Practical Electron Verification | Notes / Commit |
+| --- | --- | --- | --- | --- | --- |
+| P5-1 | **Test isolation** (`scripts/lib/test-env.cjs`) | ✅ | n/a | ✅ 60/60 + 66/66 | Both Electron harnesses now run in a per-run temp workspace (`MOTIONFORGE_STORAGE_DIR` / `MOTIONFORGE_VAULT_DIR` / `MOTIONFORGE_RENDERS_DIR` / `MOTIONFORGE_DATA_DIR`), created before the launch and removed in a `finally`. Proof: `ls -la ~/.motionforge/scenes` is **byte-identical** before and after four full harness runs, and no `mf-test-*` temp dir leaks. The engine needed NO test-only branch — `resolveEnginePaths()` already honours the env vars. |
+| P5-2 | **Storage hygiene** (`scripts/cleanup-test-scenes.cjs`) | ✅ | n/a | ✅ | A dry-run/apply cleaner that removes a scene ONLY when its id matches a test prefix OR its id AND name both match a marker (multi-word markers match as a phrase; single-word markers match as a whole token, so "smoke" never matches "smoky"). The repo's dev store went 17 → 5 curated compositions (12 test artifacts removed). `~/.motionforge` was dry-run only, never applied. |
+| P5-3 | **Composition delete action** (`ProjectBinPanel.tsx`) | ✅ | ✅ studio typecheck | ✅ | Every card in `COMPOSITIONS` gained a hover-revealed Trash button (`[data-action="delete-composition"]`, SVG `IconTrash`, never an emoji). The open scene is closed FIRST (`store.setScene(null)` + the boot pointer cleared) and any in-flight auto-save is awaited (bounded to 2 s) so the save cannot resurrect the deleted file. The panel now subscribes to the engine's `scene:updated` / `scene:deleted` events, so a composition created by the MCP appears without a manual refresh. |
+| P5-4 | **Timeline navigator + Fit Timeline** (`TimelinePanel.tsx`) | ✅ | ✅ studio typecheck | ✅ 66/66 | **ROOT CAUSE FOUND:** `pxPerMs = canvasWidth × zoom / durationMs` means `zoom = 1` ALREADY means "the whole duration fills the canvas" — the old fit set `zoom = durationMs / canvasWidth` (e.g. 4.7), i.e. it zoomed IN 4.7× and showed only 1 700 ms of an 8 000 ms composition. That is why `title (2)` (at 5 200 ms) was off-screen with no way to reach it. The fit now targets the **CONTENT EXTENT** (the last clip's end, which may exceed `durationMs`) and resets `panOffset`. A new `#timeline-navigator` strip (minimap + a draggable `#timeline-navigator-handle` viewport) sits under the canvas, with edge fades and per-track off-screen chevrons. |
+| P5-5 | **Left-dock splitter** (`App.tsx`) | ✅ | ✅ studio typecheck | ✅ | A draggable horizontal splitter (`#splitter-left-dock`, `data-orientation="horizontal"`) between `COMPOSITIONS` and `LAYERS`, backed by `state.workspace.leftDockSplit` (0.15 … 0.85, persisted). Keyboard: ArrowUp/ArrowDown = 16 px, Home/End, double-click = reset. The panes are `flex: <split> 1 0` with `min-height: 0`, so the inner lists scroll and the rail never scroll-bounces. |
+| P5-6 | **Layer-row action padding** (`LayerStackPanel.tsx`) | ✅ | ✅ studio typecheck | ✅ | The eye/solo/lock cluster (56 px) was inside a 44 px column and the copy/delete cluster (54 px) inside a 34 px one — both spilled over the row. The grid template was rebalanced to `64px 18px 8px minmax(40px,1fr) minmax(0,56px) 22px`, the actions got `padding-right: 8px`, and the trailing buttons now float inside the row's 10 px right inset (measured: the name starts at x = 158, the actions end at x = 120 — no overlap). |
+| P5-7 | **Inspector: CONTENT & STYLE first** (`EffectControlsPanel.tsx`) | ✅ | ✅ studio typecheck | ✅ | `CONTENT & STYLE` moved to the top (immediately under the layer header), before `TRANSFORM`. Every accordion head is now a real `<button>` with `aria-expanded` / `aria-controls` and `data-section` (`content`/`transform`/`effects`/`timing`/`track`/`composition`/`transitions`); the body carries the `hidden` attribute when collapsed (a genuine hide, not a fold). A `#inspector-collapse-all` toggle collapses/expands everything. The scrub fields are a responsive 2-column grid (`.mf-prop-grid`, 1 column under 300 px), with the keyframe stack dropping below the value in a narrow cell. Every `bindScrub` binding is byte-identical to before (verified by diff). |
+| P5-8 | **Title-bar badge no-wrap** (`TitleBar.tsx`) | ✅ | ✅ studio typecheck | ✅ | `.mf-titlebar-badge` / `.mf-titlebar-pill` / `.mf-titlebar-action` get `white-space: nowrap; flex-shrink: 0;` plus `min-width: max-content` + an ellipsis guard. Measured in the live app: the `"In-Process Ready"` badge is 112 × **18 px** — one line — and the title bar is still 32 px tall. |
+| P5-9 | **Orchestrator integration** | ✅ | ✅ 0 errors (6 workspaces) | ✅ 60/60 + 66/66 | The `timeline.zoom-fit` command now delegates to the timeline's own `applyTimelineFit()` (the old inverted maths was removed), the v3 harness's scrub selector now picks the **Position X row** by label (the inspector's first scrub is the content size since P5-7), and the v4 harness's zoom-fit assertion now checks that the fit shows **every clip** rather than encoding the old inverted semantics. |
+
+---
+
+## Defects found by the Phase-5 audit
+
+| ID | Defect | Evidence | Status |
+| --- | --- | --- | --- |
+| P5-D1 | **The automated harnesses wrote into the user's own workspace.** Both Electron harnesses launched with only `MOTIONFORGE_TEST_MODE=1`, so the engine fell back to `~/.motionforge/scenes` — 12+ test compositions (`Lock Probe`, `Monitor Electron Smoke 1/2/3`, `Pro NLE Verification Dirty`, `UX Verification h0dxso`, …) accumulated in the user's Project Bin. | The dev store held 17 scene files, 12 of them test artifacts. | ✅ FIXED — P5-1 / P5-2. The harnesses are now isolated and the dev store is curated to 5 compositions. |
+| P5-D2 | **The timeline's fit-to-window was INVERTED, so zooming "to fit" zoomed IN 4.7×.** `pxPerMs = canvasWidth × zoom / durationMs` ⇒ `zoom = 1` already means "the whole duration fills the canvas". The fit set `zoom = durationMs / canvasWidth` (4.7 for an 8 s scene in a 1 700 px canvas), showing 1 700 ms of 8 000 ms — and because the pan was never reset, the content stayed off-screen. | `scripts/test-full-ux-and-gizmo.cjs` measured `zoom = 4.8455 = 8000 ms / 1651 px` for a scene whose content ended at 1 316 ms. | ✅ FIXED — P5-4. The fit targets the content extent and zeroes the pan; the v4 harness now asserts `visibleEnd >= contentEnd`. |
+| P5-D3 | **There was no way to see or reach content outside the visible window.** No scrollbar, no minimap, no off-screen indicator. | `screenshots/pro-nle-v4-polished.png`: `title (2)` (V3, at 5 200 ms) was cut off at the right edge. | ✅ FIXED — P5-4. |
+| P5-D4 | **The layer stack's action buttons overflowed their columns** (56 px of buttons in a 44 px column; 54 px in a 34 px column) and sat flush against the panel edge. | Measured: the copy/delete cluster spilled ~14 px past the row. | ✅ FIXED — P5-6. |
+| P5-D5 | **`CONTENT & STYLE` was pushed completely below the fold** by `TRANSFORM` + `VISUAL EFFECTS` + `TIMING`. | `screenshots/pro-nle-v4-polished.png` — the text / font / colour fields were unreachable without a long scroll. | ✅ FIXED — P5-7. |
+| P5-D6 | **The `"In-Process Ready"` badge wrapped onto two lines**, breaking the title bar's height. | The badge rendered as two stacked lines in the pre-P5 screenshot. | ✅ FIXED — P5-8 (112 × 18 px, one line). |
+
+---
+
 ## Regression ledger
 
 | Date | Change | Tests | Typecheck | Build | Electron |
@@ -141,3 +174,4 @@ Legend: `⬜` not started · `🟡` in progress · `✅` complete · `⛔` block
 | 2026-10-20 | v3.0 rebuild — Phase 2 (Studio modular rebuild) + Phase 3 | 400 → 421 passing | 0 errors (6 workspaces) | 0 errors | ✅ 60/60 E2E checks |
 | 2026-10-20 | v4 overhaul — Phase 4 (full-stack UX & gizmo verification) | 421 passing (unchanged — the v4 work is test-side) | 0 errors (6 workspaces) | 0 errors | ✅ 64/65 E2E checks (1 open product defect, V4-1) + the v3.0 harness still 60/60 |
 | 2026-10-20 | v4 defect fixes (V4-1 … V4-5) + the shared-icon fix | 421 → 496 passing | 0 errors (6 workspaces) | 0 errors | ✅ 66/66 v4 checks + the v3.0 harness still 60/60 |
+| 2026-10-21 | v5 Phase 5 — UI polish (test isolation, navigator, left-dock splitter, inspector re-order, badge no-wrap) | 496 passing (unchanged) | 0 errors (6 workspaces) | 0 errors | ✅ 60/60 v3 checks + ✅ 66/66 v4 checks |

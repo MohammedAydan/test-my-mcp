@@ -88,6 +88,25 @@ packages/
 15. **An icon's path is cloned per instance.** A DOM node can only live in one
     place, so a shared path would paint in its last instance and be blank
     everywhere else — `cloneIconPath()` in `NleIcons.tsx` prevents it.
+16. **An automated test NEVER touches the user's workspace.** Every Electron
+    harness runs in its own temp workspace
+    (`MOTIONFORGE_STORAGE_DIR` / `MOTIONFORGE_VAULT_DIR` /
+    `MOTIONFORGE_RENDERS_DIR` / `MOTIONFORGE_DATA_DIR` — see
+    `scripts/lib/test-env.cjs`), created before the launch and removed in a
+    `finally`. The engine honours those variables through
+    `resolveEnginePaths()`, so NO test-only branch is needed in the engine.
+17. **The timeline's "fit" means EVERY clip is visible.** The fit targets the
+    CONTENT EXTENT (the last clip's end, which may exceed `durationMs`) and
+    resets `panOffset`. Note the trap: `pxPerMs = canvasWidth × zoom /
+    durationMs`, so `zoom = 1` ALREADY means "the whole duration fills the
+    canvas" — setting `zoom = durationMs / canvasWidth` zooms IN and hides
+    most of the composition. `applyTimelineFit()` in `TimelinePanel.tsx` is the
+    single authority.
+18. **The inspector shows the KEYFRAMED value, and edits auto-key.** A
+    keyframable field renders the INTERPOLATED value at the playhead (via
+    `interpolateKeyframeValue` in `@motionforge/scene-spec` — the same function
+    the runtime renders with), and committing an edit to a keyframed property
+    writes the keyframe at the playhead (After Effects semantics).
 
 ## Commands
 
@@ -106,6 +125,7 @@ npm run start -w @motionforge/mcp-server          # MCP stdio server
 npm run verify:no-emoji        # static zero-emoji gate over every package source
 npm run verify:pro-nle         # practical verification of the REAL Electron app (60 checks)
 npm run verify:ux-gizmo        # the v4 UX + transform-gizmo harness (66 checks)
+node scripts/cleanup-test-scenes.cjs --dry-run   # list the test scenes in a store
 ```
 
 > The practical verification needs a display. On a headless host:
@@ -300,7 +320,8 @@ Key points for agents working in this repo:
    - Layers are multi-track (`trackIndex`) and the asset vault drags onto both
      the canvas and the timeline.
 3. **Verification is a gate, not a claim:**
-   `npm run typecheck` (6 workspaces), `npm test` (421 tests),
-   `npm run verify:no-emoji`, and `npm run verify:pro-nle` (52 practical
-   checks against the real Electron app) must all be green.
+   `npm run typecheck` (6 workspaces), `npm test` (496 tests),
+   `npm run verify:no-emoji`, `npm run verify:pro-nle` (60 practical checks
+   against the real Electron app) and `npm run verify:ux-gizmo` (66 checks)
+   must all be green.
 

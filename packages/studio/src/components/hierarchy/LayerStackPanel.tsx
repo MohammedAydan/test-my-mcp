@@ -124,7 +124,7 @@ export const LayerStackPanel: Component = () => {
                     if (from !== null) store.reorderLayer(from, index());
                   }}
                 >
-                  <span style={{ display: 'flex', gap: '1px', 'align-items': 'center' }}>
+                  <span class="mf-stack-actions">
                     <button
                       class={`mf-icon-btn mf-stack-toggle ${isVisible(layer) ? 'is-on' : ''}`}
                       title={isVisible(layer) ? 'Hide layer' : 'Show layer'}
@@ -203,30 +203,32 @@ export const LayerStackPanel: Component = () => {
 
                   <span class="mf-row-kind">{layer.type}</span>
 
-                  <span class="mf-stack-track" style={{ display: 'flex', 'align-items': 'center', gap: '2px' }}>
+                  <span class="mf-stack-track">
                     <span>{trackLabel(layer)}</span>
-                    <button
-                      class="mf-icon-btn"
-                      title="Duplicate layer (Ctrl+D)"
-                      aria-label="Duplicate layer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        store.duplicateLayer(layer.id);
-                      }}
-                    >
-                      <IconCopy size={11} />
-                    </button>
-                    <button
-                      class="mf-icon-btn is-danger"
-                      title="Delete layer"
-                      aria-label="Delete layer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        store.deleteLayer(layer.id);
-                      }}
-                    >
-                      <IconTrash size={11} />
-                    </button>
+                    <span class="mf-stack-row-actions">
+                      <button
+                        class="mf-icon-btn mf-stack-action"
+                        title="Duplicate layer (Ctrl+D)"
+                        aria-label="Duplicate layer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          store.duplicateLayer(layer.id);
+                        }}
+                      >
+                        <IconCopy size={11} />
+                      </button>
+                      <button
+                        class="mf-icon-btn is-danger mf-stack-action"
+                        title="Delete layer"
+                        aria-label="Delete layer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          store.deleteLayer(layer.id);
+                        }}
+                      >
+                        <IconTrash size={11} />
+                      </button>
+                    </span>
                   </span>
                 </div>
               );

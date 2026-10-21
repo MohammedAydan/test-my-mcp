@@ -1,4 +1,5 @@
 import { Component, For, Show, createMemo, createSignal } from 'solid-js';
+import type { JSX } from 'solid-js';
 import { interpolateKeyframeValue } from '@motionforge/scene-spec';
 import type { KeyframeProperty, LayerFilterKey } from '@motionforge/scene-spec';
 import { store } from '../../state/store.js';
@@ -7,6 +8,7 @@ import { ScrubInput } from './ScrubInput.js';
 import { PanelContainer } from '../workspace/PanelContainer.js';
 import { layerKindColor } from '../hierarchy/LayerStackPanel.js';
 import {
+  IconChevronDown,
   IconChevronRight,
   IconDiamond,
   IconLock,
@@ -18,32 +20,117 @@ import {
  * Effect Controls — the property inspector.
  *
  * Two modes:
- *  - a LAYER is selected → the transform / effects / timing / content
+ *  - a LAYER is selected → the content / transform / effects / timing
  *    accordions for that layer, with the content section switching on the
  *    layer kind,
  *  - nothing is selected → the COMPOSITION settings.
+ *
+ * The sections are collapsible disclosures: the head is a real button, it
+ * answers Enter and Space, and the body carries the `hidden` attribute when
+ * the section is folded away.
  *
  * Every numeric field is a `<ScrubInput />`: one undo snapshot per gesture,
  * one atomic save per gesture.
  */
 
+/**
+ * The collapsible sections of the inspector.
+ *
+ * Every section is a real disclosure: the head is a `<button>`, it owns the
+ * `aria-expanded` / `aria-controls` pair, and the body carries the matching
+ * `data-section` id so a collapsed section really hides its body.
+ */
+type SectionKey =
+  | 'content'
+  | 'transform'
+  | 'effects'
+  | 'timing'
+  | 'track'
+  | 'composition'
+  | 'transitions';
+
 interface AccordionProps {
+  /** the kebab-case section id — `data-section` on the head AND the body */
+  section: SectionKey;
   title: string;
   open: boolean;
   onToggle: () => void;
+  /** right-aligned one-line summary of the section's key value */
+  summary?: string;
   children: unknown;
 }
 
-const Accordion: Component<AccordionProps> = (props) => (
-  <div class={`mf-accordion ${props.open ? 'is-open' : ''}`}>
-    <button class="mf-accordion-head" onClick={props.onToggle} aria-expanded={props.open}>
-      <IconChevronRight size={11} class="mf-accordion-chevron" />
-      <span>{props.title}</span>
-    </button>
-    <Show when={props.open}>
-      <div class="mf-accordion-body">{props.children as never}</div>
-    </Show>
-  </div>
+const Accordion: Component<AccordionProps> = (props) => {
+  const headId = () => `mf-accordion-head-${props.section}`;
+  const bodyId = () => `mf-accordion-body-${props.section}`;
+
+  return (
+    <div class={`mf-accordion ${props.open ? 'is-open' : ''}`} data-section={props.section}>
+      <div class="mf-accordion-head-row">
+        <button
+          type="button"
+          id={headId()}
+          class="mf-accordion-head"
+          data-section={props.section}
+          aria-expanded={props.open}
+          aria-controls={bodyId()}
+          onClick={props.onToggle}
+          onKeyDown={(e) => {
+            /* the native button already activates on Enter / Space — but the
+               explicit handler keeps the toggle working for synthetic key
+               events too, and `preventDefault` stops the double activation */
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+              e.preventDefault();
+              props.onToggle();
+            }
+          }}
+        >
+          <IconChevronDown size={11} class="mf-accordion-chevron" />
+          <span class="mf-accordion-title">{props.title}</span>
+        </button>
+        <Show when={props.summary}>
+          <span class="mf-accordion-summary" aria-hidden="true">
+            {props.summary}
+          </span>
+        </Show>
+      </div>
+      <div
+        id={bodyId()}
+        class="mf-accordion-body"
+        data-section={props.section}
+        hidden={!props.open}
+      >
+        {props.children as never}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * The inspector's COLLAPSE ALL / EXPAND ALL toggle.
+ *
+ * `aria-pressed` and `data-state` carry the current mode (`collapsed` /
+ * `expanded`); the title explains what the NEXT click will do.
+ */
+interface CollapseAllProps {
+  mode: 'collapsed' | 'expanded';
+  onToggle: () => void;
+}
+
+const CollapseAllButton: Component<CollapseAllProps> = (props) => (
+  <button
+    id="inspector-collapse-all"
+    class="mf-icon-btn mf-collapse-all"
+    type="button"
+    data-action="collapse-all"
+    data-state={props.mode}
+    aria-pressed={props.mode as unknown as JSX.AriaAttributes['aria-pressed']}
+    aria-label="Collapse all sections"
+    title={props.mode === 'collapsed' ? 'Expand all sections' : 'Collapse all sections'}
+    onClick={props.onToggle}
+  >
+    <IconChevronDown size={12} class="mf-collapse-all-icon" />
+  </button>
 );
 
 /* ── keyframe controls ────────────────────────────────────────────────────── */
@@ -163,12 +250,22 @@ const KeyframeControls: Component<KeyframeControlsProps> = (props) => {
 
 export const EffectControlsPanel: Component = () => {
   const state = store.state;
-  const [openSections, setOpenSections] = createSignal({
+
+  /**
+   * The open/closed state of EVERY section.
+   *
+   * Each section owns its own key — a collapsed section really hides its body
+   * (the body carries the `hidden` attribute), so nothing is only "visually"
+   * folded away.
+   */
+  const [openSections, setOpenSections] = createSignal<Record<SectionKey, boolean>>({
+    content: true,
     transform: true,
     effects: true,
     timing: true,
-    content: true,
+    track: false,
     composition: true,
+    transitions: false,
   });
 
   const selectedLayer = createMemo<StudioLayer | null>(() => {
@@ -176,8 +273,35 @@ export const EffectControlsPanel: Component = () => {
     return state.scene.layers.find((l) => l.id === state.selectedLayerId) ?? null;
   });
 
-  const toggle = (key: keyof ReturnType<typeof openSections>) =>
+  const toggle = (key: SectionKey) =>
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  /** The sections the current inspector mode owns. */
+  const activeSections = (): SectionKey[] =>
+    selectedLayer()
+      ? ['content', 'transform', 'effects', 'timing', 'track']
+      : ['composition', 'transitions'];
+
+  /** True when EVERY active section is folded away. */
+  const allCollapsed = createMemo(() =>
+    activeSections().every((key) => !openSections()[key])
+  );
+
+  /** The mode the collapse-all button reflects. */
+  const collapseMode = createMemo<'collapsed' | 'expanded'>(() =>
+    allCollapsed() ? 'collapsed' : 'expanded'
+  );
+
+  /** Collapse everything, or expand everything when it is already collapsed. */
+  const toggleAllSections = () => {
+    const keys = activeSections();
+    const collapse = !allCollapsed();
+    setOpenSections((prev) => {
+      const next = { ...prev };
+      for (const key of keys) next[key] = !collapse;
+      return next;
+    });
+  };
 
   /* ── layer field helpers ─────────────────────────────────────────────── */
 
@@ -340,6 +464,78 @@ export const EffectControlsPanel: Component = () => {
     };
   };
 
+  /* ── section summaries ───────────────────────────────────────────────── */
+
+  /** A compact number for the accordion heads: no trailing `.0`. */
+  const compact = (value: number): string => String(Math.round(value * 10) / 10);
+
+  /** A duration for the accordion heads: `850ms` or `3.0s`. */
+  const compactMs = (value: number): string =>
+    value >= 1000 ? `${(value / 1000).toFixed(1)}s` : `${Math.round(value)}ms`;
+
+  /** `TRANSFORM` — where the layer sits and how big it is. */
+  const transformSummary = createMemo(() => {
+    const layer = selectedLayer();
+    if (!layer) return '';
+    const x = displayValue('xPct', layer.position?.xPct ?? 50);
+    const y = displayValue('yPct', layer.position?.yPct ?? 50);
+    return `X ${compact(x)}% · Y ${compact(y)}%`;
+  });
+
+  /** `VISUAL EFFECTS` — the filter that is actually doing something. */
+  const effectsSummary = createMemo(() => {
+    const layer = selectedLayer();
+    const filters = layer?.filters ?? {};
+    const bits: string[] = [`Blur ${compact(filterValue('blur', 0))}`];
+    if (typeof filters.saturate === 'number' && filters.saturate !== 100) {
+      bits.push(`Sat ${compact(filters.saturate)}`);
+    }
+    if (typeof filters.brightness === 'number' && filters.brightness !== 100) {
+      bits.push(`Brt ${compact(filters.brightness)}`);
+    }
+    return bits.join(' · ');
+  });
+
+  /** `TIMING` — the layer's window on the timeline. */
+  const timingSummary = createMemo(() => {
+    const layer = selectedLayer();
+    if (!layer) return '';
+    const at = layer.at ?? 0;
+    const duration = layer.duration ?? 3000;
+    return `Start ${compactMs(at)} · ${compactMs(duration)}`;
+  });
+
+  /** `CONTENT & STYLE` — the one value that identifies the layer's content. */
+  const contentSummary = createMemo(() => {
+    const layer = selectedLayer();
+    if (!layer) return '';
+    switch (layer.type) {
+      case 'kineticText':
+        return `Size ${compact(layer.sizePx ?? 80)}px`;
+      case 'card': {
+        const title = String(layer.variant?.title ?? '').trim();
+        if (!title) return `${compact((layer.variant?.widthPx as number) ?? 800)}px wide`;
+        return title.length > 22 ? `${title.slice(0, 21)}…` : title;
+      }
+      case 'imageLogo':
+      case 'lottie':
+        return `${compact(layer.widthPx ?? 240)}×${compact(layer.heightPx ?? layer.widthPx ?? 240)}`;
+      case 'background':
+        return String(layer.variant?.variant ?? 'solid');
+      case 'foregroundFX':
+        return String((layer.effects?.[0] as { kind?: string })?.kind ?? 'vignette');
+      default:
+        return '';
+    }
+  });
+
+  /** `TRACK ASSIGNMENT` — the video lane the layer lives on. */
+  const trackSummary = createMemo(() => {
+    const layer = selectedLayer();
+    if (!layer) return '';
+    return `V${(layer.trackIndex ?? 0) + 1}`;
+  });
+
   const setText = (path: string, value: string, label: string) => {
     const id = state.selectedLayerId;
     if (!id) return;
@@ -393,8 +589,16 @@ export const EffectControlsPanel: Component = () => {
       <Show
         when={selectedLayer()}
         fallback={
-          <div class="mf-panel-body is-scrollable" id="composition-settings">
+          <div class="mf-panel-body is-scrollable mf-inspector-scroll" id="composition-settings">
+            <div class="mf-layer-head">
+              <span class="mf-swatch" style={{ background: 'var(--mf-kind-background)' }} />
+              <span class="mf-layer-head-title">{state.scene?.name ?? 'Composition'}</span>
+              <span class="mf-chip">composition</span>
+              <CollapseAllButton mode={collapseMode()} onToggle={toggleAllSections} />
+            </div>
+
             <Accordion
+              section="composition"
               title="Composition"
               open={openSections().composition}
               onToggle={() => toggle('composition')}
@@ -515,7 +719,12 @@ export const EffectControlsPanel: Component = () => {
               </div>
             </Accordion>
 
-            <Accordion title="Seam Transitions" open={false} onToggle={() => toggle('composition')}>
+            <Accordion
+              section="transitions"
+              title="Seam Transitions"
+              open={openSections().transitions}
+              onToggle={() => toggle('transitions')}
+            >
               <div class="mf-empty-hint" style={{ padding: '4px 0' }}>
                 Transitions are authored on the scene timeline. Use the timeline toolbar to
                 add a wipe, glitch, whip pan or morph at the playhead.
@@ -525,7 +734,7 @@ export const EffectControlsPanel: Component = () => {
         }
       >
         {(layer) => (
-          <div class="mf-panel-body is-scrollable" id="layer-properties">
+          <div class="mf-panel-body is-scrollable mf-inspector-scroll" id="layer-properties">
             {/* layer header */}
             <div class="mf-layer-head">
               <span class="mf-swatch" style={{ background: layerKindColor(layer().type) }} />
@@ -542,390 +751,17 @@ export const EffectControlsPanel: Component = () => {
                   <IconLock size={10} />
                 </span>
               </Show>
+              <CollapseAllButton mode={collapseMode()} onToggle={toggleAllSections} />
             </div>
 
-            {/* transform */}
-            <Accordion title="Transform" open={openSections().transform} onToggle={() => toggle('transform')}>
-              <div class="mf-prop-list">
-                <div class="mf-prop-row">
-                  <label class="mf-label">Position X</label>
-                  <KeyframeControls
-                    property="xPct"
-                    value={displayValue('xPct', layer().position?.xPct ?? 50)}
-                    disabled={layer().locked}
-                  />
-                  <ScrubInput
-                    label="X"
-                    unit="%"
-                    value={displayValue('xPct', layer().position?.xPct ?? 50)}
-                    min={-200}
-                    max={200}
-                    step={0.5}
-                    disabled={layer().locked}
-                    {...bindScrub('position.xPct', `xPct of ${layer().id}`, 'xPct')}
-                  />
-                </div>
-
-                <div class="mf-prop-row">
-                  <label class="mf-label">Position Y</label>
-                  <KeyframeControls
-                    property="yPct"
-                    value={displayValue('yPct', layer().position?.yPct ?? 50)}
-                    disabled={layer().locked}
-                  />
-                  <ScrubInput
-                    label="Y"
-                    unit="%"
-                    value={displayValue('yPct', layer().position?.yPct ?? 50)}
-                    min={-200}
-                    max={200}
-                    step={0.5}
-                    disabled={layer().locked}
-                    {...bindScrub('position.yPct', `yPct of ${layer().id}`, 'yPct')}
-                  />
-                </div>
-
-                <div class="mf-prop-row">
-                  <label class="mf-label">Scale</label>
-                  <KeyframeControls
-                    property="scale"
-                    value={displayValue('scale', layer().scale ?? 1)}
-                    disabled={layer().locked}
-                  />
-                  <ScrubInput
-                    label="S"
-                    unit="%"
-                    value={Math.round(displayValue('scale', layer().scale ?? 1) * 100)}
-                    min={5}
-                    max={1000}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindScrub('scale', `scale of ${layer().id}`, 'scale', 100)}
-                  />
-                </div>
-
-                <div class="mf-prop-row">
-                  <label class="mf-label">Rotation</label>
-                  <KeyframeControls
-                    property="rotation"
-                    value={displayValue('rotation', layer().rotation ?? 0)}
-                    disabled={layer().locked}
-                  />
-                  <ScrubInput
-                    label="R"
-                    unit="°"
-                    value={displayValue('rotation', layer().rotation ?? 0)}
-                    min={-3600}
-                    max={3600}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindScrub('rotation', `rotation of ${layer().id}`, 'rotation')}
-                  />
-                </div>
-
-                <div class="mf-prop-row">
-                  <label class="mf-label">Opacity</label>
-                  <KeyframeControls
-                    property="opacity"
-                    value={displayValue('opacity', layer().opacity ?? 1)}
-                    disabled={layer().locked}
-                  />
-                  <ScrubInput
-                    label="O"
-                    unit="%"
-                    value={Math.round(displayValue('opacity', layer().opacity ?? 1) * 100)}
-                    min={0}
-                    max={100}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindScrub('opacity', `opacity of ${layer().id}`, 'opacity', 100)}
-                  />
-                </div>
-              </div>
-
-              <div class="mf-field">
-                <label class="mf-label">Quick Align</label>
-                <div style={{ display: 'flex', gap: '3px' }}>
-                  <For
-                    each={[
-                      { label: 'L', x: 10 },
-                      { label: 'C', x: 50 },
-                      { label: 'R', x: 90 },
-                    ]}
-                  >
-                    {(align) => (
-                      <button
-                        class="mf-btn"
-                        style={{ flex: '1' }}
-                        title={`Align horizontal ${align.label}`}
-                        onClick={() =>
-                          patch(
-                            { position: { xPct: align.x, yPct: layer().position?.yPct ?? 50 } },
-                            `Align ${align.label} of ${layer().id}`
-                          )
-                        }
-                      >
-                        {align.label}
-                      </button>
-                    )}
-                  </For>
-                  <For
-                    each={[
-                      { label: 'T', y: 12 },
-                      { label: 'M', y: 50 },
-                      { label: 'B', y: 88 },
-                    ]}
-                  >
-                    {(align) => (
-                      <button
-                        class="mf-btn"
-                        style={{ flex: '1' }}
-                        title={`Align vertical ${align.label}`}
-                        onClick={() =>
-                          patch(
-                            { position: { xPct: layer().position?.xPct ?? 50, yPct: align.y } },
-                            `Align ${align.label} of ${layer().id}`
-                          )
-                        }
-                      >
-                        {align.label}
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </div>
-
-              <button
-                class="mf-btn"
-                id="inspector-reset-transform"
-                onClick={() =>
-                  patch(
-                    {
-                      position: { xPct: 50, yPct: 50 },
-                      rotation: 0,
-                      scale: 1,
-                      opacity: 1,
-                    },
-                    `Reset transform of ${layer().id}`
-                  )
-                }
-              >
-                <IconReset size={12} />
-                <span>Reset Transform</span>
-              </button>
-            </Accordion>
-
-            {/* visual effects */}
-            <Accordion title="Visual Effects" open={openSections().effects} onToggle={() => toggle('effects')}>
-              <div class="mf-grid-2">
-                <div class="mf-field">
-                  <label class="mf-label">Blur (px)</label>
-                  <ScrubInput
-                    label="Blur"
-                    unit="px"
-                    value={filterValue('blur', 0)}
-                    min={0}
-                    max={60}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindFilter('blur', 0, 'blur')}
-                  />
-                </div>
-
-                <div class="mf-field">
-                  <label class="mf-label">Corner Radius (px)</label>
-                  <ScrubInput
-                    label="Rad"
-                    unit="px"
-                    value={filterValue('cornerRadius', 0)}
-                    min={0}
-                    max={120}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindFilter('cornerRadius', 0, 'corner radius')}
-                  />
-                </div>
-
-                <div class="mf-field">
-                  <label class="mf-label">Drop Shadow Blur (px)</label>
-                  <ScrubInput
-                    label="Shad"
-                    unit="px"
-                    value={filterValue('shadowBlur', 0)}
-                    min={0}
-                    max={80}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindFilter('shadowBlur', 0, 'shadow blur')}
-                  />
-                </div>
-
-                <div class="mf-field">
-                  <label class="mf-label">Shadow Colour</label>
-                  <input
-                    type="color"
-                    class="mf-color-input"
-                    value={String(layer().filters?.shadowColor ?? '#000000')}
-                    disabled={layer().locked}
-                    onChange={(e) => {
-                      const id = state.selectedLayerId;
-                      if (!id) return;
-                      store.setLayerFilter(id, 'shadowColor', e.currentTarget.value);
-                      void store.executeSave();
-                    }}
-                  />
-                </div>
-
-                <div class="mf-field">
-                  <label class="mf-label">Brightness (%)</label>
-                  <ScrubInput
-                    label="Brt"
-                    unit="%"
-                    value={filterValue('brightness', 100)}
-                    min={0}
-                    max={200}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindFilter('brightness', 100, 'brightness')}
-                  />
-                </div>
-
-                <div class="mf-field">
-                  <label class="mf-label">Contrast (%)</label>
-                  <ScrubInput
-                    label="Con"
-                    unit="%"
-                    value={filterValue('contrast', 100)}
-                    min={0}
-                    max={200}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindFilter('contrast', 100, 'contrast')}
-                  />
-                </div>
-
-                <div class="mf-field">
-                  <label class="mf-label">Saturate (%)</label>
-                  <ScrubInput
-                    label="Sat"
-                    unit="%"
-                    value={filterValue('saturate', 100)}
-                    min={0}
-                    max={200}
-                    step={1}
-                    disabled={layer().locked}
-                    {...bindFilter('saturate', 100, 'saturate')}
-                  />
-                </div>
-
-                <div class="mf-field">
-                  <label class="mf-label">Blend Mode</label>
-                  <select
-                    class="mf-select"
-                    value={layer().blendMode ?? 'normal'}
-                    disabled={layer().locked}
-                    onChange={(e) =>
-                      patch(
-                        { blendMode: e.currentTarget.value },
-                        `Set blend mode of ${layer().id}`
-                      )
-                    }
-                  >
-                    <option value="normal">Normal</option>
-                    <option value="multiply">Multiply</option>
-                    <option value="screen">Screen</option>
-                    <option value="overlay">Overlay</option>
-                    <option value="plus-lighter">Plus Lighter</option>
-                  </select>
-                </div>
-              </div>
-            </Accordion>
-
-            {/* timing */}
-            <Accordion title="Timing" open={openSections().timing} onToggle={() => toggle('timing')}>
-              <div class="mf-grid-2">
-                <div class="mf-field">
-                  <label class="mf-label">Start</label>
-                  <ScrubInput
-                    label="At"
-                    unit="ms"
-                    value={layer().at ?? 0}
-                    min={0}
-                    step={100}
-                    disabled={layer().locked}
-                    {...bindScrub('at', `at of ${layer().id}`)}
-                  />
-                </div>
-                <div class="mf-field">
-                  <label class="mf-label">Duration</label>
-                  <ScrubInput
-                    label="Dur"
-                    unit="ms"
-                    value={layer().duration ?? 3000}
-                    min={100}
-                    step={100}
-                    disabled={layer().locked}
-                    {...bindScrub('duration', `duration of ${layer().id}`)}
-                  />
-                </div>
-              </div>
-
-              <div class="mf-field">
-                <label class="mf-label">Out point</label>
-                <ScrubInput
-                  label="Out"
-                  unit="ms"
-                  value={(layer().at ?? 0) + (layer().duration ?? 3000)}
-                  min={0}
-                  step={100}
-                  disabled={layer().locked}
-                  onScrubStart={() => store.pushHistory(`Scrub out of ${layer().id}`)}
-                  onChange={(val) =>
-                    store.patchLayer(layer().id, { duration: Math.max(100, val - (layer().at ?? 0)) })
-                  }
-                  onCommit={() => void store.executeSave()}
-                />
-              </div>
-
-              <div class="mf-field">
-                <label class="mf-label">Entrance</label>
-                <select
-                  class="mf-select"
-                  value={presetName('entrance')}
-                  disabled={layer().locked}
-                  onChange={(e) => setPreset('entrance', e.currentTarget.value)}
-                >
-                  <option value="">None</option>
-                  <For each={presetList('entrance')}>{(p) => <option value={p}>{p}</option>}</For>
-                </select>
-              </div>
-              <div class="mf-field">
-                <label class="mf-label">Emphasis</label>
-                <select
-                  class="mf-select"
-                  value={presetName('emphasis')}
-                  disabled={layer().locked}
-                  onChange={(e) => setPreset('emphasis', e.currentTarget.value)}
-                >
-                  <For each={presetList('emphasis')}>{(p) => <option value={p}>{p}</option>}</For>
-                </select>
-              </div>
-              <div class="mf-field">
-                <label class="mf-label">Exit</label>
-                <select
-                  class="mf-select"
-                  value={presetName('exit')}
-                  disabled={layer().locked}
-                  onChange={(e) => setPreset('exit', e.currentTarget.value)}
-                >
-                  <option value="">None</option>
-                  <For each={presetList('exit')}>{(p) => <option value={p}>{p}</option>}</For>
-                </select>
-              </div>
-            </Accordion>
-
             {/* content */}
-            <Accordion title="Content & Style" open={openSections().content} onToggle={() => toggle('content')}>
+            <Accordion
+              section="content"
+              title="Content & Style"
+              open={openSections().content}
+              onToggle={() => toggle('content')}
+              summary={contentSummary()}
+            >
               <Show when={layer().type === 'kineticText'}>
                 <div class="mf-field">
                   <label class="mf-label">Text</label>
@@ -941,6 +777,7 @@ export const EffectControlsPanel: Component = () => {
                   <div class="mf-field">
                     <label class="mf-label">Size</label>
                     <ScrubInput
+                      id="inspector-scrub-sizePx"
                       label="Px"
                       unit="px"
                       value={layer().sizePx ?? 80}
@@ -1162,8 +999,418 @@ export const EffectControlsPanel: Component = () => {
               </Show>
             </Accordion>
 
+
+            {/* transform */}
+            <Accordion
+              section="transform"
+              title="Transform"
+              open={openSections().transform}
+              onToggle={() => toggle('transform')}
+              summary={transformSummary()}
+            >
+              <div class="mf-prop-grid">
+                <div class="mf-prop-row">
+                  <label class="mf-label">Position X</label>
+                  <KeyframeControls
+                    property="xPct"
+                    value={displayValue('xPct', layer().position?.xPct ?? 50)}
+                    disabled={layer().locked}
+                  />
+                  <ScrubInput
+                    id="inspector-scrub-xPct"
+                    label="X"
+                    unit="%"
+                    value={displayValue('xPct', layer().position?.xPct ?? 50)}
+                    min={-200}
+                    max={200}
+                    step={0.5}
+                    disabled={layer().locked}
+                    {...bindScrub('position.xPct', `xPct of ${layer().id}`, 'xPct')}
+                  />
+                </div>
+
+                <div class="mf-prop-row">
+                  <label class="mf-label">Position Y</label>
+                  <KeyframeControls
+                    property="yPct"
+                    value={displayValue('yPct', layer().position?.yPct ?? 50)}
+                    disabled={layer().locked}
+                  />
+                  <ScrubInput
+                    id="inspector-scrub-yPct"
+                    label="Y"
+                    unit="%"
+                    value={displayValue('yPct', layer().position?.yPct ?? 50)}
+                    min={-200}
+                    max={200}
+                    step={0.5}
+                    disabled={layer().locked}
+                    {...bindScrub('position.yPct', `yPct of ${layer().id}`, 'yPct')}
+                  />
+                </div>
+
+                <div class="mf-prop-row">
+                  <label class="mf-label">Scale</label>
+                  <KeyframeControls
+                    property="scale"
+                    value={displayValue('scale', layer().scale ?? 1)}
+                    disabled={layer().locked}
+                  />
+                  <ScrubInput
+                    id="inspector-scrub-scale"
+                    label="S"
+                    unit="%"
+                    value={Math.round(displayValue('scale', layer().scale ?? 1) * 100)}
+                    min={5}
+                    max={1000}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindScrub('scale', `scale of ${layer().id}`, 'scale', 100)}
+                  />
+                </div>
+
+                <div class="mf-prop-row">
+                  <label class="mf-label">Rotation</label>
+                  <KeyframeControls
+                    property="rotation"
+                    value={displayValue('rotation', layer().rotation ?? 0)}
+                    disabled={layer().locked}
+                  />
+                  <ScrubInput
+                    id="inspector-scrub-rotation"
+                    label="R"
+                    unit="°"
+                    value={displayValue('rotation', layer().rotation ?? 0)}
+                    min={-3600}
+                    max={3600}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindScrub('rotation', `rotation of ${layer().id}`, 'rotation')}
+                  />
+                </div>
+
+                <div class="mf-prop-row">
+                  <label class="mf-label">Opacity</label>
+                  <KeyframeControls
+                    property="opacity"
+                    value={displayValue('opacity', layer().opacity ?? 1)}
+                    disabled={layer().locked}
+                  />
+                  <ScrubInput
+                    id="inspector-scrub-opacity"
+                    label="O"
+                    unit="%"
+                    value={Math.round(displayValue('opacity', layer().opacity ?? 1) * 100)}
+                    min={0}
+                    max={100}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindScrub('opacity', `opacity of ${layer().id}`, 'opacity', 100)}
+                  />
+                </div>
+              </div>
+
+              <div class="mf-field">
+                <label class="mf-label">Quick Align</label>
+                <div style={{ display: 'flex', gap: '3px' }}>
+                  <For
+                    each={[
+                      { label: 'L', x: 10 },
+                      { label: 'C', x: 50 },
+                      { label: 'R', x: 90 },
+                    ]}
+                  >
+                    {(align) => (
+                      <button
+                        class="mf-btn"
+                        style={{ flex: '1' }}
+                        title={`Align horizontal ${align.label}`}
+                        onClick={() =>
+                          patch(
+                            { position: { xPct: align.x, yPct: layer().position?.yPct ?? 50 } },
+                            `Align ${align.label} of ${layer().id}`
+                          )
+                        }
+                      >
+                        {align.label}
+                      </button>
+                    )}
+                  </For>
+                  <For
+                    each={[
+                      { label: 'T', y: 12 },
+                      { label: 'M', y: 50 },
+                      { label: 'B', y: 88 },
+                    ]}
+                  >
+                    {(align) => (
+                      <button
+                        class="mf-btn"
+                        style={{ flex: '1' }}
+                        title={`Align vertical ${align.label}`}
+                        onClick={() =>
+                          patch(
+                            { position: { xPct: layer().position?.xPct ?? 50, yPct: align.y } },
+                            `Align ${align.label} of ${layer().id}`
+                          )
+                        }
+                      >
+                        {align.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </div>
+
+              <button
+                class="mf-btn"
+                id="inspector-reset-transform"
+                onClick={() =>
+                  patch(
+                    {
+                      position: { xPct: 50, yPct: 50 },
+                      rotation: 0,
+                      scale: 1,
+                      opacity: 1,
+                    },
+                    `Reset transform of ${layer().id}`
+                  )
+                }
+              >
+                <IconReset size={12} />
+                <span>Reset Transform</span>
+              </button>
+            </Accordion>
+
+            {/* visual effects */}
+            <Accordion
+              section="effects"
+              title="Visual Effects"
+              open={openSections().effects}
+              onToggle={() => toggle('effects')}
+              summary={effectsSummary()}
+            >
+              <div class="mf-prop-grid">
+                <div class="mf-field">
+                  <label class="mf-label">Blur (px)</label>
+                  <ScrubInput
+                    label="Blur"
+                    unit="px"
+                    value={filterValue('blur', 0)}
+                    min={0}
+                    max={60}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('blur', 0, 'blur')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Corner Radius (px)</label>
+                  <ScrubInput
+                    label="Rad"
+                    unit="px"
+                    value={filterValue('cornerRadius', 0)}
+                    min={0}
+                    max={120}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('cornerRadius', 0, 'corner radius')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Brightness (%)</label>
+                  <ScrubInput
+                    label="Brt"
+                    unit="%"
+                    value={filterValue('brightness', 100)}
+                    min={0}
+                    max={200}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('brightness', 100, 'brightness')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Contrast (%)</label>
+                  <ScrubInput
+                    label="Con"
+                    unit="%"
+                    value={filterValue('contrast', 100)}
+                    min={0}
+                    max={200}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('contrast', 100, 'contrast')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Saturate (%)</label>
+                  <ScrubInput
+                    label="Sat"
+                    unit="%"
+                    value={filterValue('saturate', 100)}
+                    min={0}
+                    max={200}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('saturate', 100, 'saturate')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Drop Shadow Blur (px)</label>
+                  <ScrubInput
+                    label="Shad"
+                    unit="px"
+                    value={filterValue('shadowBlur', 0)}
+                    min={0}
+                    max={80}
+                    step={1}
+                    disabled={layer().locked}
+                    {...bindFilter('shadowBlur', 0, 'shadow blur')}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Shadow Colour</label>
+                  <input
+                    type="color"
+                    class="mf-color-input"
+                    value={String(layer().filters?.shadowColor ?? '#000000')}
+                    disabled={layer().locked}
+                    onChange={(e) => {
+                      const id = state.selectedLayerId;
+                      if (!id) return;
+                      store.setLayerFilter(id, 'shadowColor', e.currentTarget.value);
+                      void store.executeSave();
+                    }}
+                  />
+                </div>
+
+                <div class="mf-field">
+                  <label class="mf-label">Blend Mode</label>
+                  <select
+                    class="mf-select"
+                    value={layer().blendMode ?? 'normal'}
+                    disabled={layer().locked}
+                    onChange={(e) =>
+                      patch(
+                        { blendMode: e.currentTarget.value },
+                        `Set blend mode of ${layer().id}`
+                      )
+                    }
+                  >
+                    <option value="normal">Normal</option>
+                    <option value="multiply">Multiply</option>
+                    <option value="screen">Screen</option>
+                    <option value="overlay">Overlay</option>
+                    <option value="plus-lighter">Plus Lighter</option>
+                  </select>
+                </div>
+              </div>
+            </Accordion>
+
+            {/* timing */}
+            <Accordion
+              section="timing"
+              title="Timing"
+              open={openSections().timing}
+              onToggle={() => toggle('timing')}
+              summary={timingSummary()}
+            >
+              <div class="mf-prop-grid">
+                <div class="mf-field">
+                  <label class="mf-label">Start</label>
+                  <ScrubInput
+                    label="At"
+                    unit="ms"
+                    value={layer().at ?? 0}
+                    min={0}
+                    step={100}
+                    disabled={layer().locked}
+                    {...bindScrub('at', `at of ${layer().id}`)}
+                  />
+                </div>
+                <div class="mf-field">
+                  <label class="mf-label">Duration</label>
+                  <ScrubInput
+                    label="Dur"
+                    unit="ms"
+                    value={layer().duration ?? 3000}
+                    min={100}
+                    step={100}
+                    disabled={layer().locked}
+                    {...bindScrub('duration', `duration of ${layer().id}`)}
+                  />
+                </div>
+              </div>
+
+              <div class="mf-field">
+                <label class="mf-label">Out point</label>
+                <ScrubInput
+                  label="Out"
+                  unit="ms"
+                  value={(layer().at ?? 0) + (layer().duration ?? 3000)}
+                  min={0}
+                  step={100}
+                  disabled={layer().locked}
+                  onScrubStart={() => store.pushHistory(`Scrub out of ${layer().id}`)}
+                  onChange={(val) =>
+                    store.patchLayer(layer().id, { duration: Math.max(100, val - (layer().at ?? 0)) })
+                  }
+                  onCommit={() => void store.executeSave()}
+                />
+              </div>
+
+              <div class="mf-field">
+                <label class="mf-label">Entrance</label>
+                <select
+                  class="mf-select"
+                  value={presetName('entrance')}
+                  disabled={layer().locked}
+                  onChange={(e) => setPreset('entrance', e.currentTarget.value)}
+                >
+                  <option value="">None</option>
+                  <For each={presetList('entrance')}>{(p) => <option value={p}>{p}</option>}</For>
+                </select>
+              </div>
+              <div class="mf-field">
+                <label class="mf-label">Emphasis</label>
+                <select
+                  class="mf-select"
+                  value={presetName('emphasis')}
+                  disabled={layer().locked}
+                  onChange={(e) => setPreset('emphasis', e.currentTarget.value)}
+                >
+                  <For each={presetList('emphasis')}>{(p) => <option value={p}>{p}</option>}</For>
+                </select>
+              </div>
+              <div class="mf-field">
+                <label class="mf-label">Exit</label>
+                <select
+                  class="mf-select"
+                  value={presetName('exit')}
+                  disabled={layer().locked}
+                  onChange={(e) => setPreset('exit', e.currentTarget.value)}
+                >
+                  <option value="">None</option>
+                  <For each={presetList('exit')}>{(p) => <option value={p}>{p}</option>}</For>
+                </select>
+              </div>
+            </Accordion>
+
             {/* track lane */}
-            <Accordion title="Track Assignment" open={false} onToggle={() => toggle('timing')}>
+            <Accordion
+              section="track"
+              title="Track Assignment"
+              open={openSections().track}
+              onToggle={() => toggle('track')}
+              summary={trackSummary()}
+            >
               <div class="mf-field">
                 <label class="mf-label">Video Track</label>
                 <select

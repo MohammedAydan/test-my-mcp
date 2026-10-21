@@ -1,0 +1,211 @@
+/*
+   inspector.css — owned by the Phase-1 polish workstream.
+   Imported AFTER components.css so these rules win on equal specificity.
+
+   The inspector is the Effect Controls panel: a stack of collapsible
+   sections (CONTENT & STYLE, TRANSFORM, VISUAL EFFECTS, TIMING, …) above a
+   two-column grid of numeric properties.
+*/
+
+/* ==========================================================================
+   The inspector body — the CONTAINER QUERY ROOT
+   --------------------------------------------------------------------------
+   `container-type: inline-size` turns the panel body into the query
+   container the property grid measures itself against: two columns while the
+   panel is at least 300px wide, one column below that.
+   ========================================================================== */
+.mf-inspector-scroll {
+  container-type: inline-size;
+}
+
+/* ==========================================================================
+   The layer header strip
+   ========================================================================== */
+.mf-layer-head > .mf-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+.mf-layer-head > .mf-chip {
+  flex: none;
+}
+.mf-layer-head-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mf-text-sm);
+  font-weight: 600;
+  color: var(--mf-text-1);
+}
+
+/* ==========================================================================
+   The COLLAPSE ALL / EXPAND ALL toggle
+   --------------------------------------------------------------------------
+   The chevron points DOWN when everything is collapsed (the next click
+   expands) and UP when the sections are open (the next click collapses).
+   ========================================================================== */
+.mf-collapse-all {
+  margin-left: auto;
+  flex: none;
+  color: var(--mf-text-3);
+}
+.mf-collapse-all:hover {
+  color: var(--mf-text-1);
+  background: var(--mf-bg-hover);
+}
+.mf-collapse-all[data-state='expanded'] {
+  color: var(--mf-accent-text);
+}
+.mf-collapse-all-icon {
+  transition: transform var(--mf-dur-ui) var(--mf-ease);
+}
+.mf-collapse-all[data-state='expanded'] .mf-collapse-all-icon {
+  transform: rotate(180deg);
+}
+
+/* ==========================================================================
+   The accordion sections
+   --------------------------------------------------------------------------
+   The head is a real button: it toggles on a single click, it answers
+   Enter and Space, and it owns the `aria-expanded` / `aria-controls` pair.
+   ========================================================================== */
+.mf-accordion-head-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  background: var(--mf-bg-header);
+}
+.mf-accordion-head-row:hover {
+  background: var(--mf-bg-hover);
+}
+.mf-accordion-head {
+  flex: 1 1 0;
+  min-width: 0;
+  width: auto;
+  height: 24px;
+  padding: 0 8px;
+  gap: 6px;
+  font-family: var(--mf-font-ui);
+  font-size: var(--mf-text-sm);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  text-align: left;
+  color: var(--mf-text-2);
+  background: transparent;
+}
+.mf-accordion-head:hover {
+  color: var(--mf-text-1);
+  background: transparent;
+}
+.mf-accordion-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mf-font-ui);
+}
+/* the right-aligned summary — the section's key value at a glance */
+.mf-accordion-summary {
+  flex: 0 1 auto;
+  max-width: 48%;
+  padding-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mf-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--mf-text-xs);
+  color: var(--mf-text-3);
+}
+.mf-accordion-chevron {
+  flex: none;
+  color: var(--mf-text-3);
+  transition: transform var(--mf-dur-ui) var(--mf-ease);
+}
+/* open → the chevron flips 180° and points UP */
+.mf-accordion.is-open .mf-accordion-chevron {
+  transform: rotate(180deg);
+}
+/* a collapsed section REALLY hides its body */
+.mf-accordion-body[hidden] {
+  display: none;
+}
+
+/* ==========================================================================
+   The property grid — two related properties side by side
+   --------------------------------------------------------------------------
+   Position X | Position Y, Scale | Rotation, Blur | Corner Radius, …
+   ========================================================================== */
+.mf-prop-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 8px;
+}
+
+/* below 300px of panel width the pairs break into a single column */
+@container (max-width: 300px) {
+  .mf-prop-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* a cell: the label, the keyframe cluster and the scrub field */
+.mf-prop-grid > .mf-prop-row {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'label kf'
+    'scrub scrub';
+  align-items: center;
+  gap: 3px 6px;
+  min-width: 0;
+}
+.mf-prop-grid > .mf-prop-row > .mf-label {
+  grid-area: label;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mf-prop-grid > .mf-prop-row > .mf-kf-controls {
+  grid-area: kf;
+  justify-self: end;
+}
+.mf-prop-grid > .mf-prop-row > .mf-scrub {
+  grid-area: scrub;
+  min-width: 0;
+}
+
+/* the field labels of a grid cell may wrap instead of being cut off */
+.mf-prop-grid > .mf-field > .mf-label {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.25;
+}
+
+/* too narrow for the stopwatch cluster beside the label → stack it BELOW
+   the value instead of letting it overflow the cell */
+@container (max-width: 110px) {
+  .mf-prop-grid > .mf-prop-row > .mf-label {
+    grid-area: label;
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  .mf-prop-grid > .mf-prop-row > .mf-scrub {
+    grid-area: scrub;
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .mf-prop-grid > .mf-prop-row > .mf-kf-controls {
+    grid-area: auto;
+    grid-column: 1 / -1;
+    grid-row: 3;
+    justify-self: start;
+  }
+}

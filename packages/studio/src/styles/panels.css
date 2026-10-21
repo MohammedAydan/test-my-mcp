@@ -1,0 +1,159 @@
+/*
+   panels.css — owned by the Phase-1 polish workstream.
+   Imported AFTER components.css so these rules win on equal specificity.
+*/
+
+/* ==========================================================================
+   1. The left dock — Project Bin over Layer Stack
+   --------------------------------------------------------------------------
+   The two panes of the left rail are split by a FRACTION of the rail's
+   height (`workspace.leftDockSplit`), so the split survives a rail resize
+   and a restart — and the layer stack is never squeezed into 140px again.
+
+   The panes themselves never scroll: the inner lists do.
+   ========================================================================== */
+.mf-dock-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.mf-dock-pane > .mf-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* the separator between the two panes — a 6px hit area */
+.mf-rail-left > .mf-splitter.mf-dock-splitter {
+  flex: 0 0 auto;
+  height: 6px;
+  cursor: row-resize;
+  background: transparent;
+}
+/* the grab area is exactly the 6px element (no ::after bleed) */
+.mf-dock-splitter::after {
+  content: none;
+}
+/* the visible 1px line */
+.mf-dock-splitter::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: var(--mf-border);
+  transition: background 120ms ease-out, box-shadow 120ms ease-out;
+}
+.mf-rail-left > .mf-splitter.mf-dock-splitter:hover,
+.mf-rail-left > .mf-splitter.mf-dock-splitter.is-active,
+.mf-rail-left > .mf-splitter.mf-dock-splitter:focus-visible {
+  background: transparent;
+}
+.mf-rail-left > .mf-splitter.mf-dock-splitter:hover::before,
+.mf-rail-left > .mf-splitter.mf-dock-splitter.is-active::before,
+.mf-rail-left > .mf-splitter.mf-dock-splitter:focus-visible::before {
+  background: var(--mf-accent);
+  box-shadow: 0 0 8px rgba(45, 140, 235, 0.55);
+}
+.mf-dock-splitter:focus-visible {
+  outline: 1px solid var(--mf-accent);
+  outline-offset: -1px;
+}
+
+/* ==========================================================================
+   2. The layer stack table
+   --------------------------------------------------------------------------
+   The columns are re-balanced: the action clusters used to overflow their
+   columns, which pushed the copy / delete buttons onto the panel edge and
+   the eye / solo / lock cluster over the layer name.
+   ========================================================================== */
+.mf-stack-head,
+.mf-stack-row {
+  grid-template-columns: 64px 18px 8px minmax(40px, 1fr) minmax(0, 56px) 22px;
+}
+/* the head's columns line up with the row's (the row carries a 4px inset) */
+.mf-stack-head {
+  padding: 0 10px;
+}
+
+/* the eye / solo / lock cluster — 8px of breathing room on the right */
+.mf-stack-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  padding-right: 8px;
+  transition: opacity 120ms ease-out;
+}
+
+/* the trailing cluster: the track lane plus the row actions */
+.mf-stack-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+
+/*
+   The duplicate / delete actions float over the kind label while the row is
+   hovered, so the table keeps its width and the layer name keeps its room.
+   They fade in with the same 120ms opacity transition the project bin uses.
+*/
+.mf-stack-row-actions {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.mf-stack-action {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.mf-stack-row:hover .mf-stack-action,
+.mf-stack-row:focus-within .mf-stack-action,
+.mf-stack-action:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* the kind label yields to the row actions */
+.mf-stack-row .mf-row-kind {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity 120ms ease-out;
+}
+.mf-stack-row:hover .mf-row-kind,
+.mf-stack-row:focus-within .mf-row-kind {
+  opacity: 0;
+}
+
+/* ==========================================================================
+   3. The title bar — nothing wraps
+   --------------------------------------------------------------------------
+   The engine badge used to wrap onto a second line, which broke the title
+   bar's height. Every badge, pill and chip stays on ONE line.
+   ========================================================================== */
+.mf-titlebar-badge,
+.mf-titlebar-pill,
+.mf-titlebar-action {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* the badge never collapses to nothing — it ellipsizes instead */
+.mf-titlebar-badge {
+  min-width: max-content;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

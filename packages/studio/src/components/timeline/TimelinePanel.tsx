@@ -15,6 +15,7 @@ import { formatTimecode } from '../../state/timecode.js';
 import { AudioVuMeter } from './AudioVuMeter.js';
 import { readAssetPayload } from '../../services/drag-payload.js';
 import {
+  IconChevronRight,
   IconEye,
   IconEyeOff,
   IconFit,
@@ -91,6 +92,120 @@ const KIND_TOKENS: Record<string, string> = {
   foregroundFX: '--mf-kind-foregroundFX',
 };
 
+/** The rendered length of every built-in SFX cue, in milliseconds. */
+const SFX_DURATIONS: Record<string, number> = {
+  whoosh: 1200,
+  riser: 3000,
+  shimmer: 2200,
+  pop: 500,
+  subImpact: 1800,
+  click: 300,
+};
+
+/** The breathing room the fit leaves around the content, in CSS pixels. */
+const FIT_MARGIN_PX = 16;
+
+/** The height of the ruler band inside the navigator strip, in CSS pixels. */
+const NAV_RULER_H = 8;
+
+/** The zoom + pan that shows EVERY clip of the composition. */
+export interface TimelineFit {
+  /** the zoom level that shows the whole content */
+  zoom: number;
+  /** the horizontal pan that shows the whole content */
+  panOffset: number;
+  /** the first millisecond of the content */
+  contentStart: number;
+  /** the last millisecond of the content */
+  contentEnd: number;
+  /** the breathing room the fit leaves, in CSS pixels */
+  marginPx: number;
+}
+
+/**
+ * The content extent of the composition — EVERY clip on EVERY lane.
+ *
+ * The extent is deliberately NOT the scene duration: a composition is often
+ * longer than its content, and a clip may even run past the nominal
+ * duration. The fit uses the real extent, so no clip can be left outside the
+ * view, and the audio cues count too — they live on the audio lane.
+ */
+export function computeTimelineContentExtent(): { minAt: number; maxEnd: number } {
+  const scene = store.state.scene;
+  const duration = scene?.durationMs ?? 0;
+  let minAt = Number.POSITIVE_INFINITY;
+  let maxEnd = Number.NEGATIVE_INFINITY;
+
+  for (const layer of scene?.layers ?? []) {
+    const start = layer.at ?? 0;
+    const length = layer.duration ?? Math.max(0, duration - start);
+    if (start < minAt) minAt = start;
+    if (start + length > maxEnd) maxEnd = start + length;
+  }
+  for (const cue of scene?.audio?.cues ?? []) {
+    const length = SFX_DURATIONS[cue.sfx] ?? 1500;
+    if (cue.at < minAt) minAt = cue.at;
+    if (cue.at + length > maxEnd) maxEnd = cue.at + length;
+  }
+
+  if (!Number.isFinite(minAt) || !Number.isFinite(maxEnd) || maxEnd <= minAt) {
+    return { minAt: 0, maxEnd: Math.max(1, duration) };
+  }
+  return { minAt, maxEnd };
+}
+
+/**
+ * The zoom + pan that shows EVERY clip, with a small margin.
+ *
+ * The main canvas maps time to pixels with
+ *
+ *   `pxPerMs = (canvasWidth * zoom) / durationMs`
+ *
+ * and draws a clip at `x = ms * pxPerMs + panOffset`.
+ *
+ * The fit RESETS the pan to 0 — the view starts at the beginning of the
+ * composition again, instead of staying scrolled away from it — so the
+ * CONTENT END decides the scale:
+ *
+ *   the last millisecond of the content must land `marginPx` before the
+ *   right edge, so no clip is flush against it:
+ *
+ *       x(maxEnd) = maxEnd * pxPerMs + 0 = width - marginPx
+ *       pxPerMs   = (width - marginPx) / maxEnd
+ *       zoom      = pxPerMs * durationMs / width
+ *
+ * The content START is naturally inset by `minAt * pxPerMs`, so a clip that
+ * begins later in the composition keeps its leading margin as well.
+ */
+export function computeTimelineFit(
+  width: number,
+  durationMs: number,
+  extent: { minAt: number; maxEnd: number }
+): TimelineFit | null {
+  if (!(width > 0) || !(durationMs > 0)) return null;
+  const minAt = Math.max(0, extent.minAt);
+  const maxEnd = Math.max(minAt + 1, extent.maxEnd);
+  const marginPx = Math.min(FIT_MARGIN_PX, Math.max(0, (width - 40) / 4));
+  const pxPerMs = (width - marginPx) / maxEnd;
+  const zoom = Math.max(0.2, Math.min(12, (pxPerMs * durationMs) / width));
+  return { zoom, panOffset: 0, contentStart: minAt, contentEnd: maxEnd, marginPx };
+}
+
+/**
+ * Fit the timeline to every clip — the entry point the `timeline.zoom-fit`
+ * command calls. It reads the live canvas width, so it always fits the view
+ * the user is actually looking at.
+ */
+export function applyTimelineFit(): boolean {
+  const width = document.querySelector<HTMLCanvasElement>('#timeline-canvas')?.clientWidth ?? 0;
+  const duration = store.state.scene?.durationMs ?? 0;
+  const fit = computeTimelineFit(width, duration, computeTimelineContentExtent());
+  if (!fit) return false;
+  store.setZoom(fit.zoom);
+  store.setPanOffset(fit.panOffset);
+  return true;
+}
+
 /** One row of the timeline. */
 interface TimelineLane {
   /** the `trackIndex` this row maps to */
@@ -152,10 +267,18 @@ export const TimelinePanel: Component = () => {
   let canvasRef: HTMLCanvasElement | undefined;
   let ctx: CanvasRenderingContext2D | null = null;
 
+  /** the navigator strip (the minimap under the timeline canvas) */
+  let navRef: HTMLDivElement | undefined;
+  let navCanvasRef: HTMLCanvasElement | undefined;
+  let navHandleRef: HTMLDivElement | undefined;
+  let navCtx: CanvasRenderingContext2D | null = null;
+
   const [metrics, setMetrics] = createSignal<TimelineMetrics>(readMetrics());
   const [palette, setPalette] = createSignal<TimelinePalette>(readPalette());
   const [canvasWidth, setCanvasWidth] = createSignal(800);
   const [canvasHeight, setCanvasHeight] = createSignal(240);
+  const [navWidth, setNavWidth] = createSignal(0);
+  const [navHeight, setNavHeight] = createSignal(0);
 
   const [isDragOver, setIsDragOver] = createSignal(false);
   const [dropTime, setDropTime] = createSignal<number | null>(null);
@@ -181,6 +304,10 @@ export const TimelinePanel: Component = () => {
   let tooltip: { x: number; y: number; text: string } | null = null;
   let panStartX = 0;
   let initialPan = 0;
+  /** the navigator gesture — `handle` drags the viewport, `scrub` jumps to a time */
+  let navDragMode: 'handle' | 'scrub' | null = null;
+  let navDragStartX = 0;
+  let navDragStartPan = 0;
 
   const totalDuration = () => state.scene?.durationMs ?? 10000;
 
@@ -333,16 +460,8 @@ export const TimelinePanel: Component = () => {
   const audioCueBoxes = createMemo<CueBox[]>(() => {
     const audioLane = lanes().find((lane) => lane.kind === 'audio');
     if (!audioLane) return [];
-    const durations: Record<string, number> = {
-      whoosh: 1200,
-      riser: 3000,
-      shimmer: 2200,
-      pop: 500,
-      subImpact: 1800,
-      click: 300,
-    };
     return (state.scene?.audio?.cues ?? []).map((cue) => {
-      const duration = durations[cue.sfx] ?? 1500;
+      const duration = SFX_DURATIONS[cue.sfx] ?? 1500;
       const x1 = timeToX(cue.at);
       const x2 = timeToX(cue.at + duration);
       return {
@@ -431,6 +550,236 @@ export const TimelinePanel: Component = () => {
 
   const kindColor = (type: string): string =>
     kindColors()[type] ?? resolveCssColor('var(--mf-warning)', '#f59e0b');
+
+  /* ── the visible window ───────────────────────────────────────────────── */
+
+  /**
+   * The time window the main canvas currently shows.
+   *
+   * It is the SAME maths the painter uses, so the navigator's viewport
+   * rectangle and the canvas can never disagree:
+   *
+   *   `pxPerMs    = (canvasWidth * zoom) / durationMs`
+   *   `visibleStart = (0 - panOffset) / pxPerMs`
+   *   `visibleEnd   = visibleStart + canvasWidth / pxPerMs`
+   */
+  const visibleWindow = createMemo(() => {
+    const width = canvasWidth();
+    const duration = totalDuration();
+    const pxPerMs = width > 0 ? (width * state.zoom) / duration : 0;
+    if (!(pxPerMs > 0)) return { start: 0, end: duration, pxPerMs: 0 };
+    const start = (0 - state.panOffset) / pxPerMs;
+    return { start, end: start + width / pxPerMs, pxPerMs };
+  });
+
+  /** The content extent of the composition — every clip on every lane. */
+  const contentExtent = createMemo(() => computeTimelineContentExtent());
+
+  /** The zoom + pan the "fit timeline" button produces. */
+  const currentFit = createMemo(() =>
+    computeTimelineFit(canvasWidth(), totalDuration(), contentExtent())
+  );
+
+  /** True while the timeline shows exactly the fitted view. */
+  const isFitted = createMemo(() => {
+    const fit = currentFit();
+    if (!fit) return false;
+    return Math.abs(state.zoom - fit.zoom) < 1e-4 && Math.abs(state.panOffset - fit.panOffset) < 0.5;
+  });
+
+  /** True when the content runs past the RIGHT edge of the visible window. */
+  const overflowsRight = createMemo(() => {
+    if (visibleWindow().pxPerMs <= 0) return false;
+    return timeToX(contentExtent().maxEnd) > canvasWidth() + 0.5;
+  });
+
+  /** True when the content runs before the LEFT edge of the visible window. */
+  const overflowsLeft = createMemo(() => {
+    if (visibleWindow().pxPerMs <= 0) return false;
+    return timeToX(contentExtent().minAt) < -0.5;
+  });
+
+  /** Which edges of the visible window a lane's content runs past. */
+  const laneOverflow = (lane: TimelineLane): { left: boolean; right: boolean } => {
+    const view = visibleWindow();
+    if (view.pxPerMs <= 0) return { left: false, right: false };
+    let left = false;
+    let right = false;
+    for (const layer of lane.layers) {
+      const start = layer.at ?? 0;
+      const end = start + (layer.duration ?? 0);
+      if (start < view.start) left = true;
+      if (end > view.end) right = true;
+    }
+    return { left, right };
+  };
+
+  /* ── the navigator (the minimap under the timeline) ───────────────────── */
+
+  /**
+   * The navigator strip's viewport rectangle, in navigator pixels.
+   *
+   * The strip always spans the WHOLE composition (0 … durationMs), so the
+   * rectangle is the visible window mapped into that strip.
+   */
+  const navHandleRect = createMemo(() => {
+    const width = navWidth();
+    const duration = totalDuration();
+    const view = visibleWindow();
+    if (width <= 0 || duration <= 0) return { left: 0, width: 0, start: 0, end: 0 };
+    const toX = (ms: number) => (ms / duration) * width;
+    const x0 = toX(view.start);
+    const x1 = toX(view.end);
+    const left = Math.max(0, Math.min(width, x0));
+    const right = Math.max(left, Math.min(width, x1));
+    return { left, width: Math.max(4, right - left), start: view.start, end: view.end };
+  });
+
+  /** The time under a client X on the navigator strip. */
+  const navTimeAt = (clientX: number): number => {
+    const rect = navRef?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return 0;
+    const fraction = (clientX - rect.left) / rect.width;
+    return Math.max(0, Math.min(1, fraction)) * totalDuration();
+  };
+
+  /** Centre the visible window on a time. */
+  const centreOnTime = (ms: number) => {
+    const width = canvasWidth();
+    const duration = totalDuration();
+    const pxPerMs = width > 0 ? (width * state.zoom) / duration : 0;
+    if (!(pxPerMs > 0)) return;
+    store.setPanOffset(width / 2 - ms * pxPerMs);
+  };
+
+  /**
+   * Paint the navigator.
+   *
+   * The strip shows the WHOLE composition: a miniature of every lane, the
+   * keyframe diamonds, the ruler ticks, the playhead and the viewport
+   * rectangle. Every colour comes from the token reader — no hex literals.
+   */
+  const drawNavigator = () => {
+    const canvas = navCanvasRef;
+    const context = navCtx;
+    if (!canvas || !context) return;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (w <= 0 || h <= 0) return;
+
+    const p = palette();
+    const duration = totalDuration();
+    if (!(duration > 0)) return;
+
+    const toX = (ms: number) => (ms / duration) * w;
+    const bandHeight = Math.max(4, h - NAV_RULER_H);
+    const laneList = lanes();
+    const rowHeight = Math.max(2, Math.floor(bandHeight / Math.max(1, laneList.length)));
+    const rows = laneList.map((lane, index) => ({
+      lane,
+      y: index * rowHeight,
+      h: Math.max(1, rowHeight - 1),
+    }));
+
+    context.clearRect(0, 0, w, h);
+    context.fillStyle = p.bgSunken;
+    context.fillRect(0, 0, w, h);
+
+    context.save();
+    context.beginPath();
+    context.rect(0, 0, w, bandHeight);
+    context.clip();
+
+    /* ── the miniature lanes ── */
+    for (const row of rows) {
+      context.fillStyle = withAlpha(row.lane.kind === 'audio' ? p.audio : p.text1, 0.06);
+      context.fillRect(0, row.y, w, row.h);
+
+      for (const layer of row.lane.layers) {
+        const start = layer.at ?? 0;
+        const length = layer.duration ?? 0;
+        const x1 = toX(start);
+        const x2 = toX(start + length);
+        const color = row.lane.kind === 'audio' ? p.audio : kindColor(layer.type);
+        context.fillStyle = withAlpha(color, 0.85);
+        context.fillRect(x1, row.y, Math.max(1, x2 - x1), row.h);
+      }
+
+      /* ── the keyframe diamonds ── */
+      for (const layer of row.lane.layers) {
+        for (const keyframe of store.layerKeyframes(layer.id)) {
+          const kx = toX(keyframe.timeMs);
+          drawDiamond(context, kx, row.y + row.h / 2, 2, p.keyframe, null);
+        }
+      }
+    }
+
+    /* ── the audio cues ── */
+    const audioRow = rows.find((row) => row.lane.kind === 'audio');
+    if (audioRow) {
+      for (const box of audioCueBoxes()) {
+        const x1 = toX(box.cue.at);
+        const x2 = toX(box.cue.at + (SFX_DURATIONS[box.cue.sfx] ?? 1500));
+        context.fillStyle = withAlpha(p.audio, 0.9);
+        context.fillRect(x1, audioRow.y, Math.max(1, x2 - x1), audioRow.h);
+      }
+    }
+
+    /* ── the off-screen markers ── */
+    const view = visibleWindow();
+    const vx0 = Math.max(0, Math.min(w, toX(view.start)));
+    const vx1 = Math.max(0, Math.min(w, toX(view.end)));
+    for (const row of rows) {
+      for (const layer of row.lane.layers) {
+        const start = layer.at ?? 0;
+        const end = start + (layer.duration ?? 0);
+        const markerY = row.y + row.h / 2;
+        if (start < view.start) drawChevron(context, vx0 - 5, markerY, -1, p.accent);
+        if (end > view.end) drawChevron(context, vx1 + 5, markerY, 1, p.accent);
+      }
+    }
+
+    context.restore();
+
+    /* ── the dimmed area outside the viewport ── */
+    context.fillStyle = withAlpha(p.bgGutter, 0.62);
+    context.fillRect(0, 0, vx0, h);
+    context.fillRect(vx1, 0, Math.max(0, w - vx1), h);
+
+    /* ── the playhead ── */
+    context.fillStyle = p.record;
+    context.fillRect(Math.round(toX(state.playhead)), 0, 1, h);
+
+    /* ── the ruler ticks ── */
+    const target = (duration * 70) / w;
+    const steps = [
+      100, 250, 500, 1000, 2000, 5000, 10000, 15000, 30000, 60000, 120000, 300000, 600000,
+    ];
+    const step = steps.find((candidate) => candidate >= target) ?? 600000;
+    context.fillStyle = withAlpha(p.text1, 0.3);
+    for (let t = 0; t <= duration; t += step) {
+      context.fillRect(Math.round(toX(t)), h - 5, 1, 5);
+    }
+  };
+
+  /** Size the navigator canvas for the device pixel ratio and repaint it. */
+  const resizeNavigator = () => {
+    const canvas = navCanvasRef;
+    if (!canvas) return;
+    const rect = canvas.parentElement?.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect?.width ?? canvas.clientWidth));
+    const height = Math.max(1, Math.round(rect?.height ?? canvas.clientHeight));
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+    }
+    navCtx = canvas.getContext('2d');
+    navCtx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+    setNavWidth(width);
+    setNavHeight(height);
+    drawNavigator();
+  };
 
   const draw = () => {
     const canvas = canvasRef;
@@ -567,6 +916,34 @@ export const TimelinePanel: Component = () => {
           isSelected ? '#ffffff' : p.keyframe,
           isSelected ? p.accent : null
         );
+      }
+    }
+
+    /* ── the off-screen clip glow ──
+       A clip that runs past the edge of the visible window is CUT OFF, and a
+       cut-off clip reads as "the timeline ends here". The glow on the cut
+       edge says "there is more of this clip, over there". */
+    for (const box of clipBoxes()) {
+      const cutLeft = box.x < 0;
+      const cutRight = box.x + box.w > w;
+      if (!cutLeft && !cutRight) continue;
+      const base = kindColor(box.layer.type);
+      const clipTop = box.y + 1;
+      const clipHeight = box.h - 3;
+      const fade = Math.max(6, Math.min(28, box.w));
+      if (cutLeft) {
+        const gradient = context.createLinearGradient(0, 0, fade, 0);
+        gradient.addColorStop(0, withAlpha(base, 0.9));
+        gradient.addColorStop(1, withAlpha(base, 0));
+        context.fillStyle = gradient;
+        context.fillRect(0, clipTop, fade, clipHeight);
+      }
+      if (cutRight) {
+        const gradient = context.createLinearGradient(w - fade, 0, w, 0);
+        gradient.addColorStop(0, withAlpha(base, 0));
+        gradient.addColorStop(1, withAlpha(base, 0.9));
+        context.fillStyle = gradient;
+        context.fillRect(w - fade, clipTop, fade, clipHeight);
       }
     }
 
@@ -780,6 +1157,26 @@ export const TimelinePanel: Component = () => {
     requestAnimationFrame(draw);
   });
 
+  // The navigator mirrors the timeline: every zoom, pan, playhead move or
+  // clip edit repaints it, and it repaints when its own box changes size.
+  createEffect(() => {
+    state.zoom;
+    state.panOffset;
+    state.playhead;
+    state.scene;
+    palette();
+    navWidth();
+    navHeight();
+    const clipSignature = (state.scene?.layers ?? [])
+      .map(
+        (layer) =>
+          `${layer.id}:${layer.at ?? 0}:${layer.duration ?? 0}:${layer.keyframes?.length ?? 0}`
+      )
+      .join('|');
+    clipSignature;
+    requestAnimationFrame(drawNavigator);
+  });
+
   const resize = () => {
     const canvas = canvasRef;
     if (!canvas) return;
@@ -796,6 +1193,34 @@ export const TimelinePanel: Component = () => {
     setCanvasWidth(width);
     setCanvasHeight(height);
     draw();
+    resizeNavigator();
+  };
+
+  /**
+   * The wheel over the navigator.
+   *
+   * The navigator always shows the WHOLE composition, so the cursor's
+   * position on the strip is mapped onto the SAME relative position of the
+   * main canvas, and the main canvas' cursor-anchored zoom maths is reused:
+   * the time under the cursor stays under the cursor.
+   */
+  const onNavigatorWheel = (event: WheelEvent) => {
+    event.preventDefault();
+    const rect = navRef?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return;
+    const width = canvasWidth();
+    const duration = totalDuration();
+    const pxPerMs = width > 0 ? (width * state.zoom) / duration : 0;
+    if (!(pxPerMs > 0)) return;
+
+    const fraction = (event.clientX - rect.left) / rect.width;
+    const mouseX = fraction * width;
+    const timeAtMouse = (mouseX - state.panOffset) / pxPerMs;
+    const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const zoom = Math.max(0.2, Math.min(12, state.zoom * factor));
+    store.setZoom(zoom);
+    const newPxPerMs = (width * zoom) / duration;
+    store.setPanOffset(mouseX - timeAtMouse * newPxPerMs);
   };
 
   /**
@@ -839,11 +1264,66 @@ export const TimelinePanel: Component = () => {
     resize();
     window.addEventListener('resize', resize);
 
+    /* ── the navigator ── */
+    resizeNavigator();
+    const navObserver = new ResizeObserver(() => resizeNavigator());
+    if (navRef) navObserver.observe(navRef);
+
+    const navPointerDown = (event: PointerEvent) => {
+      if (!navRef) return;
+      event.preventDefault();
+      try {
+        navRef.setPointerCapture(event.pointerId);
+      } catch {
+        /* the capture is a nicety — the window listeners do the work */
+      }
+      navDragStartX = event.clientX;
+      navDragStartPan = state.panOffset;
+      const target = event.target as Node | null;
+      const onHandle = target !== null && navHandleRef !== undefined && target === navHandleRef;
+      navDragMode = onHandle ? 'handle' : 'scrub';
+      if (!onHandle) centreOnTime(navTimeAt(event.clientX));
+    };
+
+    const navPointerMove = (event: PointerEvent) => {
+      if (!navDragMode) return;
+      if (navDragMode === 'handle') {
+        // 1:1 with the mouse: the strip spans the whole composition, so the
+        // delta in strip pixels is the delta in milliseconds.
+        const width = navWidth();
+        const duration = totalDuration();
+        const mainWidth = canvasWidth();
+        const pxPerMs = mainWidth > 0 ? (mainWidth * state.zoom) / duration : 0;
+        if (width <= 0 || !(pxPerMs > 0)) return;
+        const deltaMs = ((event.clientX - navDragStartX) / width) * duration;
+        store.setPanOffset(navDragStartPan - deltaMs * pxPerMs);
+        return;
+      }
+      centreOnTime(navTimeAt(event.clientX));
+    };
+
+    const navPointerUp = (event: PointerEvent) => {
+      if (!navDragMode) return;
+      navDragMode = null;
+      try {
+        navRef?.releasePointerCapture(event.pointerId);
+      } catch {
+        /* the capture may already be gone */
+      }
+    };
+
+    navRef?.addEventListener('pointerdown', navPointerDown);
+    navRef?.addEventListener('wheel', onNavigatorWheel, { passive: false });
+    window.addEventListener('pointermove', navPointerMove);
+    window.addEventListener('pointerup', navPointerUp);
+    window.addEventListener('pointercancel', navPointerUp);
+
     // the design tokens can change under us (a theme swap) — re-read them
     const observer = new MutationObserver(() => {
       setMetrics(readMetrics());
       setPalette(readPalette());
       draw();
+      drawNavigator();
     });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
     observer.observe(document.head, { childList: true, subtree: true });
@@ -1252,6 +1732,7 @@ export const TimelinePanel: Component = () => {
 
     onCleanup(() => {
       observer.disconnect();
+      navObserver.disconnect();
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keydown', handleKeyDownCapture, true);
@@ -1259,6 +1740,11 @@ export const TimelinePanel: Component = () => {
       canvasRef?.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
+      navRef?.removeEventListener('pointerdown', navPointerDown);
+      navRef?.removeEventListener('wheel', onNavigatorWheel);
+      window.removeEventListener('pointermove', navPointerMove);
+      window.removeEventListener('pointerup', navPointerUp);
+      window.removeEventListener('pointercancel', navPointerUp);
     });
   });
 
@@ -1340,14 +1826,20 @@ export const TimelinePanel: Component = () => {
 
   /* ── toolbar actions ─────────────────────────────────────────────────── */
 
-  /** Fit the whole composition into the timeline width. */
+  /**
+   * Fit EVERY clip of the composition into the timeline.
+   *
+   * The fit is driven by the CONTENT EXTENT — the first and the last
+   * millisecond of any clip on any lane — and it RESETS the horizontal pan,
+   * so the view always starts at the beginning of the composition again
+   * instead of staying scrolled away from it.
+   */
   const zoomToFit = () => {
-    const width = canvasWidth();
-    const duration = totalDuration();
-    if (width <= 0 || duration <= 0) return;
-    store.setZoom(Math.max(0.2, Math.min(12, duration / width)));
-    store.setPanOffset(0);
-    store.addToast('Timeline zoomed to fit', 'info');
+    const fit = currentFit();
+    if (!fit) return;
+    store.setZoom(fit.zoom);
+    store.setPanOffset(fit.panOffset);
+    store.addToast('Timeline fitted to all clips', 'info');
   };
 
   const addVideoTrack = () => {
@@ -1460,8 +1952,8 @@ export const TimelinePanel: Component = () => {
         <button
           class="mf-btn is-icon"
           id="timeline-zoom-fit"
-          title="Zoom to fit (Shift+Z)"
-          aria-label="Zoom to fit"
+          title="Fit every clip into the timeline (Shift+Z)"
+          aria-label="Fit every clip into the timeline"
           onClick={zoomToFit}
         >
           <IconFit size={13} />
@@ -1496,12 +1988,15 @@ export const TimelinePanel: Component = () => {
               {(lane) => {
                 const isAudio = () => lane.kind === 'audio';
                 const first = () => lane.layers[0];
+                const overflow = () => laneOverflow(lane);
                 return (
                   <div
                     class={`mf-track-header ${first() && state.selectedLayerId === first()!.id ? 'is-selected' : ''}`}
                     data-track-index={lane.index}
                     data-track-name={lane.name}
                     data-track-kind={lane.kind}
+                    data-offscreen-left={overflow().left ? 'true' : 'false'}
+                    data-offscreen-right={overflow().right ? 'true' : 'false'}
                     style={{ height: `${lane.h}px`, 'margin-bottom': `${LANE_GAP}px` }}
                     onClick={() => {
                       const layer = first();
@@ -1569,6 +2064,24 @@ export const TimelinePanel: Component = () => {
                         <IconMute size={12} />
                       </button>
                     </Show>
+                    <Show when={overflow().left}>
+                      <span
+                        class="mf-track-offscreen is-left"
+                        title="This track has content before the visible window"
+                        aria-hidden="true"
+                      >
+                        <IconChevronRight size={10} />
+                      </span>
+                    </Show>
+                    <Show when={overflow().right}>
+                      <span
+                        class="mf-track-offscreen is-right"
+                        title="This track has content after the visible window"
+                        aria-hidden="true"
+                      >
+                        <IconChevronRight size={10} />
+                      </span>
+                    </Show>
                   </div>
                 );
               }}
@@ -1610,6 +2123,13 @@ export const TimelinePanel: Component = () => {
               }}
             />
           </Show>
+          {/* the cut-off fades — the content runs past the visible window */}
+          <Show when={overflowsLeft()}>
+            <div class="mf-timeline-edge-fade is-left" id="timeline-edge-fade-left" aria-hidden="true" />
+          </Show>
+          <Show when={overflowsRight()}>
+            <div class="mf-timeline-edge-fade is-right" id="timeline-edge-fade-right" aria-hidden="true" />
+          </Show>
           <canvas
             ref={canvasRef}
             id="timeline-canvas"
@@ -1623,6 +2143,41 @@ export const TimelinePanel: Component = () => {
         </div>
 
         <AudioVuMeter />
+
+        {/* the navigator — the minimap of the WHOLE composition */}
+        <div
+          id="timeline-navigator"
+          class="mf-timeline-navigator"
+          ref={navRef}
+          role="group"
+          aria-label="Timeline navigator"
+          title="Timeline navigator — click to jump, drag the handle to pan, wheel to zoom"
+          data-fitted={isFitted() ? 'true' : 'false'}
+          data-zoom={state.zoom.toFixed(4)}
+          data-pan-offset={String(Math.round(state.panOffset))}
+          data-duration={String(totalDuration())}
+          data-visible-start={String(Math.round(visibleWindow().start))}
+          data-visible-end={String(Math.round(visibleWindow().end))}
+          data-content-start={String(Math.round(contentExtent().minAt))}
+          data-content-end={String(Math.round(contentExtent().maxEnd))}
+        >
+          <canvas id="timeline-navigator-canvas" class="mf-navigator-canvas" ref={navCanvasRef} />
+          <div
+            id="timeline-navigator-handle"
+            class="mf-navigator-handle"
+            ref={navHandleRef}
+            role="slider"
+            aria-label="Visible window — drag to pan the timeline"
+            aria-valuemin={0}
+            aria-valuemax={totalDuration()}
+            aria-valuenow={Math.round(navHandleRect().start)}
+            title="Drag to pan the timeline"
+            style={{
+              left: `${navHandleRect().left}px`,
+              width: `${navHandleRect().width}px`,
+            }}
+          />
+        </div>
       </div>
     </section>
   );
@@ -1673,6 +2228,29 @@ function drawDiamond(
     context.lineWidth = 1.5;
     context.stroke();
   }
+}
+
+/**
+ * A small chevron that points at the content OUTSIDE the visible window.
+ *
+ * It is a canvas PATH — never a glyph and never an emoji — so it scales with
+ * the strip and always reads at any density.
+ */
+function drawChevron(
+  context: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  direction: -1 | 1,
+  fill: string
+): void {
+  const size = 3.5;
+  context.beginPath();
+  context.moveTo(cx + direction * size, cy - size);
+  context.lineTo(cx + direction * size, cy + size);
+  context.lineTo(cx - direction * size, cy);
+  context.closePath();
+  context.fillStyle = fill;
+  context.fill();
 }
 
 /** `mm:ss` — the compact duration a clip tooltip reads. */

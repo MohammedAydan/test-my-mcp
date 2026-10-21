@@ -1,9 +1,19 @@
-import { Component, For, Show, createSignal, createEffect, createMemo } from 'solid-js';
+import {
+  Component,
+  For,
+  Show,
+  createSignal,
+  createEffect,
+  createMemo,
+  onCleanup,
+  onMount,
+} from 'solid-js';
 import { store } from '../../state/store.js';
 import { api } from '../../api.js';
 import { listAssets, SFX_BANK, type VaultAsset } from '../../services/asset-service.js';
 import { createDefaultScene } from '../../services/commands.js';
 import { writeAssetPayload } from '../../services/drag-payload.js';
+import { onEngineEvent } from '../../services/engine-bridge.js';
 import {
   IconComposition,
   IconCopy,
@@ -62,6 +72,22 @@ export const ProjectBinPanel: Component = () => {
     void refreshAssets();
   });
 
+  /**
+   * Keep the COMPOSITIONS list in sync with the engine.
+   *
+   * A composition can be created, saved or deleted from anywhere — the AI
+   * (MCP), the command palette, another window — so the list is refreshed
+   * whenever the engine announces a change instead of only on mount.
+   */
+  onMount(() => {
+    const unsubscribe = onEngineEvent((event) => {
+      if (event.eventName === 'scene:updated' || event.eventName === 'scene:deleted') {
+        void refreshScenes();
+      }
+    });
+    onCleanup(unsubscribe);
+  });
+
   const createComposition = async () => {
     const scene = createDefaultScene();
     try {
@@ -110,15 +136,51 @@ export const ProjectBinPanel: Component = () => {
     }
   };
 
+  /**
+   * Delete a composition.
+   *
+   * ONE click, no confirmation dialog: the toast reports what happened and
+   * the action is not undoable, so a modal would only add friction.
+   *
+   * The ORDER matters. The composition is closed FIRST (when it is the open
+   * one) because an armed auto-save would otherwise re-create the file the
+   * delete is about to remove, and a save that is already on the wire is
+   * awaited so it cannot land AFTER the delete and resurrect the scene.
+   */
   const deleteComposition = async (id: string) => {
-    if (!window.confirm(`Delete composition "${id}"? This removes it from the engine and disk.`)) return;
+    const target = scenes().find((s) => s.id === id);
+    const label = target?.name || id;
+    const wasOpen = state.sceneId === id;
+
+    if (wasOpen) {
+      store.setScene(null);
+      window.localStorage.removeItem('motionforge_last_scene');
+    }
+    // a save that is already on the wire must LAND before the delete, or it
+    // would re-create the file. (bounded: a stuck save must not hang the UI)
+    for (let i = 0; i < 50 && store.saveInFlight; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+
     try {
-      await api.deleteScene(id);
-      if (state.sceneId === id) store.setScene(null);
-      store.addToast(`Deleted composition ${id}`, 'info');
+      const res = await api.deleteScene(id);
+      if (res.success) {
+        store.addToast(`Deleted composition "${label}"`, 'info');
+      } else {
+        store.addToast(`Composition "${label}" was already gone`, 'warning');
+      }
       await refreshScenes();
     } catch (err) {
       store.addToast(`Could not delete composition: ${(err as Error).message}`, 'error');
+      // the delete did not happen — put the open composition back
+      if (wasOpen) {
+        try {
+          const scene = await api.getScene(id);
+          store.setScene(scene, id);
+        } catch {
+          /* the composition is gone for good */
+        }
+      }
     }
   };
 
@@ -234,8 +296,17 @@ export const ProjectBinPanel: Component = () => {
             <For each={scenes()} fallback={
               <div class="mf-empty">
                 <IconComposition size={26} />
-                <div class="mf-empty-title">No compositions</div>
+                <div class="mf-empty-title">No compositions yet</div>
                 <div class="mf-empty-hint">Create one to start authoring.</div>
+                <button
+                  class="mf-btn is-primary"
+                  id="bin-new-composition-empty"
+                  data-action="new-composition"
+                  onClick={createComposition}
+                >
+                  <IconFilePlus size={12} />
+                  <span>New composition</span>
+                </button>
               </div>
             }>
               {(scene) => (
@@ -293,12 +364,13 @@ export const ProjectBinPanel: Component = () => {
                       <IconCopy size={12} />
                     </button>
                     <button
-                      class="mf-icon-btn is-danger"
+                      class="mf-icon-btn mf-bin-item-delete is-danger"
+                      data-action="delete-composition"
                       title="Delete composition"
-                      aria-label="Delete composition"
+                      aria-label={`Delete composition ${scene.name}`}
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteComposition(scene.id);
+                        void deleteComposition(scene.id);
                       }}
                     >
                       <IconTrash size={12} />

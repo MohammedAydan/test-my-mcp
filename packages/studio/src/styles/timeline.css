@@ -1,0 +1,147 @@
+/*
+   timeline.css — owned by the Phase-1 polish workstream.
+   Imported AFTER components.css so these rules win on equal specificity.
+
+   Contents:
+     1. the timeline body grid — the navigator gets its own row
+     2. the navigator strip (the minimap) + its viewport handle
+     3. the cut-off edge fades on the main canvas
+     4. the off-screen markers on the track headers
+*/
+
+:root {
+  /* the height of the navigator strip under the timeline canvas */
+  --mf-navigator-h: 34px;
+}
+
+/* --------------------------------------------------------------------------
+   1. The timeline body grid
+
+   The body was a flex ROW (track headers | canvas | VU meter). It is a grid
+   now, so the navigator can take its OWN row UNDER the canvas without
+   covering a lane: the canvas keeps its left edge, its width and its top,
+   and only its height gives up the navigator's row.
+   -------------------------------------------------------------------------- */
+.mf-timeline-body {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) var(--mf-navigator-h);
+}
+.mf-track-headers {
+  grid-column: 1;
+  grid-row: 1;
+}
+.mf-timeline-canvas-wrap {
+  grid-column: 2;
+  grid-row: 1;
+}
+.mf-vu {
+  grid-column: 3;
+  grid-row: 1;
+}
+/* the navigator spans the whole body — it reads as the timeline's scrollbar */
+.mf-timeline-navigator {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+
+/* --------------------------------------------------------------------------
+   2. The navigator strip
+
+   The strip always shows the WHOLE composition: a miniature of every lane,
+   the keyframe diamonds, the ruler ticks, the playhead and the viewport
+   rectangle. The rectangle is a DOM element, so it can be dragged with real
+   pointer events.
+   -------------------------------------------------------------------------- */
+.mf-timeline-navigator {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--mf-bg-sunken);
+  border-top: 1px solid var(--mf-border);
+  cursor: pointer;
+  user-select: none;
+}
+.mf-navigator-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.mf-navigator-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 4px;
+  border: 1px solid var(--mf-accent);
+  border-radius: 2px;
+  background: var(--mf-accent-dim);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  cursor: grab;
+  transition: background var(--mf-dur-ui) var(--mf-ease);
+}
+.mf-navigator-handle:hover {
+  background: rgba(45, 140, 235, 0.22);
+}
+.mf-navigator-handle:active {
+  cursor: grabbing;
+}
+
+/* --------------------------------------------------------------------------
+   3. The cut-off fades
+
+   When the content runs past the visible window, the canvas edge fades out —
+   a DOM gradient, never a canvas hack, so it stays crisp at any density and
+   never hides a pixel of the timeline itself.
+   -------------------------------------------------------------------------- */
+.mf-timeline-edge-fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 30px;
+  z-index: 4;
+  pointer-events: none;
+}
+.mf-timeline-edge-fade.is-right {
+  right: 0;
+  background: linear-gradient(to left, rgba(45, 140, 235, 0.18), rgba(45, 140, 235, 0));
+  box-shadow: inset -1px 0 0 rgba(45, 140, 235, 0.45);
+}
+.mf-timeline-edge-fade.is-left {
+  left: 0;
+  background: linear-gradient(to right, rgba(45, 140, 235, 0.18), rgba(45, 140, 235, 0));
+  box-shadow: inset 1px 0 0 rgba(45, 140, 235, 0.45);
+}
+
+/* --------------------------------------------------------------------------
+   4. The off-screen markers on the track headers
+
+   A lane whose content runs past the visible window says so — a chevron on
+   the edge of the header points at the hidden content.
+   -------------------------------------------------------------------------- */
+.mf-track-header {
+  position: relative;
+}
+.mf-track-offscreen {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  color: var(--mf-accent);
+  opacity: 0.9;
+  pointer-events: none;
+}
+.mf-track-offscreen.is-right {
+  right: 3px;
+  transform: translateY(-50%);
+}
+.mf-track-offscreen.is-left {
+  left: 3px;
+  transform: translateY(-50%) rotate(180deg);
+}
+/* the marker needs room — the header content moves out of its way */
+.mf-track-header[data-offscreen-left='true'] {
+  padding-left: 18px;
+}
+.mf-track-header[data-offscreen-right='true'] {
+  padding-right: 18px;
+}
