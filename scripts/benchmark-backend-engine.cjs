@@ -124,7 +124,7 @@ const SCENE_DURATION_MS = 6000;
  * Dense keyframes across all five animatable properties.
  * Eight samples per property = 40 keyframes per layer.
  */
-function denseKeyframes(layerId, mode) {
+function denseKeyframes(layerId, mode, perProperty = 8) {
   const out = [];
   const props = ['xPct', 'yPct', 'scale', 'rotation', 'opacity'];
   const legal = {
@@ -145,7 +145,7 @@ function denseKeyframes(layerId, mode) {
   let n = 0;
   for (const property of props) {
     const values = table[property];
-    for (let i = 0; i < values.length; i++) {
+    for (let i = 0; i < Math.min(perProperty, values.length); i++) {
       out.push({
         id: `kf-${layerId}-${property}-${i}`.slice(0, 60),
         timeMs: Math.round((i / 7) * (SCENE_DURATION_MS - 200)),
@@ -192,9 +192,10 @@ function extremeFilters(mode) {
  *   'legacy'  — 'legal' plus the retired `_hidden` / `_locked` markers and an
  *               unknown `_`-prefixed transient key
  */
-function buildRichScene(mode, overrides = {}) {
+function buildRichScene(mode, overrides = {}, opts = {}) {
   const filters = extremeFilters(mode);
   const illegal = mode === 'illegal';
+  const kfCount = opts.keyframeCount ?? 8;
 
   const pos = (x, y) => (illegal ? { xPct: x * 2, yPct: y * 2 } : { xPct: x, yPct: y });
   const rot = (r) => (illegal ? r * 3 : r);
@@ -218,7 +219,7 @@ function buildRichScene(mode, overrides = {}) {
       rotation: rot(0),
       scale: scl(1),
       filters,
-      keyframes: denseKeyframes('bg', mode),
+      keyframes: denseKeyframes('bg', mode, kfCount),
     },
     {
       id: 'logo',
@@ -238,7 +239,7 @@ function buildRichScene(mode, overrides = {}) {
       scale: scl(0.05),
       opacity: 1,
       filters,
-      keyframes: denseKeyframes('logo', mode),
+      keyframes: denseKeyframes('logo', mode, kfCount),
       sfx: [{ sfx: 'whoosh', offsetMs: 0, gain: 1, pan: 0 }],
     },
     {
@@ -273,7 +274,7 @@ function buildRichScene(mode, overrides = {}) {
       scale: scl(10),
       opacity: 1,
       filters,
-      keyframes: denseKeyframes('headline', mode),
+      keyframes: denseKeyframes('headline', mode, kfCount),
       sfx: [{ sfx: 'pop', offsetMs: 120, gain: 0.5, pan: -0.2 }],
     },
     {
@@ -296,7 +297,7 @@ function buildRichScene(mode, overrides = {}) {
       rotation: rot(120),
       scale: scl(1),
       filters,
-      keyframes: denseKeyframes('card', mode),
+      keyframes: denseKeyframes('card', mode, kfCount),
     },
     {
       id: 'bar',
@@ -323,7 +324,7 @@ function buildRichScene(mode, overrides = {}) {
       },
       entrance: { name: 'maskRevealWipe' },
       filters,
-      keyframes: denseKeyframes('bar', mode),
+      keyframes: denseKeyframes('bar', mode, kfCount),
     },
     {
       id: 'anim',
@@ -333,7 +334,7 @@ function buildRichScene(mode, overrides = {}) {
       widthPx: 240,
       position: pos(12, 78),
       filters,
-      keyframes: denseKeyframes('anim', mode),
+      keyframes: denseKeyframes('anim', mode, kfCount),
     },
     {
       id: 'fx',
@@ -345,7 +346,7 @@ function buildRichScene(mode, overrides = {}) {
         { kind: 'colorGrade', warmth: 0.12, contrast: 0.06, saturation: 0.08 },
       ],
       filters,
-      keyframes: denseKeyframes('fx', mode),
+      keyframes: denseKeyframes('fx', mode, kfCount),
     },
   ];
 
@@ -1130,12 +1131,22 @@ async function benchmarkRender(core, paths) {
   // what OOM-kills a GPU-less browser — see the last section, which attempts
   // it deliberately).
   const sceneId = 'bench-render';
-  const scene = buildRichScene('legal', { id: sceneId, name: 'Render throughput scene' });
-  scene.layers = scene.layers.map((l) =>
-    l.type === 'background'
-      ? { ...l, variant: { variant: 'solid', color: '#05070d' } }
-      : l
+  const scene = buildRichScene(
+    'legal',
+    { id: sceneId, name: 'Render throughput scene' },
+    { keyframeCount: 2 }
   );
+  // The throughput scene is the AFFORDABLE variant: a solid background and a
+  // vignette (no film grain, no blurred mesh gradient). The A/B above
+  // attributes what the expensive variants cost, and the last section
+  // attempts the full scene deliberately.
+  scene.layers = scene.layers.map((l) => {
+    if (l.type === 'background') return { ...l, variant: { variant: 'solid', color: '#05070d' } };
+    if (l.type === 'foregroundFX') {
+      return { ...l, effects: [{ kind: 'vignette', strength: 0.5, color: '#000000' }] };
+    }
+    return l;
+  });
   await core.saveScene(scene);
   line('scene layers', String(scene.layers.length));
   line('scene duration', `${scene.durationMs} ms`);
@@ -1213,31 +1224,40 @@ async function benchmarkRender(core, paths) {
   //
   // The LIGHT variants run FIRST and the heavy baseline LAST: when the heavy
   // scene OOM-kills the browser, the light measurements are already collected.
+  //
+  // Four variants, LIGHTEST FIRST. The A/B scene is deliberately LIGHT (2
+  // keyframes per property instead of 8) so the measurement is about the
+  // FEATURE, not about the keyframe count: on this host the full-density
+  // scene does not fit in memory at all.
+  const stripMesh = (sc) => {
+    sc.layers = sc.layers.map((l) =>
+      l.type === 'background' ? { ...l, variant: { variant: 'solid', color: '#05070d' } } : l
+    );
+    return sc;
+  };
+  const stripGrain = (sc) => {
+    sc.layers = sc.layers.map((l) =>
+      l.type === 'foregroundFX'
+        ? { ...l, effects: [{ kind: 'vignette', strength: 0.5, color: '#000000' }] }
+        : l
+    );
+    return sc;
+  };
   const abVariants = [
     {
-      label: 'no mesh gradient (solid background)',
-      mutate: (sc) => {
-        sc.layers = sc.layers.map((l) =>
-          l.type === 'background'
-            ? { ...l, variant: { variant: 'solid', color: '#05070d' } }
-            : l
-        );
-        return sc;
-      },
+      label: 'neither (solid background + vignette only)',
+      mutate: (sc) => stripGrain(stripMesh(sc)),
     },
     {
-      label: 'no film grain (vignette only)',
-      mutate: (sc) => {
-        sc.layers = sc.layers.map((l) =>
-          l.type === 'foregroundFX'
-            ? { ...l, effects: [{ kind: 'vignette', strength: 0.5, color: '#000000' }] }
-            : l
-        );
-        return sc;
-      },
+      label: 'film grain only (solid background + grain)',
+      mutate: (sc) => stripMesh(sc),
     },
     {
-      label: 'baseline (mesh gradient + 70px blur + film grain)',
+      label: 'mesh gradient only (blurred mesh + vignette)',
+      mutate: (sc) => stripGrain(sc),
+    },
+    {
+      label: 'both (blurred mesh + film grain)',
       mutate: (sc) => sc,
     },
   ];
@@ -1245,7 +1265,7 @@ async function benchmarkRender(core, paths) {
     const abId = `bench-ab-${abResults.length}`;
     const abScene = variant.mutate(
       compressScene(
-        buildRichScene('legal', { id: abId, name: `A/B ${variant.label}` }),
+        buildRichScene('legal', { id: abId, name: `A/B ${variant.label}` }, { keyframeCount: 2 }),
         1500
       )
     );
@@ -1292,7 +1312,7 @@ async function benchmarkRender(core, paths) {
       line(`A/B: ${variant.label}`, `FAILED — ${String(err).slice(0, 160)}`);
     }
   }
-  const base = abResults.find((r) => r.label.startsWith('baseline'));
+  const base = abResults.find((r) => r.label.startsWith('neither'));
   for (const r of abResults) {
     if (base && base.msPerFrame && r.msPerFrame) {
       r.relativeToBaseline = Number((r.msPerFrame / base.msPerFrame).toFixed(2));
@@ -1443,6 +1463,8 @@ async function benchmarkRender(core, paths) {
   sub('the heavy variant, rendered at full length (expected to fail on a GPU-less host)');
   const heavyId = 'bench-render-heavy';
   const heavy = buildRichScene('legal', { id: heavyId, name: 'Render throughput scene (mesh gradient)' });
+  // the FULL density: 8 keyframes per property per layer, the blurred mesh
+  // gradient AND the film grain
   await core.saveScene(heavy);
   const tHeavy = Date.now();
   let heavyOutcome = null;

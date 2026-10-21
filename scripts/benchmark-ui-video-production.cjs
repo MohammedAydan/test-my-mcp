@@ -662,6 +662,158 @@ async function main() {
     );
     await waitForSave(page);
 
+    /* ── 3b. the tool dock: can it CREATE anything? ──────────────────────── */
+    section('Step 1c — The tool dock: the Text tool and the Card tool');
+    //
+    // The brief says to build the hero title with the TEXT TOOL and the card
+    // with the CARD TOOL. The probe below clicks them exactly the way a user
+    // would — the tool button, then a click on the canvas — and checks
+    // whether ANY layer appears.
+    const layerCount = () => page.evaluate(() => window.store.state.scene.layers.length);
+
+    const toolProbe = async (tool, label) => {
+      const before = await layerCount();
+      await page.click(`#tool-dock [data-tool="${tool}"]`);
+      await page.waitForTimeout(300);
+      const activeTool = await page.evaluate(() => window.store.state.activeTool);
+      const pressed = await page.getAttribute(`#tool-dock [data-tool="${tool}"]`, 'aria-pressed');
+      // a click on the canvas, in the middle of the composition
+      const stage = await page.evaluate(() => {
+        const r = document.querySelector('#monitor-stage').getBoundingClientRect();
+        return { x: r.left + r.width * 0.4, y: r.top + r.height * 0.6 };
+      });
+      await page.mouse.click(stage.x, stage.y);
+      await page.waitForTimeout(600);
+      const after = await layerCount();
+      const tool = await page.evaluate(() => window.store.state.activeTool);
+      metrics[`toolProbe_${label}`] = {
+        activeToolAfterClick: activeTool,
+        ariaPressed: pressed,
+        activeToolAfterCanvasClick: tool,
+        layersBefore: before,
+        layersAfter: after,
+      };
+      return { activeTool, pressed, before, after, tool };
+    };
+
+    const textProbe = await toolProbe('text', 'text');
+    check(
+      'The Text tool activates when it is clicked',
+      textProbe.activeTool === 'text' && textProbe.pressed === 'true',
+      `activeTool=${textProbe.activeTool}, aria-pressed=${textProbe.pressed}`
+    );
+    check(
+      'Clicking the canvas with the TEXT TOOL active creates a text layer',
+      textProbe.after > textProbe.before,
+      `layer count ${textProbe.before} -> ${textProbe.after}`
+    );
+    if (textProbe.after <= textProbe.before) {
+      bug(
+        'BUG-6',
+        'The Text tool (and the Card tool) are dead ends — they switch the cursor and never create a layer',
+        `Clicking #tool-dock [data-tool="text"] set the active tool to "${textProbe.activeTool}" (aria-pressed=${textProbe.pressed}), ` +
+          'but a subsequent click on the canvas changed the layer count from ' +
+          `${textProbe.before} to ${textProbe.after}. The tool dock only calls store.setActiveTool(tool.id) ` +
+          '(packages/studio/src/components/shell/ToolDock.tsx:68) and the canvas overlay only handles the ' +
+          '"hand", "razor" and "select" tools (packages/studio/src/components/monitor/CanvasOverlay.tsx:850,901,1061) — ' +
+          'nothing ever consumes activeTool === "text" or "shape", so the two most prominent authoring tools in the ' +
+          'application produce nothing.'
+      );
+    }
+    await page.click('#tool-dock [data-tool="select"]');
+    await page.waitForTimeout(300);
+
+    const shapeProbe = await toolProbe('shape', 'shape');
+    check(
+      'The Card tool activates when it is clicked',
+      shapeProbe.activeTool === 'shape' && shapeProbe.pressed === 'true',
+      `activeTool=${shapeProbe.activeTool}, aria-pressed=${shapeProbe.pressed}`
+    );
+    check(
+      'Clicking the canvas with the CARD TOOL active creates a card layer',
+      shapeProbe.after > shapeProbe.before,
+      `layer count ${shapeProbe.before} -> ${shapeProbe.after}`
+    );
+    await page.click('#tool-dock [data-tool="select"]');
+    await page.waitForTimeout(300);
+
+    /* the tool dock's preset tools (chart / code / device) */
+    const presetBefore = await layerCount();
+    await page.click('#tool-dock #tool-preset-0');
+    await page.waitForTimeout(900);
+    const presetLayer = await page.evaluate(() => {
+      const layers = window.store.state.scene.layers;
+      const last = layers[layers.length - 1];
+      return last ? { id: last.id, type: last.type, text: last.text ?? null } : null;
+    });
+    metrics.toolPreset = presetLayer;
+    check(
+      'The "Chart Layer" preset tool creates a chart layer',
+      presetLayer?.type === 'chart',
+      `created ${JSON.stringify(presetLayer)}`
+    );
+    if (presetLayer && presetLayer.type !== 'chart') {
+      bug(
+        'BUG-7',
+        'The tool dock\'s preset tools all create a kineticText layer — the requested kind is discarded',
+        `Clicking #tool-dock #tool-preset-0 ("Chart Layer", packages/studio/src/components/shell/ToolDock.tsx:85) created ` +
+          `a layer of type "${presetLayer.type}"${presetLayer.text ? ` with the text "${presetLayer.text}"` : ''}. ` +
+          'The detail is carried in the CustomEvent (motionforge:add-layer), but the handler in ' +
+          '(packages/studio/src/App.tsx:236-248) ignores it and always pushes `type: "kineticText"`. ' +
+          'There is no "chart" layer kind in the schema at all (packages/scene-spec/src/scene.ts:113-121), so the ' +
+          'three preset buttons are three ways to add the same text layer.'
+      );
+    }
+    // clean the probe layer up through the layer stack's own delete button
+    if (presetLayer?.id) {
+      await page.click(`#layer-stack-list .mf-stack-row[data-layer-id="${presetLayer.id}"]`);
+      await page.waitForTimeout(300);
+      await page.click(`#layer-stack-list .mf-stack-row[data-layer-id="${presetLayer.id}"] .mf-stack-action.is-danger`);
+      await page.waitForTimeout(700);
+    }
+
+    /* the Add Layer modal — does anything open it? */
+    const modalBefore = await page.locator('#studio-modal').count();
+    await page.keyboard.press('Control+k');
+    await page.waitForTimeout(500);
+    const paletteInput = page.locator('#command-palette-input');
+    let paletteCommands = [];
+    if (await paletteInput.count()) {
+      await paletteInput.fill('layer');
+      await page.waitForTimeout(400);
+      paletteCommands = await page
+        .locator('#command-palette [data-command]')
+        .evaluateAll((els) => els.map((e) => ({ id: e.getAttribute('data-command'), text: e.textContent.trim() })));
+    }
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    const modalAfter = await page.locator('#studio-modal').count();
+    metrics.addLayerModal = {
+      openInTheNormalState: modalBefore,
+      paletteCommandsMatchingLayer: paletteCommands,
+      anAddLayerCommand: paletteCommands.some((c) => /add\s*layer|new\s*layer/i.test(c.text)),
+    };
+    check(
+      'The command palette offers an "Add Layer" command',
+      Boolean(metrics.addLayerModal.anAddLayerCommand),
+      `the ${paletteCommands.length} matching commands: ${paletteCommands.map((c) => c.id).join(', ') || '(none)'}`
+    );
+    if (!metrics.addLayerModal.anAddLayerCommand) {
+      bug(
+        'BUG-8',
+        'The Add Layer modal has NO entry point — no button, no menu item and no command opens it',
+        'The modal that owns the layer templates (Text / Card / Background / Image / Lottie / Effect Overlay) is ' +
+          'rendered by `state.activeModal === "add-layer"\' (packages/studio/src/components/shared/StudioModal.tsx:166,263), ' +
+          'but `store.setActiveModal("add-layer")` is never called from a button, a menu entry or a command — the only ' +
+          `occurrences of the string in packages/studio/src are the modal's own condition. Searching the command palette ` +
+          `for "layer" returned ${paletteCommands.length} commands (${paletteCommands.map((c) => c.id).join(', ') || 'none'}) ` +
+          'and none of them adds a layer. A user therefore cannot create a CARD, a BACKGROUND, an IMAGE, a LOTTIE or an ' +
+          'EFFECT OVERLAY through the UI at all — only a kineticText, through the layer stack\'s "+" button, which ' +
+          'dispatches motionforge:add-layer with the kind "kineticText" (packages/studio/src/components/hierarchy/LayerStackPanel.tsx:78).'
+      );
+    }
+    await waitForSave(page);
+
     /* ── 4. background on V1 ─────────────────────────────────────────────── */
     section('Step 2 — Background on V1 (gradient attempt through the Inspector)');
     await selectLayerInStack(page, 'bg');

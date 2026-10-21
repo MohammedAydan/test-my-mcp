@@ -685,8 +685,24 @@ function paintedBox(root: HTMLElement): DOMRect {
   } as DOMRect;
 }
 
+/**
+ * Does this layer's content overflow its box in a way that CLIPS TEXT?
+ *
+ * THE BUG THIS FIXES: the old implementation checked the ROOT element's
+ * `scrollWidth`/`clientWidth` for EVERY layer. A background whose gradient
+ * blobs extend past the canvas, or a full-bleed overlay with a negative
+ * inset, overflows its root — and the flag, which the MCP surfaces to an
+ * agent as "TEXT OVERFLOW (clipped content)", fired for a layer that has no
+ * text at all. An agent debugging its scene would be told its headline was
+ * clipped when the headline was fine.
+ *
+ * So the root check now applies ONLY to a root that actually holds text, and
+ * the per-child check (the real text nodes) is unchanged.
+ */
 function anyTextOverflow(root: HTMLElement): boolean {
-  if (root.scrollWidth > root.clientWidth + TEXT_OVERFLOW_TOLERANCE_PX) return true;
+  const holdsText = root.matches(".mf-unit, [data-mf-text]") ||
+    root.querySelector(".mf-unit, [data-mf-text]") !== null;
+  if (holdsText && isTextOverflow(root)) return true;
   for (const child of Array.from(root.querySelectorAll<HTMLElement>(".mf-unit, [data-mf-text]"))) {
     if (isTextOverflow(child)) return true;
   }
