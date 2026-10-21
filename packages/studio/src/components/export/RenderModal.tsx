@@ -42,8 +42,41 @@ export const RenderModal: Component = () => {
   const [queue, setQueue] = createSignal<QueueItem[]>([]);
   const [outputPath, setOutputPath] = createSignal<string | null>(null);
 
+  /**
+   * Mirror the local queue into the store.
+   *
+   * The store's `renderQueue` is the single source of truth: the status bar,
+   * the command palette and any automation read it. The modal keeps its own
+   * signal for rendering, but it PUBLISHES every change.
+   */
+  const publish = (items: QueueItem[]): void => {
+    store.setRenderQueue(
+      items.map((item) => ({
+        id: item.jobId,
+        sceneId: item.sceneId,
+        quality: item.quality,
+        status:
+          item.status === 'queued'
+            ? 'pending'
+            : item.status === 'running'
+              ? 'rendering'
+              : item.status === 'succeeded'
+                ? 'completed'
+                : 'failed',
+        progressPct: item.progressPct,
+        outputPath: item.outputPath,
+        error: item.error,
+        createdAt: Date.now(),
+      }))
+    );
+  };
+
   const update = (jobId: string, patch: Partial<QueueItem>) =>
-    setQueue((prev) => prev.map((item) => (item.jobId === jobId ? { ...item, ...patch } : item)));
+    setQueue((prev) => {
+      const next = prev.map((item) => (item.jobId === jobId ? { ...item, ...patch } : item));
+      publish(next);
+      return next;
+    });
 
   onMount(() => {
     const unsubscribe = onRenderEvents({
@@ -78,7 +111,11 @@ export const RenderModal: Component = () => {
         currentFrame: 0,
         totalFrames: 0,
       };
-      setQueue((prev) => [item, ...prev]);
+      setQueue((prev) => {
+        const next = [item, ...prev];
+        publish(next);
+        return next;
+      });
       store.addToast(`Queued ${quality()} render (${res.jobId})`, 'success');
 
       // poll until the engine reports a terminal state

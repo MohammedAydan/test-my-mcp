@@ -34,7 +34,12 @@ export function renderBackground(layer: BackgroundLayer, ctx: LayerContext): { c
   if (v.variant === "meshGradient") {
     content.style.background = v.base;
     const durationSec = ctx.scene.durationMs / 1000;
-    v.blobs.forEach((b, i) => {
+    // A malformed scene must DEGRADE, never crash the preview. The
+    // inspector used to write `{variant:"meshGradient", color:…}` (no
+    // `blobs`), and `v.blobs.forEach` threw `Cannot read properties of
+    // undefined (reading 'forEach')` — the preview died before the user
+    // could see WHY the save was refused.
+    (Array.isArray(v.blobs) ? v.blobs : []).forEach((b, i) => {
       const blob = document.createElement("div");
       blob.style.position = "absolute";
       blob.style.left = `${b.xPct}%`;
@@ -68,7 +73,9 @@ export function renderBackground(layer: BackgroundLayer, ctx: LayerContext): { c
     const durationSec = ctx.scene.durationMs / 1000;
     const W = ctx.width;
     const H = ctx.height;
-    for (let i = 0; i < v.count; i++) {
+    // the same degradation rule as `meshGradient` above
+    const count = typeof v.count === 'number' && Number.isFinite(v.count) ? v.count : 0;
+    for (let i = 0; i < count; i++) {
       const dot = document.createElement("div");
       const size = v.sizePx * (0.6 + rng() * 0.8);
       dot.style.position = "absolute";

@@ -1334,8 +1334,12 @@ export const TimelinePanel: Component = () => {
       const key = event.key.toLowerCase();
 
       if (event.ctrlKey || event.metaKey) {
-        if (key === 'k') {
+        // Ctrl+K is the COMMAND PALETTE (App.tsx owns it). The razor split
+        // lives on Ctrl+E (Premiere's "Split Clip" chord) — binding both to
+        // Ctrl+K made ONE keypress open the palette AND split the layer.
+        if (key === 'e') {
           event.preventDefault();
+          event.stopPropagation();
           store.razorSplitAtPlayhead();
         }
         return;
@@ -1896,7 +1900,7 @@ export const TimelinePanel: Component = () => {
         <button
           class={`mf-btn is-icon ${state.activeTool === 'razor' ? 'is-active' : ''}`}
           id="timeline-razor"
-          title="Razor split at the playhead (Ctrl+K)"
+          title="Razor split at the playhead (Ctrl+E)"
           aria-label="Razor split at the playhead"
           aria-pressed={state.activeTool === 'razor'}
           onClick={() => {

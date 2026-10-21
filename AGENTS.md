@@ -107,6 +107,28 @@ packages/
     `interpolateKeyframeValue` in `@motionforge/scene-spec` — the same function
     the runtime renders with), and committing an edit to a keyframed property
     writes the keyframe at the playhead (After Effects semantics).
+19. **A DISCRIMINATED union is rebuilt, never spread.** `background.variant`
+    (and every other discriminated union) is a set of STRICT objects: each
+    variant has its own required keys and rejects the other variants' keys.
+    The inspector therefore BUILDS the new variant payload from scratch
+    (`buildBackgroundVariant()`) instead of spreading the previous one —
+    spreading produced `meshGradient` payloads that still carried `color` and
+    had no `blobs`, and the engine refused the save. The runtime must also
+    DEGRADE on a malformed variant (`Array.isArray(v.blobs) ? v.blobs : []`),
+    never crash the preview.
+20. **A scene store write is SERIALISED per scene id.** `SceneStore.upsert()`
+    takes a per-id promise chain (`withSceneLock`): concurrent saves to the
+    SAME id advance the revision one by one, and saves to different ids stay
+    parallel. Without the lock, 25 concurrent saves all read revision 0, all
+    wrote revision 1, and 24 saves were silently lost.
+21. **A render job lives in the store.** `state.renderQueue` is the single
+    source of truth for the render jobs; the Render Queue modal PUBLISHES
+    every change into it (`store.setRenderQueue`). A local signal alone left
+    the status bar, the command palette and any automation blind.
+22. **One chord, one owner.** `Ctrl+K` is the command palette. The timeline's
+    razor split moved to `Ctrl+E` (Premiere's "Split Clip"), because both
+    handlers ran on one keypress and the layer was split AND the palette
+    opened.
 
 ## Commands
 

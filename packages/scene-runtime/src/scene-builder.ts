@@ -3,6 +3,7 @@ import {
   bridgedWindow,
   foregroundDeadGaps,
   isForegroundContent,
+  LEGACY_PROPERTY_MAP,
   MAX_DEAD_GAP_MS,
   planSeamBridges,
   type ActWindow,
@@ -321,6 +322,39 @@ export const PIPELINE_OWNED_PROPERTIES: readonly string[] = [
 ];
 
 /**
+ * The unified property names the pipeline owns.
+ *
+ * The legacy `tracks` array accepts ANY property string, and the two
+ * spellings of a transform property coexist in the wild: the dotted legacy
+ * form (`position.yPct`) and the flat unified form (`yPct`). They name the
+ * SAME value, so the pipeline must own BOTH.
+ */
+const PIPELINE_OWNED_UNIFIED: ReadonlySet<string> = new Set([
+  "opacity",
+  "scale",
+  "rotation",
+  "xPct",
+  "yPct",
+]);
+
+/**
+ * True when the unified transform pipeline owns this property.
+ *
+ * WHY THIS EXISTS: a legacy track that says `yPct` (instead of
+ * `position.yPct`) used to fall through to the element-tween path, which
+ * called `gsap.set(el, { yPct: 40 })`. GSAP has no CSS plugin for `yPct` —
+ * it is a Pixi property — so the write was REJECTED ("Invalid property yPct
+ * set to 40 Missing plugin? gsap.registerPlugin()") and the value was
+ * silently dropped, while the pipeline was simultaneously animating the very
+ * same property. Two writers, one of them broken.
+ */
+export function isPipelineOwnedProperty(property: string): boolean {
+  if (PIPELINE_OWNED_UNIFIED.has(property)) return true;
+  const unified = LEGACY_PROPERTY_MAP[property];
+  return unified !== undefined && PIPELINE_OWNED_UNIFIED.has(unified);
+}
+
+/**
  * Apply the legacy `tracks` of a layer — for the properties the unified
  * transform pipeline does NOT own.
  *
@@ -334,7 +368,7 @@ export function applyKeyframeTracks(
 ): void {
   for (const track of tracks) {
     if (!track.keyframes || track.keyframes.length === 0) continue;
-    if (PIPELINE_OWNED_PROPERTIES.includes(track.property)) continue;
+    if (isPipelineOwnedProperty(track.property)) continue;
     const sorted = [...track.keyframes].sort((a, b) => a.at - b.at);
     const prop = track.property;
 

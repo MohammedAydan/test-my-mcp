@@ -255,7 +255,7 @@ export const commands: Command[] = [
     id: 'timeline.split',
     title: 'Razor Split at Playhead',
     category: 'Timeline',
-    shortcut: 'Ctrl+K',
+    shortcut: 'Ctrl+E',
     run: () => store.razorSplitAtPlayhead(),
   },
   {

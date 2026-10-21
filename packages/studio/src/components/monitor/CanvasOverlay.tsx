@@ -987,7 +987,7 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
     // (this rewrites the scene, so it runs BEFORE the save snapshots it)
     syncKeyframes(g);
     // ONE atomic save for the whole gesture
-    void store.executeSave();
+    void store.executeSave().catch(() => undefined);
   };
 
   const handlePointerCancel = () => {
@@ -1052,7 +1052,7 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
         field === 'title' ? `Edit card title: ${layer.name ?? layer.id}` : `Edit card body: ${layer.name ?? layer.id}`
       );
     }
-    void store.executeSave();
+    void store.executeSave().catch(() => undefined);
   };
 
   /* ── rendering ───────────────────────────────────────────────────────── */

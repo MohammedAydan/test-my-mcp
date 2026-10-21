@@ -60,6 +60,60 @@ interface AccordionProps {
   children: unknown;
 }
 
+/**
+ * Build a VALID background variant payload.
+ *
+ * The background's `variant` is a DISCRIMINATED union of STRICT objects:
+ * each variant carries its own required keys and rejects every other
+ * variant's keys. The inspector used to spread the previous variant into the
+ * new one, which produced scenes the engine refused to store — a
+ * `meshGradient` still carried `color` and had no `blobs`, so the save was
+ * rejected with `layers.0.variant.blobs: Required; layers.0.variant:
+ * Unrecognized key(s) in object: 'color'`.
+ *
+ * The payload is therefore rebuilt from scratch, carrying over only the
+ * values that are MEANINGFUL in the new variant.
+ */
+function buildBackgroundVariant(
+  variant: string,
+  previous: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  switch (variant) {
+    case 'meshGradient':
+      return {
+        variant: 'meshGradient',
+        base: (previous?.base as string) ?? '#05070d',
+        blobs: [
+          { color: '#12224a', xPct: 22, yPct: 30, radiusPct: 58, drift: 0.5 },
+          { color: '#0d6b63', xPct: 78, yPct: 68, radiusPct: 52, drift: 0.35 },
+          { color: '#3b1f7a', xPct: 50, yPct: 18, radiusPct: 44, drift: 0.8 },
+        ],
+      };
+    case 'particles':
+      return {
+        variant: 'particles',
+        count: 180,
+        color: (previous?.color as string) ?? '#8ab4ff',
+        sizePx: 2.5,
+        speed: 1,
+        direction: 'up',
+      };
+    case 'media':
+      return {
+        variant: 'media',
+        assetId: (previous?.assetId as string) ?? 'logo',
+        blurPx: 0,
+        dimOpacity: 0,
+      };
+    case 'solid':
+    default:
+      return {
+        variant: 'solid',
+        color: (previous?.color as string) ?? '#05070d',
+      };
+  }
+}
+
 const Accordion: Component<AccordionProps> = (props) => {
   const headId = () => `mf-accordion-head-${props.section}`;
   const bodyId = () => `mf-accordion-body-${props.section}`;
@@ -398,7 +452,7 @@ export const EffectControlsPanel: Component = () => {
         const authored = valueScale === 1 ? val : val / valueScale;
         store.setLayerKeyframe(id, property, state.playhead, authored);
       }
-      void store.executeSave();
+      void store.executeSave().catch(() => undefined);
     },
   });
 
@@ -459,7 +513,7 @@ export const EffectControlsPanel: Component = () => {
         // the undo target, then write the final value through the store action
         store.patchLayer(id, { filters: filterBag(id, key, before ?? neutral, neutral) });
         store.setLayerFilter(id, key, val === neutral ? undefined : val);
-        void store.executeSave();
+        void store.executeSave().catch(() => undefined);
       },
     };
   };
@@ -669,7 +723,7 @@ export const EffectControlsPanel: Component = () => {
                         scene.durationMs = Math.round(val);
                       }, 'Scrub composition duration')
                     }
-                    onCommit={() => void store.executeSave()}
+                    onCommit={() => void store.executeSave().catch(() => undefined)}
                   />
                 </div>
                 <div class="mf-field">
@@ -945,11 +999,17 @@ export const EffectControlsPanel: Component = () => {
                     onChange={(e) =>
                       patch(
                         {
-                          variant: {
-                            ...(layer().variant ?? {}),
-                            variant: e.currentTarget.value,
-                            color: (layer().variant?.color as string) ?? '#05070d',
-                          },
+                          // The variant union is DISCRIMINATED: each variant has
+                          // its own required keys, and the object is STRICT —
+                          // a key from another variant is a validation error.
+                          // Spreading the previous variant therefore produced
+                          // scenes the engine refused to save (e.g. `color`
+                          // on a `meshGradient`, which needs `blobs`).
+                          // The payload is rebuilt from scratch instead.
+                          variant: buildBackgroundVariant(
+                            e.currentTarget.value,
+                            layer().variant as Record<string, unknown> | undefined
+                          ),
                         },
                         `Set background style of ${layer().id}`
                       )
@@ -961,20 +1021,77 @@ export const EffectControlsPanel: Component = () => {
                   </select>
                 </div>
                 <div class="mf-field">
-                  <label class="mf-label">Color</label>
+                  <label class="mf-label">
+                    {layer().variant?.variant === 'meshGradient' ? 'Base Color' : 'Color'}
+                  </label>
                   <input
                     type="color"
                     class="mf-color-input"
-                    value={String(layer().variant?.color ?? '#05070d')}
+                    value={String(
+                      layer().variant?.variant === 'meshGradient'
+                        ? ((layer().variant?.base as string) ?? '#05070d')
+                        : ((layer().variant?.color as string) ?? '#05070d')
+                    )}
                     disabled={layer().locked}
                     onChange={(e) =>
                       patch(
-                        { variant: { ...(layer().variant ?? {}), color: e.currentTarget.value } },
+                        {
+                          variant:
+                            layer().variant?.variant === 'meshGradient'
+                              ? // `meshGradient` has NO `color` key — it has `base`
+                                // and a `blobs` array. Writing `color` here would
+                                // make the scene invalid.
+                                {
+                                  ...(layer().variant as Record<string, unknown>),
+                                  base: e.currentTarget.value,
+                                }
+                              : {
+                                  ...(layer().variant as Record<string, unknown>),
+                                  color: e.currentTarget.value,
+                                },
+                        },
                         `Set background color of ${layer().id}`
                       )
                     }
                   />
                 </div>
+                <Show when={layer().variant?.variant === 'meshGradient'}>
+                  <div class="mf-field">
+                    <label class="mf-label">Blob Colors</label>
+                    <div class="mf-blob-colors">
+                      {(
+                        (layer().variant?.blobs as Array<{ color?: string }> | undefined) ?? []
+                      ).map((blob, index) => (
+                        <input
+                          type="color"
+                          class="mf-color-input"
+                          title={`Blob ${index + 1}`}
+                          value={String(blob?.color ?? '#12224a')}
+                          disabled={layer().locked}
+                          onChange={(e) => {
+                            const blobs = [
+                              ...((layer().variant?.blobs as
+                                | Array<Record<string, unknown>>
+                                | undefined) ?? []),
+                            ];
+                            const current = blobs[index];
+                            if (!current) return;
+                            blobs[index] = { ...current, color: e.currentTarget.value };
+                            patch(
+                              {
+                                variant: {
+                                  ...(layer().variant as Record<string, unknown>),
+                                  blobs,
+                                },
+                              },
+                              `Set blob ${index + 1} of ${layer().id}`
+                            );
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </Show>
               </Show>
 
               <Show when={layer().type === 'foregroundFX'}>
@@ -1286,7 +1403,7 @@ export const EffectControlsPanel: Component = () => {
                       const id = state.selectedLayerId;
                       if (!id) return;
                       store.setLayerFilter(id, 'shadowColor', e.currentTarget.value);
-                      void store.executeSave();
+                      void store.executeSave().catch(() => undefined);
                     }}
                   />
                 </div>
@@ -1362,7 +1479,7 @@ export const EffectControlsPanel: Component = () => {
                   onChange={(val) =>
                     store.patchLayer(layer().id, { duration: Math.max(100, val - (layer().at ?? 0)) })
                   }
-                  onCommit={() => void store.executeSave()}
+                  onCommit={() => void store.executeSave().catch(() => undefined)}
                 />
               </div>
 

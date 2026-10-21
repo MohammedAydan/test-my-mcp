@@ -1118,6 +1118,20 @@ export const store = {
 
   /* ── chrome ─────────────────────────────────────────────────────────── */
 
+  /**
+   * Publish the render queue to the store.
+   *
+   * The Render Queue modal used to keep its queue in a LOCAL signal, so
+   * `state.renderQueue` stayed `0` forever: nothing outside the modal (the
+   * status bar, the command palette, an automation) could see that a render
+   * was running. The modal is now the WRITER and the store the single
+   * source of truth.
+   */
+  setRenderQueue(queue: RenderJobStatus[]): void {
+    setState('renderQueue', queue);
+    writeStorage('motionforge_render_queue', queue);
+  },
+
   setActiveModal(modal: string | null): void {
     setState('activeModal', modal);
   },

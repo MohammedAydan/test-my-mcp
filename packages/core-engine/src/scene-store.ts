@@ -156,6 +156,15 @@ interface PersistedScene {
 /** Scene store + live-preview event bus (SSE), backed by `data/scenes/`. */
 export class SceneStore {
   private scenes = new Map<string, StoredScene>();
+
+  /**
+   * Per-scene write chains.
+   *
+   * One promise chain per scene id: concurrent saves to the SAME id are
+   * serialised (so the revision counter advances and no save is lost), while
+   * saves to DIFFERENT ids stay fully parallel.
+   */
+  private readonly writeChains = new Map<string, Promise<void>>();
   readonly bus = new EventEmitter();
   /** files that failed to hydrate, surfaced so a broken scene is never silent */
   readonly loadIssues: SceneStoreLoadIssue[] = [];
@@ -327,24 +336,63 @@ export class SceneStore {
 
   async upsert(scene: SceneSpec, meta: { projectPath?: string } = {}): Promise<UpsertResult> {
     const id = scene.id ?? sceneIdFromName(scene.name);
-    const stored = { ...scene, id };
-    const previous = this.scenes.get(id);
-    const hash = sceneHash(stored);
-    const unchanged = previous?.hash === hash;
-    const entry: StoredScene = {
-      scene: stored,
-      updatedAt: Date.now(),
-      revision: unchanged && previous ? previous.revision : (previous?.revision ?? 0) + 1,
-      hash,
-      ...(meta.projectPath ?? previous?.projectPath
-        ? { projectPath: meta.projectPath ?? previous?.projectPath }
-        : {}),
-    };
+    // The write is SERIALISED per scene id.
+    //
+    // THE BUG THIS FIXES: `upsert` used to read the previous revision BEFORE
+    // the async disk write, so 25 concurrent saves to the SAME id all read
+    // revision 0, all computed revision 1, and all wrote the same file. The
+    // store ended at revision 1 and 24 of the 25 saves were silently lost —
+    // the atomic temp-file+rename kept the JSON valid, but the LAST writer
+    // won and the revision counter never advanced.
+    //
+    // The lock is per id, so saves to DIFFERENT scenes still run in parallel.
+    return await this.withSceneLock(id, async () => {
+      const stored = { ...scene, id };
+      const previous = this.scenes.get(id);
+      const hash = sceneHash(stored);
+      const unchanged = previous?.hash === hash;
+      const entry: StoredScene = {
+        scene: stored,
+        updatedAt: Date.now(),
+        revision: unchanged && previous ? previous.revision : (previous?.revision ?? 0) + 1,
+        hash,
+        ...(meta.projectPath ?? previous?.projectPath
+          ? { projectPath: meta.projectPath ?? previous?.projectPath }
+          : {}),
+      };
 
-    await this.persist(entry);
-    this.scenes.set(id, entry);
-    this.bus.emit(`scene:${id}`, { type: previous ? "updated" : "created" });
-    return { id, status: previous ? "updated" : "created", revision: entry.revision, hash, unchanged };
+      await this.persist(entry);
+      this.scenes.set(id, entry);
+      this.bus.emit(`scene:${id}`, { type: previous ? "updated" : "created" });
+      return { id, status: previous ? "updated" : "created", revision: entry.revision, hash, unchanged };
+    });
+  }
+
+  /**
+   * Run `task` with exclusive access to one scene id.
+   *
+   * A per-id promise chain: every caller waits for the previous holder of the
+   * SAME id, and callers on OTHER ids never wait for each other.
+   */
+  private async withSceneLock<T>(id: string, task: () => Promise<T>): Promise<T> {
+    const prior = this.writeChains.get(id) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const chain = prior.then(() => gate);
+    this.writeChains.set(id, chain);
+    await prior;
+    try {
+      return await task();
+    } finally {
+      release();
+      // Drop the entry when this call was the last in the chain, so the map
+      // does not grow without bound.
+      void chain.then(() => {
+        if (this.writeChains.get(id) === chain) this.writeChains.delete(id);
+      });
+    }
   }
 
   private async persist(entry: StoredScene): Promise<void> {

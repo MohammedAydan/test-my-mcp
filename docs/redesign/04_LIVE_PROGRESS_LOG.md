@@ -166,6 +166,43 @@ Legend: `⬜` not started · `🟡` in progress · `✅` complete · `⛔` block
 
 ---
 
+## PHASE 6 — Production Audit: Benchmarks & Engine Hardening
+
+> Driven by a production audit of the v5 build. Three benchmark scripts
+> measure the REAL system (the Electron Studio, the MCP server and
+> `EngineCore` directly), and every defect they found was fixed.
+
+| Milestone ID | Module Name | Implementation Status | Typecheck & Unit Tests | Practical Verification | Notes / Commit |
+| --- | --- | --- | --- | --- | --- |
+| P6-1 | `scripts/benchmark-ui-video-production.cjs` | ✅ | n/a (E2E) | ✅ 72/72 | Builds a 6 s / 1920×1080 / 30 fps promo **entirely through the UI** (New → rename → gradient background → Text Tool → canvas drag → keyframe stopwatches → Card tool → gizmo move/resize/rotate → timeline trims → 2 SFX drags onto A1 → Fit Timeline → Render modal) and exports an H.264 + AAC MP4. Gizmo ↔ rendered element: **0.10 px** max error at −30°. Drag → runtime round trip: **2.01 ms**. Draft render 23.6 s, production 79.4 s. |
+| P6-2 | `scripts/benchmark-mcp-video-production.cjs` | ✅ | n/a (E2E) | ✅ | Authors an 8 s SaaS promo through the **MCP tool surface only**, inspects it at 4 timestamps, proves the live cross-process UI sync, and exports the MP4. |
+| P6-3 | `scripts/benchmark-backend-engine.cjs` | ✅ | n/a (E2E) | ✅ | Schema/sanitizer stress over 360 scenes, 25-way concurrent persistence, cold/warm inspection latency, render throughput, capture-vs-encode split and an A/B that attributes the frame cost. |
+| P6-4 | **The discriminated-union fix** (`EffectControlsPanel.tsx`) | ✅ | ✅ studio typecheck | ✅ | `buildBackgroundVariant()` REBUILDS the payload per variant instead of spreading the previous one. The old code wrote `{variant:"meshGradient", color:…}` — the engine refused it (`layers.0.variant.blobs: Required; layers.0.variant: Unrecognized key(s) in object: 'color'`). The gradient is now authorable, and the blob colours are editable. |
+| P6-5 | **The runtime degradation fix** (`layers/background.ts`) | ✅ | ✅ runtime typecheck | ✅ | `Array.isArray(v.blobs) ? v.blobs : []` (and a guarded `count`). A malformed variant used to CRASH the preview with `Cannot read properties of undefined (reading 'forEach')` — the user saw a dead canvas instead of the reason the save failed. |
+| P6-6 | **The unhandled-rejection fix** | ✅ | ✅ studio typecheck | ✅ | Every `void store.executeSave()` call site now `.catch(() => undefined)`, matching the existing convention. A failed save no longer logs an unhandled `SceneServiceError`. |
+| P6-7 | **The render-queue fix** (`RenderModal.tsx`, `store.ts`) | ✅ | ✅ studio typecheck | ✅ | The modal now PUBLISHES every queue change into `state.renderQueue` (`store.setRenderQueue`). `state.renderQueue` stayed `0` forever before, so the status bar, the command palette and any automation were blind. |
+| P6-8 | **The chord-collision fix** | ✅ | ✅ studio typecheck | ✅ | `Ctrl+K` is the command palette alone; the razor split moved to `Ctrl+E` (Premiere's Split Clip). One `Ctrl+K` used to open the palette **and** split the layer. |
+| P6-9 | **The legacy-keyframe fix** (`scene-builder.ts`) | ✅ | ✅ runtime typecheck | ✅ | `isPipelineOwnedProperty()` normalises the property through `LEGACY_PROPERTY_MAP`, so a legacy track that says `yPct` is owned by the pipeline instead of falling through to `gsap.set(el, {yPct: 40})` — which GSAP REJECTED (`Invalid property yPct set to 40 Missing plugin? gsap.registerPlugin()`), silently dropping the value. |
+| P6-10 | **The concurrent-write fix** (`scene-store.ts`) | ✅ | ✅ 3 new unit tests | ✅ | `withSceneLock()` serialises writes per scene id. 25 concurrent saves to ONE id returned **revision 1 twenty-five times** and lost 24 saves; they now form a gapless 1…25. Saves to different ids stay parallel. |
+| P6-11 | `docs/reports/` | ✅ | n/a (doc) | n/a | Three reports + an index, every figure taken from a benchmark run. |
+
+---
+
+## Defects found by the Phase-6 audit
+
+| ID | Defect | Evidence | Status |
+| --- | --- | --- | --- |
+| P6-D1 | **The inspector could not author a gradient background.** The variant is a discriminated union of strict objects; the inspector spread the previous variant into the new one, so a `meshGradient` carried `color` and had no `blobs`. | The engine refused the save: `layers.0.variant.blobs: Required; layers.0.variant: Unrecognized key(s) in object: 'color'`. | ✅ FIXED — P6-4 |
+| P6-D2 | **The malformed variant crashed the preview renderer.** `packages/scene-runtime/src/layers/background.ts` read `v.blobs.forEach()` with no guard. | `TypeError: Cannot read properties of undefined (reading 'forEach') at renderBackground`. | ✅ FIXED — P6-5 |
+| P6-D3 | **A failed save left an unhandled promise rejection.** | The renderer logged 1 × `SceneServiceError: invalid scene: layers.3.duration: layer window extends past scene end`. | ✅ FIXED — P6-6 |
+| P6-D4 | **The store never recorded the render queue.** | `state.renderQueue` was `0` after a successful render. | ✅ FIXED — P6-7 |
+| P6-D5 | **`Ctrl+K` was bound twice.** | One keypress took the layer count from 5 to 6 and opened the palette. | ✅ FIXED — P6-8 |
+| P6-D6 | **A legacy track using the unified property name was silently dropped.** `keyframeTrackSchema.property` is an arbitrary string, so `yPct` is legal — but the pipeline's skip-list only knew `position.yPct`, so it fell through to a GSAP element tween. | `[renderer:console] Invalid property yPct set to 40 Missing plugin? gsap.registerPlugin()` (and `set to 55`). | ✅ FIXED — P6-9 |
+| P6-D7 | **25 concurrent saves to one scene id lost 24 of them.** All read revision 0 before the async write, all computed revision 1, and the last writer won. The atomic temp-file+rename kept the JSON valid, so the loss was invisible. | The benchmark: `returned revisions [1,1,1,…,1] — unique revisions 1 (duplicates: 24)`, `persisted envelope revision 1`, against a sequential control of a gapless `1…25`. | ✅ FIXED — P6-10 |
+| P6-D8 | **A software-rendered 70 px-blurred mesh gradient dominates the frame cost**, and on a GPU-less host it can get the browser OOM-killed mid-render. | The benchmark's render failed twice: first `page.screenshot: Timeout 30000ms exceeded`, then `Target page, context or browser has been closed … signal=SIGKILL`; the host's `oom_kill` counter incremented. | ✅ DOCUMENTED — §3 of the backend audit; the A/B quantifies it. |
+
+---
+
 ## Regression ledger
 
 | Date | Change | Tests | Typecheck | Build | Electron |
@@ -175,3 +212,4 @@ Legend: `⬜` not started · `🟡` in progress · `✅` complete · `⛔` block
 | 2026-10-20 | v4 overhaul — Phase 4 (full-stack UX & gizmo verification) | 421 passing (unchanged — the v4 work is test-side) | 0 errors (6 workspaces) | 0 errors | ✅ 64/65 E2E checks (1 open product defect, V4-1) + the v3.0 harness still 60/60 |
 | 2026-10-20 | v4 defect fixes (V4-1 … V4-5) + the shared-icon fix | 421 → 496 passing | 0 errors (6 workspaces) | 0 errors | ✅ 66/66 v4 checks + the v3.0 harness still 60/60 |
 | 2026-10-21 | v5 Phase 5 — UI polish (test isolation, navigator, left-dock splitter, inspector re-order, badge no-wrap) | 496 passing (unchanged) | 0 errors (6 workspaces) | 0 errors | ✅ 60/60 v3 checks + ✅ 66/66 v4 checks |
+| 2026-10-21 | v6 Phase 6 — production audit (3 benchmarks, 3 reports) + 7 product fixes | 496 → 499 passing | 0 errors (6 workspaces) | 0 errors | ✅ 72/72 UI-benchmark checks + the v3 (60/60) and v4 (66/66) harnesses |

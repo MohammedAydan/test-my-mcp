@@ -152,7 +152,7 @@ export const StudioModal: Component = () => {
     }, `Added ${kind} layer`);
     store.selectLayer(id);
     store.addToast(`Created ${kind} layer`, 'success');
-    void store.executeSave();
+    void store.executeSave().catch(() => undefined);
     close();
   };
 
