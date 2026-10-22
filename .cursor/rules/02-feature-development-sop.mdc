@@ -1,0 +1,61 @@
+---
+description: Mandatory Standard Operating Procedure for adding or modifying layer primitives, engine capabilities, and MCP tools
+globs: packages/**/*
+---
+
+# Feature Development Standard Operating Procedure (SOP)
+
+When adding or modifying any layer primitive, engine domain capability, or MCP tool in MotionForge, you must execute the following sequential development checklist without skipping any step:
+
+## 1. Schema Definition (`packages/scene-spec/`)
+- Define the new layer or feature schema in `packages/scene-spec/src/layers/<kind>.ts` (or relevant domain schema file).
+- Use `strictObject` and reuse shared primitives (`idSchema`, `msSchema`, `colorSchema`, `layerBaseSchema`).
+- In `packages/scene-spec/src/scene.ts`:
+  - Add the layer name to `LAYER_TYPES`.
+  - Register the layer schema in `layerSchema` discriminated union.
+  - Export inferred TypeScript types.
+
+## 2. Sanitizer Normalization & Healing (`packages/scene-spec/src/sanitize.ts`)
+- Add sanitization logic in `sanitizeSceneInput()` for the new schema.
+- Normalize incoming raw values: clamp bounds, strip invalid transient keys (`_`-prefixed), ensure defaults for mandatory base attributes (`trackIndex`, `visible`, `locked`, `blendMode`).
+- Ensure both engine (`EngineCore.saveScene`) and Studio (`services/engine-bridge.ts`) benefit from identical normalization.
+
+## 3. Field Guide Documentation & Schema Examples (`packages/scene-spec/src/field-guide.ts`)
+- Update `packages/scene-spec/src/field-guide.ts` to document the new primitive or capability.
+- Provide:
+  - Required and optional keys.
+  - Nested shape contracts.
+  - A fully schema-valid, copy-pasteable minimal example object.
+- Ensure `tests/field-guide.spec.ts` passes so authoring guidance never drifts from schemas.
+
+## 4. Deterministic Runtime Renderer (`packages/scene-runtime/`)
+- Implement the layer renderer in `packages/scene-runtime/src/layers/<kind>.ts`.
+- Requirements for the renderer:
+  - Pure deterministic function of time `f(timeMs)`. Zero calls to `Date.now()`, `performance.now()`, or `Math.random()`.
+  - Adhere to the Single Transform Owner rule: write `transform`, `opacity`, and `filter` only via `transform.ts`; set anchor (`left`, `top`) once during layer initialization.
+  - Implement full In/Out animation envelopes (`envelope.ts`) for temporary effects.
+- Register the renderer in `packages/scene-runtime/src/layers/index.ts` (`renderLayer` switch).
+
+## 5. Bounds Telemetry & Inspection Integration (`packages/scene-runtime/src/scene-builder.ts`)
+- Implement bounding box telemetry in `makeFrameDescriber()` in `packages/scene-runtime/src/scene-builder.ts` (published as `window.describeFrame` and `layerBoundsReport` in `packages/scene-runtime/src/index.ts`).
+- Calculate accurate intrinsic `{ left, top, width, height }` bounds for `getLayerBoundsAt()` and `describeFrame()`.
+- Ensure bounds can be queried with zero rasterisation via `window.seekToFrameForLayout()`.
+
+## 6. Minimal Studio Type Compatibility (`packages/studio/`)
+- Update layer union types and switch statements in `packages/studio/src/` (e.g., inspector layer panels, timeline clip renderers).
+- Maintain complete type compatibility across all workspaces so `npm run typecheck -ws` passes cleanly without warnings or errors.
+
+## 7. Unit & Contract Tests
+- Add comprehensive schema validation tests in `packages/scene-spec/tests/`.
+- Add runtime rendering tests in `packages/scene-runtime/tests/`.
+- If an MCP tool or engine method was added, add integration tests in `packages/core-engine/tests/` and `packages/mcp-server/tests/`.
+
+## 8. Verification & Progress Tracker Update
+- Execute full static and unit verification:
+  ```bash
+  npm run typecheck -ws
+  npm run build -ws
+  npm test
+  node scripts/verify-no-emoji.cjs
+  ```
+- Update `docs/mcp-evolution/01_PROGRESS_TRACKER.md` with the corresponding milestone status, test coverage, and verification results.

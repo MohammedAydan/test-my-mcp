@@ -45,7 +45,7 @@ packages/
    render frames.)
 5. **No placeholders.** No `TODO`, no stubbed return values, no mock data committed as
    if functional. If a feature isn't built yet, it doesn't ship in that commit.
-6. **The LLM surface is exactly 13 tools** — the original six
+6. **The LLM surface is 13 tools today; 17 when v5.0 is complete** — the original six
    (`get_motion_capabilities`, `init_creative_project`, `create_or_update_scene`,
    `inspect_scene_keyframes`, `open_live_timeline_preview`, `render_video`) plus the
    seven the production audit added (`render_scene`, `get_layer_bounds`,
@@ -415,3 +415,36 @@ Key points for agents working in this repo:
    against the real Electron app) and `npm run verify:ux-gizmo` (66 checks)
    must all be green.
 
+---
+
+## v5.0 Agency Engine (in progress)
+
+MotionForge v5.0 evolves the codebase into an autonomous "Headless AI Video Agency Engine" capable of transforming raw briefs into broadcast-grade commercial video deliverables.
+
+### Target Inventory Targets
+- **17 MCP Tools:** 13 tools today, expanding to 17 with `critique_and_autofix_scene`, `auto_choreograph_audio`, `generate_storyboard_from_brief`, and `compose_storyboard_video`.
+- **16 Layer Kinds:** 10 existing layer kinds, expanding to 16 with `deviceMockup`, `cursorFlow`, `bentoGrid`, `connectorDiagram`, `metricTicker`, and `comparisonSplit`.
+- **6 Theme Presets:** `appleKeynoteDark`, `linearMinimal`, `stripeVibrant`, `vercelMonochrome`, `emeraldFintech`, and `editorialLight` (see `packages/scene-spec/src/themes.ts`).
+- **12 Layout Slots:** `heroCenter`, `topHeader`, `topSubhead`, `bottomSubhead`, `bottomCenterCta`, `splitLeft`, `splitRight`, `gridTopLeft`, `gridTopRight`, `gridBottomLeft`, `gridBottomRight`, and `centerStage`.
+- **14 Procedural SFX Cues:** 6 existing cues (`shimmer`, `riser`, `whoosh`, `subImpact`, `pop`, `click`), expanding to 14 with 8 new cues: `typingTick`, `mouseClick`, `notificationChime`, `bassDrop`, `glitchHit`, `softSwoosh`, `counterTick`, and `ambientPad`.
+
+### Milestone Tracker
+Live progress is tracked in `docs/mcp-evolution/01_PROGRESS_TRACKER.md`. All milestones (M0 through M12) must be completed in order.
+
+### Hardware Envelope Rule
+All workloads must execute within the constrained hardware baseline:
+- 2 vCPU cores, 3.8 GB RAM maximum, no GPU.
+- Software rasterisation is the host default (headless Chromium, no GPU flags requested; launch args: `--disable-lcd-text`, `--font-render-hinting=none`, `--force-device-scale-factor=1`, `--hide-scrollbars`).
+- Strictly **ONE** Chromium process at a time.
+- All browser operations (warm-page keyframe inspection, layout bounds queries, chunked video rendering) execute sequentially, never in parallel.
+
+### One-Feature-At-A-Time Execution Loop
+When implementing or modifying a layer primitive or engine capability, agents must strictly follow the standard development loop:
+1. Schema definition (`packages/scene-spec/src/layers/` and union registration in `packages/scene-spec/src/scene.ts`).
+2. Sanitizer normalization & healing (`packages/scene-spec/src/sanitize.ts`).
+3. Field guide documentation & minimal examples (`packages/scene-spec/src/field-guide.ts`).
+4. Deterministic runtime renderer (`packages/scene-runtime/src/layers/`).
+5. Intrinsic bounding boxes & telemetry (`makeFrameDescriber()` in `packages/scene-runtime/src/scene-builder.ts` published as `window.describeFrame` and `layerBoundsReport` in `packages/scene-runtime/src/index.ts`).
+6. Minimal Studio type/switch compatibility to maintain typecheck cleanliness.
+7. Unit & contract tests (`packages/scene-spec/tests/` and `packages/scene-runtime/tests/`).
+8. Verification (`npm run typecheck -ws && npm test`) and progress tracker update.

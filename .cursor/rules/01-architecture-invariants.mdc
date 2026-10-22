@@ -1,0 +1,42 @@
+---
+description: Architectural invariants and non-negotiable system rules for MotionForge
+globs: **/*
+---
+
+# Architecture Invariants
+
+Every agent and human contributing to this codebase must adhere to the following architectural invariants without exception:
+
+## 1. Zero HTTP Servers
+- `core-engine` and `mcp-server` communicate purely in-process. `packages/mcp-server/src/engine-client.ts` directly invokes `createEngineCore()`.
+- No Fastify, no Express, no REST API listeners. `EngineConfig.port` is vestigial; the legacy project kit still substitutes an `ENGINE_URL` default (`http://127.0.0.1:4000`) into its templates.
+- The desktop Electron app hosts `EngineCore` in the Electron main process, exposing it via IPC bridge (`packages/studio/src/services/engine-bridge.ts`).
+
+## 2. Zero Emoji
+- Unicode emoji are strictly forbidden in code, comments, templates, tests, documentation, and user interfaces.
+- The static verification gate (`node scripts/verify-no-emoji.cjs`) scans the repository.
+- All user interface iconography must be 100% vector SVG components imported from `packages/studio/src/components/icons/NleIcons.tsx`.
+
+## 3. Strict Zod Schemas & Sanitizer Parity on Both Write Paths
+- `@motionforge/scene-spec` defines the single source of truth for scene syntax via strict Zod schemas. Unknown properties are rejected with `.strict()`.
+- Both write paths (`EngineCore.saveScene` in `packages/core-engine/src/engine-core.ts` and Studio's `api.ts` / `store.ts`) MUST pass input through `sanitizeSceneInput()` before validating with `sceneSpecSchema`.
+- `sanitizeSceneInput()` strips transient properties (`_`-prefixed), heals legacy properties (`_hidden`, `_locked` -> `visible`, `locked`), clamps spatial properties, and assigns default track lanes.
+
+## 4. Single-Chromium Concurrency on 3.8 GB Hosts
+- The execution baseline is 2 vCPU and 3.8 GB RAM with no GPU. Software rasterisation is the host default (headless Chromium, no GPU flags requested; launch args: `--disable-lcd-text`, `--font-render-hinting=none`, `--force-device-scale-factor=1`, `--hide-scrollbars`).
+- Strictly **ONE** Chromium instance may execute at any given time.
+- All browser workloads (warm-page keyframe inspections, layout bounds queries, render worker pools) must execute sequentially, never in parallel.
+- On hosts with <= 6 GB RAM, heavy scenes render in chunks of 60 frames (`HEAVY_SCENE_PIXEL_FRAME_BUDGET`), closing the Playwright browser process after each chunk to flush unmanaged GPU/Skia memory surfaces.
+
+## 5. Zero networkidle
+- Never use `page.waitForLoadState("networkidle")` or arbitrary sleep/polling loops.
+- Headless browser synchronization relies on deterministic lifecycle hooks:
+  - `window.mountSceneFromHost` for hot mounting.
+  - `document.fonts.ready` for font loading.
+  - Image decode completion (`img.decode()`).
+  - Playwright's `window.seekToFrame(frameIndex)` and `window.seekToFrameForLayout(frameIndex)`.
+
+## 6. Frames Never Touch Disk
+- Video frames during rendering never touch the physical filesystem.
+- Playwright captures frame buffers in memory and streams them directly into FFmpeg's standard input pipe (`-f image2pipe`).
+- Keyframe inspection stills written to disk are client deliverables, not intermediate render frames.
