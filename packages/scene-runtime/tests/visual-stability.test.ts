@@ -111,6 +111,7 @@ function makeCtx(overrides: Partial<LayerContext> = {}): LayerContext {
     lottieData: () => ({}),
     registerSeekable: () => undefined,
     assetIntrinsicSize: () => undefined,
+    offloadFilmGrainToEncoder: false,
     ...overrides,
   };
 }

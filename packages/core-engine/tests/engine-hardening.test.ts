@@ -22,6 +22,8 @@ import {
   CAMERA_MOVE_OVERRUNS_SCENE,
   CAMERA_VIEWPORT_EXCEEDS_CANVAS,
   cameraPoses,
+  FILTERED_LAYER_LARGE_SCALE,
+  MAX_SAFE_FILTERED_SCALE,
   resolvePoses,
   safePanRange,
   voidPercent,
@@ -230,6 +232,65 @@ describe("camera diagnostics (report 1 P0-2 / I-3)", () => {
     expect(w.message).toContain("black void");
     // it is a WARNING, not an error: the scene still validates
     expect(validateScene(scene).ok).toBe(true);
+  });
+
+  it("warns when a dense sweep drives an expensive layer to 10x", () => {
+    const scene = sceneOf({
+      schemaVersion: 1,
+      name: "scaled-gradient",
+      canvas: { shape: "16:9", scale: 1080 },
+      durationMs: 6000,
+      layers: [
+        {
+          id: "bg",
+          type: "background",
+          variant: {
+            variant: "meshGradient",
+            base: "#05070d",
+            blobs: [
+              { color: "#3b1f7a", xPct: 20, yPct: 30, radiusPct: 60 },
+              { color: "#1b3a80", xPct: 80, yPct: 60, radiusPct: 50 },
+            ],
+          },
+          keyframes: [
+            { id: "k1", timeMs: 0, property: "scale", value: 1, easing: "linear" },
+            { id: "k2", timeMs: 3000, property: "scale", value: 10, easing: "linear" },
+          ],
+        },
+      ],
+    } as SceneSpecInput);
+    const warnings = analyzeScene(scene).filter((w) => w.code === FILTERED_LAYER_LARGE_SCALE);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.path).toBe("layers.0.scale");
+    expect(warnings[0]!.detail?.peakScale).toBe(10);
+    // 1920×1080 at 10× = 19200×10800 × 4 bytes ≈ 791 MB
+    expect(warnings[0]!.detail?.surfaceMb).toBe(791);
+    expect(warnings[0]!.message).toContain("meshGradient");
+    expect(warnings[0]!.message).toContain(`${MAX_SAFE_FILTERED_SCALE}×`);
+  });
+
+  it("does not warn for a large scale on a plain (unfiltered) layer", () => {
+    const scene = sceneOf({
+      schemaVersion: 1,
+      name: "big-text",
+      canvas: { shape: "16:9", scale: 1080 },
+      durationMs: 3000,
+      layers: [
+        ...BASE_LAYERS,
+        {
+          id: "title",
+          type: "kineticText",
+          text: "Big",
+          sizePx: 96,
+          fill: "#ffffff",
+          keyframes: [
+            { id: "k1", timeMs: 0, property: "scale", value: 1, easing: "linear" },
+            { id: "k2", timeMs: 2000, property: "scale", value: 10, easing: "linear" },
+          ],
+        },
+      ],
+    } as SceneSpecInput);
+    expect(analyzeScene(scene).filter((w) => w.code === FILTERED_LAYER_LARGE_SCALE)).toEqual([]);
   });
 
   it("stays silent when the framing is inside the safe range", () => {

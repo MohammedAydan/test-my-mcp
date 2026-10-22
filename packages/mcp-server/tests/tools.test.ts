@@ -656,6 +656,14 @@ describe("analyze_scene", () => {
         estimatedTotalMs: 313_000,
         frames: 480,
         workerBudget: 1,
+        keyframeDensity: {
+          totalKeyframes: 200,
+          animatedProperties: 5,
+          keyframedLayers: 1,
+          keyframesPerSecond: 25,
+          multiplier: 1.01,
+          reason: "200 keyframes on 1 layer(s) — evaluating them is cheap",
+        },
         heavyEffects: [
           {
             layerId: "bg",

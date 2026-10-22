@@ -25,14 +25,19 @@ export {
   type RuntimeFrameDescription,
 } from "./bounds-report.js";
 export {
+  buildCostReport,
   computeWorkerBudget,
   detectHeavyEffects,
   estimatedFrameMs,
   hostFacts,
+  measureKeyframeDensity,
   perFrameMultiplier,
   sceneHasHeavyEffects,
   workerBudgetForScene,
   HEAVY_EFFECT_MULTIPLIERS,
+  KEYFRAME_DENSITY_MULTIPLIER,
+  KEYFRAME_DENSITY_REFERENCE,
+  MAX_KEYFRAME_DENSITY_MULTIPLIER,
   MAX_PER_FRAME_MULTIPLIER,
   type WorkerBudgetInput,
 } from "./cost-analysis.js";

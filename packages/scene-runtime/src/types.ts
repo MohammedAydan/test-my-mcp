@@ -11,6 +11,25 @@ export interface RenderConfig {
   height: number;
   durationMs: number;
   totalFrames: number;
+  /**
+   * TRUE when the film grain is the ENCODER's job, not the DOM's.
+   *
+   * WHY: a full-bleed translucent overlay is the most expensive thing a
+   * software compositor can be asked to draw. It cannot be composited over the
+   * layers beneath it without FLATTENING them into a single texture first —
+   * so every animated layer under a grain overlay is rasterised into an
+   * intermediate surface on EVERY frame. On a 3.8 GB host that is the
+   * difference between a render that fits and one that is OOM-killed.
+   *
+   * The export path therefore asks the runtime to leave the grain out of the
+   * DOM and applies FFmpeg's native temporal `noise` filter to the encoded
+   * frames instead: the grain SHIMMERS (the DOM tile cannot move without
+   * re-rasterising the whole surface) and Chromium pays nothing for it.
+   *
+   * The interactive preview (the Studio) does NOT set this: the author sees
+   * the static grain tile while editing.
+   */
+  offloadFilmGrainToEncoder?: boolean;
 }
 
 /**

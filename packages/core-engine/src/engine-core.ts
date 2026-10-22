@@ -21,13 +21,14 @@ import {
   type EnginePaths,
 } from "./config.js";
 import {
+  buildCostReport,
   computeWorkerBudget,
   detectHeavyEffects,
   estimatedFrameMs,
   hostFacts,
   perFrameMultiplier,
 } from "./cost-analysis.js";
-import { getFrameBounds, inspectKeyframes, type InspectedFrame } from "./keyframes.js";
+import type { FrameMeta, InspectedFrame } from "./keyframes.js";
 import { probeMedia } from "./media-probe.js";
 import { resolveProjectAssets } from "./project-assets.js";
 import { RenderRunner, type RenderJob, type RenderQuality } from "./render-runner.js";
@@ -323,38 +324,54 @@ export class EngineCore extends EventEmitter {
     };
   }
 
+  /**
+   * The frames of a scene at a list of timestamps — with their pictures AND
+   * their numbers.
+   *
+   * THE WARM PAGE IS THE ONLY MEASUREMENT AUTHORITY. The inspection and the
+   * zero-rasterisation layout query now run on the SAME page, with the SAME
+   * viewport and the SAME `describeFrame` measurement — so the two can never
+   * disagree about where a layer is. They used to be two different pages,
+   * which left a residual of 12.7 px (0.66 % of the canvas) between them.
+   *
+   * The MEASUREMENT pass uses the layout settle (no media resync, no image
+   * decode) and the CAPTURE pass uses the full settle, so the picture is
+   * right and the numbers are comparable.
+   */
   async inspectKeyframes(
     sceneId: string,
     options: { at?: number[]; includeFullResolution?: boolean } = {}
   ): Promise<{ frames: InspectedFrame[]; framesMeta: unknown[] }> {
     const found = this.store.require(sceneId);
     const stamps = options.at?.filter((n) => Number.isFinite(n) && n >= 0) ?? [0];
-    const frames = await inspectKeyframes({
-      scene: found.scene,
-      sceneId,
-      baseUrl: `http://127.0.0.1:${this.config.port}`,
-      at: stamps,
+    const { width, height } = resolveCanvasSize(found.scene.canvas);
+
+    const warm = this.warmPage();
+    await warm.mount(found.scene, sceneId, WARM_FPS);
+    const captured = await warm.inspectFrames(stamps, {
+      width,
+      height,
       includeFullResolution: options.includeFullResolution === true,
-      // zero-port: the headless page, the scene and the vault are served from
-      // memory/disk — the inspection needs no listening engine
-      paths: this.paths,
-      store: this.store,
     });
+
+    const frames: InspectedFrame[] = captured.map((frame) => ({
+      atMs: frame.atMs,
+      image: frame.image,
+      preview: frame.preview,
+      ...(frame.describe && typeof frame.describe === "object"
+        ? { meta: { atMs: frame.atMs, ...(frame.describe as object) } as FrameMeta }
+        : {}),
+    }));
     return { frames, framesMeta: frames.map((f) => f.meta ?? { atMs: f.atMs }) };
   }
 
   async getLayerBounds(sceneId: string, frameIndex: number): Promise<Record<string, unknown>> {
     const found = this.store.require(sceneId);
-    return await getFrameBounds({
-      scene: found.scene,
-      sceneId,
-      baseUrl: `http://127.0.0.1:${this.config.port}`,
-      frameIndex,
-      // zero-port: the headless page, the scene and the vault are served from
-      // memory/disk — the measurement needs no listening engine
-      paths: this.paths,
-      store: this.store,
-    });
+    const warm = this.warmPage();
+    await warm.mount(found.scene, sceneId, WARM_FPS);
+    // the legacy API takes a FRAME index; the warm page takes milliseconds
+    const report = await warm.frameReport((frameIndex / WARM_FPS) * 1000);
+    return report.bounds;
   }
 
   // -------------------------------------------------------------------------
@@ -385,18 +402,18 @@ export class EngineCore extends EventEmitter {
     const warm = this.warmPage();
     await warm.mount(scene, sceneId, WARM_FPS);
 
-    const frames: BoundsFrameReport[] = [];
-    for (const atMs of stamps) {
-      const report = await warm.frameReport(atMs);
-      frames.push(
-        buildBoundsFrameReport({
-          atMs,
-          describe: report.describe,
-          bounds: report.bounds,
-          canvas,
-        })
-      );
-    }
+    // ONE round-trip for every timestamp: the scene is mounted ONCE and the
+    // page seeks through the requested times — never a re-mount per stamp.
+    const reports = await warm.measureFrames(stamps);
+
+    const frames: BoundsFrameReport[] = reports.map((report, index) =>
+      buildBoundsFrameReport({
+        atMs: stamps[index] ?? 0,
+        describe: report.describe,
+        bounds: report.bounds,
+        canvas,
+      })
+    );
 
     return {
       sceneId,
@@ -418,32 +435,16 @@ export class EngineCore extends EventEmitter {
     // the engine's own non-blocking diagnostics (camera void, dead frames, …)
     const warnings = analyzeSceneWarnings(scene);
 
-    const heavyEffects = detectHeavyEffects(scene);
-    const multiplier = perFrameMultiplier(heavyEffects);
-    const host = hostFacts();
-    const frames = Math.round((scene.durationMs / 1000) * 60);
-    const frameMs = estimatedFrameMs(multiplier, host.cpus);
-    const workerBudget = computeWorkerBudget({
-      cpus: host.cpus,
-      totalMemGb: host.totalMemGb,
-      heavy: heavyEffects.length > 0,
-    });
+    // ONE cost report — the same function the render pre-flight calls, so the
+    // estimate a caller reads is the estimate the render used.
+    const cost = buildCostReport(scene);
 
     return {
       sceneId,
       layerCount: scene.layers.length,
       durationMs: scene.durationMs,
       warnings,
-      cost: {
-        perFrameMultiplier: multiplier,
-        estimatedFrameMs: frameMs,
-        estimatedTotalMs: frameMs * frames,
-        frames,
-        workerBudget,
-        heavyEffects,
-        host,
-        notes: buildCostNotes(heavyEffects, multiplier, host, frameMs),
-      },
+      cost,
       keyframePrecedence: buildKeyframePrecedence(scene),
     };
   }
@@ -651,46 +652,6 @@ export class EngineCore extends EventEmitter {
     await this.runner.dispose();
     this.removeAllListeners();
   }
-}
-
-/**
- * The human-readable reasons behind a cost estimate.
- *
- * Every note names the effect it is about — a caller who wants the render to
- * be cheaper needs to know WHICH layer to change.
- */
-function buildCostNotes(
-  effects: readonly { layerId: string; effect: string; multiplier: number }[],
-  multiplier: number,
-  host: { cpus: number; totalMemGb: number },
-  frameMs: number
-): string[] {
-  const notes: string[] = [];
-  if (effects.length === 0) {
-    notes.push("no heavy effects detected — a plain scene, one frame per worker tick");
-  } else {
-    const names = effects.map((effect) => effect.effect);
-    if (names.length > 1) {
-      notes.push(
-        `${names.join(" + ")} together make a frame ${multiplier}x more expensive ` +
-          `(layer(s) ${effects.map((effect) => effect.layerId).join(", ")})`
-      );
-    } else {
-      const effect = effects[0]!;
-      notes.push(
-        `${effect.effect} on layer "${effect.layerId}" makes a frame ${multiplier}x more expensive`
-      );
-    }
-  }
-  notes.push(
-    `estimated ${frameMs}ms per frame on this host (${host.cpus} cpus, ${host.totalMemGb} GB, software rasterised)`
-  );
-  if (host.totalMemGb <= 4.5) {
-    notes.push(
-      `this host has ${host.totalMemGb} GB of RAM — the engine renders on ONE worker so a render cannot OOM`
-    );
-  }
-  return notes;
 }
 
 /**

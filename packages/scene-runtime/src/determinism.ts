@@ -124,18 +124,28 @@ export function createFrameSettler(deps: SettleDeps): FrameSettler {
  * THE LAYOUT SETTLER — the same geometry, without the pixels.
  *
  * WHY IT EXISTS: a LAYOUT question ("where is layer X at t=2000?") needs the
- * boxes, not the picture. The full settle above does two things a box does
+ * boxes, not the picture. The full settle above does three things a box does
  * not need:
  *
  * - `runSeekables` re-seeks the media (a video's currentTime, a Lottie's
  *   frame) — the media's POSITION changes, its BOX does not;
  * - `decodeImages` waits for every bitmap to decode — a bitmap's PIXELS
  *   change, its BOX does not (the layout was already reserved by the CSS,
- *   and `preloadAssets` resolved the intrinsic sizes before the mount).
+ *   and `preloadAssets` resolved the intrinsic sizes before the mount);
+ * - the two `requestAnimationFrame` ticks wait for the COMPOSITOR to paint
+ *   the frame — a SCREENSHOT has to be of a committed frame, but a bounding
+ *   box does not.
  *
  * The two things a box DOES need are kept: the font wait (a web font changes
  * the size of the text it renders) and the layout flush (the transform has to
- * be committed before it can be measured).
+ * be committed before it can be measured — `flushLayout` forces the style and
+ * layout recalculation synchronously, which is exactly what
+ * `getBoundingClientRect()` needs).
+ *
+ * Dropping the paint is not a micro-optimisation: on the reference host the
+ * full-density scene carries a legal 200 px Gaussian blur on every layer, and
+ * rasterising THAT is what a paint means. The layout measurement was paying
+ * for a full-frame software blur it never looked at.
  *
  * The result is the SAME numbers, measured in a fraction of the time.
  */
@@ -145,8 +155,8 @@ export function createLayoutSettler(deps: SettleDeps): FrameSettler {
     deps.applyLifecycle(timeSec);
     await deps.fontsReady();
     deps.flushLayout();
-    await deps.nextFrame();
-    await deps.nextFrame();
+    // NO PAINT — see the note above. `getBoundingClientRect()` in the
+    // measurement forces the layout recalculation on its own.
   };
 }
 

@@ -23,6 +23,14 @@ export interface LayerContext {
   /** register a per-frame media sync (e.g. video currentTime) used by seekToFrame */
   registerSeekable(seekable: Seekable): void;
   /**
+   * TRUE when the film grain must NOT be painted in the DOM.
+   *
+   * The export path sets this: the grain is applied by the video encoder
+   * (FFmpeg's temporal `noise` filter) instead, which shimmers AND costs the
+   * compositor nothing. See `RenderConfig.offloadFilmGrainToEncoder`.
+   */
+  offloadFilmGrainToEncoder: boolean;
+  /**
    * Natural pixel size of an image asset, when it is known.
    *
    * Used to size a logo that declares no `heightPx`: without the aspect ratio

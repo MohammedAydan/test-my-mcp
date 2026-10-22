@@ -618,6 +618,17 @@ export async function handleAnalyzeScene(args: { sceneId: string }): Promise<Too
       `estimated cost: ${report.cost.perFrameMultiplier.toFixed(2)}x per frame — ` +
         `≈${report.cost.estimatedFrameMs}ms/frame, ≈${Math.round(report.cost.estimatedTotalMs / 1000)}s total ` +
         `(${report.cost.frames} frames, worker budget ${report.cost.workerBudget})`,
+      // THE DENSITY TERM, in prose as well as in `structuredContent`. The
+      // multiplier is MEASURED (×1.01 at 200 keyframes): evaluating keyframes
+      // is cheap. The term stays visible so a caller can see the count, the
+      // properties and the rate — and the warnings name the VALUE (a filtered
+      // layer scaled past 4×) that actually exhausts a render host.
+      `keyframe density: ${report.cost.keyframeDensity.totalKeyframes} keyframe(s) across ` +
+        `${report.cost.keyframeDensity.animatedProperties} ` +
+        `propert${report.cost.keyframeDensity.animatedProperties === 1 ? "y" : "ies"} on ` +
+        `${report.cost.keyframeDensity.keyframedLayers} layer(s) — ` +
+        `x${report.cost.keyframeDensity.multiplier.toFixed(2)} ` +
+        `(${report.cost.keyframeDensity.keyframesPerSecond}/s)`,
     ];
     if (report.cost.heavyEffects.length > 0) {
       lines.push("expensive features:");

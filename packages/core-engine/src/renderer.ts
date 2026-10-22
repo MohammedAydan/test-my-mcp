@@ -10,7 +10,7 @@ import type { EngineConfig, EnginePaths } from "./config.js";
 import { resolveEnginePaths } from "./config.js";
 import { computeWorkerBudget, sceneHasHeavyEffects } from "./cost-analysis.js";
 import type { RenderProfile } from "./encoder.js";
-import { FfmpegError, encoderArgs, StdinWriter } from "./encoder.js";
+import { FfmpegError, encoderArgs, filmGrainFilter, StdinWriter } from "./encoder.js";
 import type { SceneStore } from "./scene-store.js";
 import { mimeFor } from "./vault.js";
 
@@ -33,6 +33,14 @@ export class RendererPool {
     viewportWidth: number;
     viewportHeight: number;
     fit: boolean;
+    /**
+     * Leave the film grain to the encoder.
+     *
+     * The flag and the FFmpeg filter come from the SAME source
+     * (`filmGrainForScene`), so the runtime and the encoder can never
+     * disagree about who draws the grain.
+     */
+    offloadFilmGrain?: boolean;
     /** engine paths — the vault + runtime bundle the zero-port routes serve */
     paths?: EnginePaths;
     /** the scene store — lets the zero-port `/api/scenes/:id` route answer */
@@ -79,6 +87,7 @@ export class RendererPool {
     const url =
       `${opts.baseUrl}/preview?scene=${encodeURIComponent(opts.sceneId)}` +
       `&render=1&fps=${opts.profile.fps}` +
+      (opts.offloadFilmGrain ? "&offloadFilmGrain=1" : "") +
       (opts.fit ? "&fit=1" : "");
     // `network-idle` waited ~940 ms for a network silence that never came
     // (the page holds a channel open), so it was pure dead time. The
@@ -101,7 +110,22 @@ export class RendererPool {
     await page.evaluate(() =>
       (globalThis as unknown as { whenSceneReady?: () => Promise<unknown> }).whenSceneReady?.()
     );
-    return { page, close: () => context.close() };
+    // CLOSE THE BROWSER, not just the context.
+    //
+    // A render page launched a Chromium per call and only closed its context,
+    // so the browser process — and the renderer process that holds the
+    // rasterised filter surfaces of every frame it painted — outlived the
+    // part. On a memory-bound host that is the accumulation the kernel
+    // eventually OOM-kills. `pool.close()` still closes anything left behind.
+    return {
+      page,
+      close: async () => {
+        await context.close().catch(() => undefined);
+        const at = this.browsers.indexOf(browser);
+        if (at >= 0) this.browsers.splice(at, 1);
+        await browser.close().catch(() => undefined);
+      },
+    };
   }
 
   async close(): Promise<void> {
@@ -464,6 +488,20 @@ export interface ParallelRenderResult {
 }
 
 /**
+ * The pixel-frame budget of a single render page on a memory-bound host.
+ *
+ * The page is what holds the accumulated filter surfaces, and the memory it
+ * spends is proportional to `frames × pixels`. The budget is calibrated at
+ * the reference geometry: **60 frames at 1280×720**, because the measured
+ * failure point of the full-density scene was ~95 frames into a 240-frame
+ * 720p part. At 1080p that is ~27 frames, at 360p ~240 — the same memory,
+ * not the same frame count.
+ *
+ * Re-opening the page costs ~1 s, which is noise beside a 200 s render.
+ */
+export const HEAVY_SCENE_PIXEL_FRAME_BUDGET = 60 * 1280 * 720;
+
+/**
  * N workers over contiguous frame ranges; each pipes JPEG buffers straight into
  * its own FFmpeg `image2pipe` encoder. Frames never touch the disk — only small
  * MP4 fragments do (concatenated later with `-c copy`).
@@ -514,29 +552,60 @@ export async function renderFramesParallel(opts: {
   // draft mode captures a downscaled fit; production captures the canvas 1:1
   const fit = profile.outWidth !== canvasSize.width;
 
+  // MEMORY-BOUNDED CHUNKING.
+  //
+  // A render page is a FRESH Chromium per part, and a renderer accumulates the
+  // rasterised surfaces of every filtered layer it has seeked through: on the
+  // 3.8 GB reference host the full-density scene (7 blurred layers, 40
+  // keyframes each) is OOM-killed ~60 % of the way through a 240-frame part,
+  // while the same scene with the filters removed finishes in 41 s. The
+  // process is RELEASED when the page closes, so a heavy scene on a small
+  // host renders in bounded chunks instead of one unbounded run. The parts
+  // are concatenated in frame order afterwards, exactly as before.
+  const hostMb = os.totalmem() / 1024 ** 2;
+  const framesPerPage = Math.max(
+    30,
+    Math.floor(HEAVY_SCENE_PIXEL_FRAME_BUDGET / Math.max(1, profile.outWidth * profile.outHeight))
+  );
+  const chunkFrames = heavy && hostMb <= 6 * 1024 ? Math.min(totalFrames, framesPerPage) : totalFrames;
+
   const workers = ranges.map(async ([from, to], i) => {
-    const partPath = path.join(opts.jobDir, `part_${String(i).padStart(2, "0")}.mp4`);
-    await renderFrameRange({
-      pool: opts.pool,
-      sceneId: opts.sceneId,
-      baseUrl: opts.baseUrl,
-      profile,
-      encoder: opts.encoder,
-      from,
-      to,
-      partPath,
-      fit,
-      viewportWidth: profile.outWidth,
-      viewportHeight: profile.outHeight,
-      scene,
-      ...(opts.paths ? { paths: opts.paths } : {}),
-      ...(opts.store ? { store: opts.store } : {}),
-      onFrameDone: opts.onProgress,
-    });
-    return partPath;
+    const parts: Array<{ from: number; path: string }> = [];
+    const chunks = splitRanges(to - from, Math.ceil((to - from) / Math.max(1, chunkFrames)));
+    for (const [offsetFrom, offsetTo] of chunks) {
+      const chunkFrom = from + offsetFrom;
+      const chunkTo = from + offsetTo;
+      const partPath = path.join(
+        opts.jobDir,
+        `part_${String(i).padStart(2, "0")}_${String(parts.length).padStart(2, "0")}.mp4`
+      );
+      await renderFrameRange({
+        pool: opts.pool,
+        sceneId: opts.sceneId,
+        baseUrl: opts.baseUrl,
+        profile,
+        encoder: opts.encoder,
+        from: chunkFrom,
+        to: chunkTo,
+        partPath,
+        fit,
+        viewportWidth: profile.outWidth,
+        viewportHeight: profile.outHeight,
+        scene,
+        ...(opts.paths ? { paths: opts.paths } : {}),
+        ...(opts.store ? { store: opts.store } : {}),
+        onFrameDone: opts.onProgress,
+      });
+      parts.push({ from: chunkFrom, path: partPath });
+    }
+    return parts;
   });
 
-  const partPaths = await Promise.all(workers);
+  // frame order, not worker order: the concat demuxer plays the parts as given
+  const partPaths = (await Promise.all(workers))
+    .flat()
+    .sort((a, b) => a.from - b.from)
+    .map((part) => part.path);
   return { partPaths, frames: totalFrames, workerCount: ranges.length };
 }
 
@@ -561,6 +630,12 @@ async function renderFrameRange(opts: {
   onFrameDone?: (framesDone: number) => void;
 }): Promise<void> {
   const { profile } = opts;
+  // THE GRAIN IS THE ENCODER'S JOB.
+  //
+  // The runtime is told to paint no grain at all (the flag below), and FFmpeg
+  // adds it to the encoded pixels with a TEMPORAL noise filter — so the grain
+  // shimmers, and Chromium never flattens the layers beneath it.
+  const grainFilter = opts.scene ? filmGrainFilter(opts.scene) : null;
   const { page, close } = await opts.pool.openRenderPage({
     baseUrl: opts.baseUrl,
     sceneId: opts.sceneId,
@@ -568,6 +643,7 @@ async function renderFrameRange(opts: {
     viewportWidth: opts.viewportWidth,
     viewportHeight: opts.viewportHeight,
     fit: opts.fit,
+    offloadFilmGrain: grainFilter !== null,
     ...(opts.scene ? { scene: opts.scene } : {}),
     ...(opts.paths ? { paths: opts.paths } : {}),
     ...(opts.store ? { store: opts.store } : {}),
@@ -576,8 +652,12 @@ async function renderFrameRange(opts: {
     const proc = spawn("ffmpeg", [
       "-hide_banner", "-loglevel", "error", "-y",
       "-f", "image2pipe", "-framerate", String(profile.fps), "-c:v", "mjpeg", "-i", "pipe:0",
-      "-vf", `fps=${profile.fps},format=yuv420p`,
-      ...encoderArgs(opts.encoder, profile.quality, profile),
+      // `fps` → the grain (luma only, temporal) → the pixel format.
+      // The grain comes BEFORE `format=yuv420p` on purpose: the 4:2:0
+      // conversion then averages the chroma noise away, which leaves exactly
+      // the greyscale grain the DOM tile used to paint.
+      "-vf", `fps=${profile.fps}${grainFilter ? `,${grainFilter}` : ""},format=yuv420p`,
+      ...encoderArgs(opts.encoder, profile.quality, profile, { filmGrain: grainFilter !== null }),
       "-pix_fmt", "yuv420p",
       "-f", "mp4",
       opts.partPath,

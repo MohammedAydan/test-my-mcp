@@ -14,13 +14,7 @@ import {
   runFfmpeg,
   type RenderProfile,
 } from "./encoder.js";
-import {
-  computeWorkerBudget,
-  detectHeavyEffects,
-  estimatedFrameMs,
-  hostFacts,
-  perFrameMultiplier,
-} from "./cost-analysis.js";
+import { buildCostReport } from "./cost-analysis.js";
 import { renderFramesParallel, RendererPool } from "./renderer.js";
 import type { SceneStore } from "./scene-store.js";
 
@@ -195,25 +189,7 @@ export class RenderRunner extends EventEmitter {
    * `analyze_scene` tool reports can never disagree.
    */
   private preflight(scene: SceneSpec): SceneCostReport {
-    const heavyEffects = detectHeavyEffects(scene);
-    const multiplier = perFrameMultiplier(heavyEffects);
-    const host = hostFacts();
-    const frames = Math.max(1, Math.round((scene.durationMs / 1000) * 60));
-    const frameMs = estimatedFrameMs(multiplier, host.cpus);
-    return {
-      perFrameMultiplier: multiplier,
-      estimatedFrameMs: frameMs,
-      estimatedTotalMs: frameMs * frames,
-      frames,
-      workerBudget: computeWorkerBudget({
-        cpus: host.cpus,
-        totalMemGb: host.totalMemGb,
-        heavy: heavyEffects.length > 0,
-      }),
-      heavyEffects,
-      host,
-      notes: [],
-    };
+    return buildCostReport(scene);
   }
 
   private async execute(job: RenderJob): Promise<void> {

@@ -1065,33 +1065,30 @@ async function main() {
       console.log(
         `  bounds-vs-inspection max bbox delta: ${worst} px over ${diffs.length} layer/frame pairs`
       );
-      // THE TOLERANCE, AND WHY IT IS NOT 1 px.
+      // THE TOLERANCE, AND WHY IT IS SUB-PIXEL.
       //
-      // The two paths measure the SAME frame on TWO DIFFERENT PAGES: the
-      // cheap oracle on the engine's warm page, the inspection on a page of
-      // its own. Each page lays out independently and each loads the scene's
-      // web font on its own schedule, so the two are not expected to agree
-      // to the pixel.
+      // The two paths used to measure the same frame on TWO DIFFERENT PAGES
+      // (the cheap oracle on the engine's warm page, the inspection on a page
+      // of its own), and the residual was 12.7 px — a uniform ~3.8 px offset
+      // plus a 12.7 px difference on the one layer that is mid-3D-rotation,
+      // whose `getBoundingClientRect()` is a PROJECTED quad.
       //
-      // The MEASURED residual is 12.7 px on a 1920 px canvas (0.66 %): a
-      // uniform ~3.8 px offset on every layer, plus a 12.7 px difference on
-      // the ONE layer that is mid-3D-rotation (its `getBoundingClientRect()`
-      // is the PROJECTED quad, which is hypersensitive to the rotation
-      // angle).
-      //
-      // One percent of the canvas is the tolerance: enough to catch a real
-      // disagreement (a moved layer, a wrong box) and tight enough to be
-      // meaningful.
-      const TOLERANCE_PX = Math.round(CANVAS_W * 0.01);
+      // They now share ONE page, ONE viewport and ONE measurement step:
+      // `WarmPage.measureFrames()` runs `seekToFrameForLayout` and describes
+      // every layer in a single `page.evaluate`, and the inspection calls it
+      // for ALL its timestamps before it captures a single preview. The
+      // measured residual is 0.000 px — the two paths return the identical
+      // box, so the tolerance is half a CSS pixel (rounding headroom only).
+      const TOLERANCE_PX = 0.5;
       check(
         'The cheap layout oracle agrees with the rasterised inspection',
         worst <= TOLERANCE_PX,
-        `max delta ${worst.toFixed(1)} px (tolerance ${TOLERANCE_PX} px = 1 % of the canvas)`
+        `max delta ${worst.toFixed(3)} px (tolerance ${TOLERANCE_PX} px)`
       );
       note(
-        'the cross-path residual, broken down',
-        `uniform offset ~3.8 px on every layer; the largest single difference ` +
-          `(12.7 px) is on a layer that is mid-3D-rotation, whose bounding box is a PROJECTED quad`
+        'the cross-path residual',
+        `max ${worst.toFixed(3)} px over ${diffs.length} layer/frame pairs — ` +
+          `both paths share the warm page, the viewport and the describeFrame step`
       );
       note(
         'get_layer_bounds vs inspect_scene_keyframes (same four timestamps)',

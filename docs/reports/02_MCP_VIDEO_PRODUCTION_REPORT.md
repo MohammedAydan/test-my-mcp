@@ -448,19 +448,24 @@ and the re-measured layout is clean. The `BoundsOverlapReport` carries **both
 boxes** (`aBox` / `bBox`) precisely so that a consumer can plan that fix
 without asking a second question.
 
-**The residual between the two measurement paths, honestly.** The cheap
-oracle and the rasterised inspection are two measurements of the same frame
-on **two different pages**, and they agree to within **12.7 px on a 1920 px
-canvas (0.66 %)** — a uniform ~3.8 px offset on every layer, plus a 12.7 px
+**The residual between the two measurement paths is now ZERO.** The cheap
+oracle and the rasterised inspection used to measure the same frame on **two
+different pages**, and the residual was **12.7 px on a 1920 px canvas
+(0.66 %)** — a uniform ~3.8 px offset on every layer, plus a 12.7 px
 difference on the one layer that is mid-3D-rotation (its
-`getBoundingClientRect()` is the PROJECTED quad, which is hypersensitive to
-the rotation angle). The benchmark's tolerance is 1 % of the canvas: tight
-enough to catch a real disagreement, honest about what two independent pages
-can promise. Two real fixes came out of chasing it — the inspection now
-measures every frame BEFORE it captures any preview (the preview's viewport
-dance used to contaminate the frames after the first), and the runtime's
-sidecar reports its boxes in the STAGE's coordinate space rather than the
-screen's.
+`getBoundingClientRect()` is the PROJECTED quad, hypersensitive to the
+rotation angle). They now share **one warm page, one viewport and one
+measurement step**: `WarmPage.measureFrames()` seeks frames 0…n in a single
+`page.evaluate` and describes every layer from the same layout flush, and
+`inspect_scene_keyframes` calls it for **all** its timestamps *before* it
+captures a single preview. The benchmark measures **0.000 px over every
+layer/frame pair**, and it enforces 0.5 px (rounding headroom) instead of
+1 % of the canvas.
+
+The warm door is also fast: four `get_layer_bounds` timestamps take **~20 ms
+warm** (4.5–5.7 ms/frame) versus 573 ms cold and 929–1 084 ms for the same
+four frames through `inspect_scene_keyframes` — 45× faster, and it avoids
+~1.4 MB of base64 JPEG per call.
 
 ### 9.7 The cost estimate is now real
 

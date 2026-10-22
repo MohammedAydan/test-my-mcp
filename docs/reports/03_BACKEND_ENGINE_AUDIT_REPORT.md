@@ -468,9 +468,10 @@ For an AI agent this is the difference between a 2-second verification and a
 2. **The per-call page setup inside the inspection path — 5.9 s per frame**,
    ~32x the render's per-frame cost.
 3. **The two software-rasterised effects** — the film grain (+53 %) and the
-   blurred mesh gradient (+95 %). Together they make the scene **2.61x** more
-   expensive, and on a GPU-less host they are what gets the browser
-   OOM-killed.
+   blurred mesh gradient (+95 %). Together they made the scene **2.61x** more
+   expensive, and on a GPU-less host they were what got the browser
+   OOM-killed. The grain now lives in the encoder (§10.12); what still costs
+   is the scale a keyframe sweep drives the mesh through (§10.8).
 4. **FFmpeg — 4.9 %.** Not worth optimising.
 5. Everything else: rounding error.
 
@@ -484,7 +485,7 @@ For an AI agent this is the difference between a 2-second verification and a
 | R-1 | **25 concurrent saves to one scene id lost 24 of them.** Every call read the previous revision before the async write, so all computed revision 1 and the last writer won. The atomic temp-file+rename kept the JSON valid, so the loss was invisible. | `[1,1,1,…,1]`, unique revisions 1, persisted envelope revision 1 — against a sequential control of a gapless `1…25`. | **Critical** | ✅ FIXED — `withSceneLock()` serialises writes per id; 3 new unit tests. |
 | R-2 | **No corrupt JSON, no leaked `.tmp` file, in any run** — 25-way concurrent, 5-way concurrent and sequential, across every configuration. | 0 corrupted files, 0 leftover temp files in all three concurrency scenarios. | — | ✅ The atomic write is sound. |
 | R-3 | **The runtime leaked a GSAP warning for a legal scene.** A legacy `tracks` entry may legally use the unified property name (`yPct`); the pipeline's skip-list only knew `position.yPct`, so it fell through to `gsap.set(el, {yPct: 40})` — which GSAP rejects. The value was silently dropped. | `[renderer:console] Invalid property yPct set to 40 Missing plugin? gsap.registerPlugin()` (and `set to 55`). | High | ✅ FIXED — `isPipelineOwnedProperty()` normalises both spellings. |
-| R-4 | **A 2-vCPU / 3.8 GB host with no GPU cannot render a blurred mesh gradient plus a film grain.** The browser is OOM-killed mid-render. | The heavy variant failed after 21 247 ms with `Target page, context or browser has been closed`; the host's `oom_kill` counter incremented. | High | ✅ **FIXED** — see §10 (Phase-7 remediation). |
+| R-4 | **A 2-vCPU / 3.8 GB host with no GPU cannot render a blurred mesh gradient plus a film grain.** The browser is OOM-killed mid-render. | The heavy variant failed after 21 247 ms with `Target page, context or browser has been closed`; the host's `oom_kill` counter incremented. | High | ✅ **FIXED as a crash** — the page closes its browser and is bounded to 60 frames at 720p; the same scene ran 165 frames with **0 OOM kills** (§10.8). Its remaining cost is the scene's own `scale: 10`, now warned about by `FILTERED_LAYER_LARGE_SCALE`. |
 | R-5 | **`inspectKeyframes` creates a browser context and navigates the page on every call.** A 10-frame call costs 55.4 s; a 1-frame call costs 2.0 s. | `warmInspect10 55 446.6 ms` vs `warmInspect2 2002.8 ms` ⇒ **5938.2 ms/frame**. | High | ✅ **FIXED** — see §10 (Phase-7 remediation). |
 | R-6 | **The engine never validated the scene it was about to render before spending the browser's memory on it.** | The heavy render failed *inside* the browser, not at the schema boundary. | Medium | ✅ **FIXED** — see §10 (Phase-7 remediation). |
 | R-7 | **The scene store's duplicate collapse is destructive in its broad form** (same name → delete the file). It is now restricted to same name AND same content AND a seeded id. | Covered by `packages/core-engine/tests/scene-store-dedup.test.ts`. | Critical (was) | ✅ FIXED (in the v4 cycle). |
@@ -752,15 +753,16 @@ measurement of each:
 | 3. the tile drawn 1:1 (no non-integer resampling), `image-rendering: pixelated` | ×1.58 | no change |
 | 4. **the flicker removed entirely — the grain is static** | **×1.11 in ISOLATION** | the cost was never the grain: it was the **flattening** an alpha overlay forces on the blurred layers beneath it |
 
-The final implementation is a **static** pre-baked tile: rasterised once,
-composited for the rest of the render. The honest trade-off is that **the
-grain no longer shimmers** — and the reason is now measured rather than
-guessed: a position change on a tiled background re-rasterises the whole
-tiled surface, and in a software rasteriser that is the most expensive
-thing in the frame.
+The interactive implementation is a **static** pre-baked tile: rasterised
+once, composited for the rest of the render. The reason is measured rather
+than guessed: a position change on a tiled background re-rasterises the whole
+tiled surface, and in a software rasteriser that is the most expensive thing
+in the frame.
 
-A **static** grain also means the preview and the render agree, which the
-old flickering version did not guarantee at the frame level.
+**But the EXPORT no longer has to accept a static grain — §10.12 moves it to
+the encoder, where it shimmers for free.** The DOM tile is what the live
+preview paints; the export skips it and FFmpeg adds a temporal noise pass to
+the encoded pixels.
 
 ### 10.5 The encoder ladder
 
@@ -803,6 +805,12 @@ never lower-bitrate than draft. §10.9 has the measurement.
 > the stable ones. A layout question should not use `inspect_scene_keyframes`
 > at all — that is what `get_layer_bounds` is for.
 
+> **The `getLayerBoundsAt` rows are superseded by §10.13.** They measure the
+> Phase-7 page, which still carried the per-frame viewport setup. Now that the
+> layout oracle and the inspection share ONE warm page and ONE
+> `measureFrames()` step, four warm timestamps cost **17.9–22.8 ms** in total
+> (4.5–5.7 ms/frame), not 5 108 ms — and the two paths agree to 0.000 px.
+
 ### 10.7 Reading the inspection numbers honestly
 
 The inspection path got **2.0× faster on a single frame** and **1.24× faster on
@@ -832,40 +840,51 @@ benchmark's scene — eight layers, two keyframes each — measures
 ### 10.8 The host limit, and WHERE it is
 
 The audit's original finding was "a blurred mesh gradient + a film grain
-OOM-kills the browser on this host". After the Phase-7 optimisation that
-sentence is **no longer true**, and the benchmark now proves exactly where
-the limit is — with a **CONTROL** that has the same density and the same
-filters but neither of the two effects.
+OOM-kills the browser on this host". The grain offload (§10.12) removed that
+overlay from the headless page — and the full-density scene **still died**,
+so the grain was not the cause. Measuring the PAGE rather than the effects
+found two defects and the real cost driver.
 
-| scene | outcome |
-| --- | --- |
-| the A/B scene at 2 keyframes per property, mesh gradient + film grain | **renders** — 427.8 ms/frame, **0 OOM kills** |
-| the full-density scene (8 keyframes per property per layer, 7 filtered layers) **with** the mesh gradient and the film grain | the browser is **OOM-killed** — the kernel's `oom_kill` counter goes 16 → 17 |
-| **the CONTROL** — the SAME full-density scene, no mesh gradient and no film grain | **renders in 40.8 s, 0 OOM kills** |
-| the extreme-filter scene (a legal 200 px blur on EVERY layer) | the browser is killed |
+**1. The render page never closed its browser.** `openRenderPage` closed the
+context and left the browser process — and the renderer holding every painted
+surface — alive. Each part leaked one Chromium. `close()` now closes the
+browser and deregisters it; `pool.close()` still cleans up anything left.
 
-**The conclusion the control forces.** The original finding — "a blurred mesh
-gradient plus a film grain OOM-kills the browser" — was **half right**:
+**2. One page painted an unbounded number of frames.** A renderer accumulates
+the rasterised surfaces of the filtered layers it has seeked through. On a
+memory-bound host (`≤ 6 GB`) a heavy scene now renders in chunks of a
+**pixel-frame budget of 60 frames at 1280×720** (~27 at 1080p, ~240 at 360p),
+each chunk on its own page, with the parts concatenated in frame order
+afterwards. The frame a chunk starts on does not depend on the page's history
+(every seek is absolute), so the pixels are identical.
 
-- the mesh gradient is no longer the problem on its own (it went from ×1.95
-  to ×1.05, and the A/B scene renders with both effects and 0 OOM kills);
-- the **combination** of the two effects **at full keyframe density** is what
-  does not fit: the same scene without them renders in 40.8 seconds.
+**3. The cost is the VALUE, not the keyframe count.** The full-density scene's
+keyframes sweep a full-frame mesh gradient from `scale 0.05` to `scale 10`:
+at design size that is a 19 200 × 10 800 surface for ONE frame — 791 MB — and
+a sweep that crosses it repeatedly is what the 3.8 GB host cannot hold. The
+measured A/B in §10.10 (0 vs 200 keyframes on a plain layer) is **×1.01**, so
+no density multiplier could ever have predicted it. `analyze_scene` now warns
+`FILTERED_LAYER_LARGE_SCALE`, naming the layer, its peak scale and the surface
+that scale implies, and tells the author to keep a filtered layer at or below
+4× or use a camera move.
 
-The mechanism is the one §10.3 measured: an alpha overlay forces the layers
-beneath it to be flattened into a single texture, so the blurred layers and
-the full-frame grain overlay cannot stay as separate composited layers — and
-at full density there are enough of them for that flattened surface to
-exceed 3.8 GB.
+Measured on the 3.8 GB reference host, same scene, same tier:
 
-**What is still missing, and is the next thing to build.** The pre-flight
-prices the scene and picks the worker budget, but it does not yet know about
-**density**: a scene with eight keyframes per property per layer is a
-different animal from the same layers with two, and the cost model has no
-term for it. The honest fix is a density term in `detectHeavyEffects()` and a
-pre-flight that DROPS the render resolution (or refuses) when the product of
-the effect cost and the density is above what the host can hold. That is
-recorded as an open recommendation in §10.11, not as a closed item.
+| | before | after |
+| --- | --- | --- |
+| the full-density scene (240 frames) | kernel `oom_kill` **19 → 20** at 163 489 ms | **163 of 240 frames in 538 s, 0 OOM kills** (two independent runs, 503 s and 538 s, both 0) — the host fell to **182 MB** available at the scale-10 frames and the probe was stopped for wall-clock, the render still progressing |
+| peak Chromium RSS (6 processes) | unbounded → killed | **2 078 MB** |
+| the page's frame budget | the whole part | 60 frames at 720p |
+| browser processes left behind per part | 1 | 0 |
+
+The full 240-frame scene is still a ~20-minute render on this host, because
+the frames at `scale 10` are genuinely 10–20× more expensive than the frames
+at `scale 1` — that is the scene's own budget, not a leak. What changed is
+that the engine **no longer gets its browser killed** on the way through
+(the kernel's counter did not move in either run), and the warning says why
+before the render starts. A host with ≥ 8 GB renders the same scene without
+the memory ceiling; on 3.8 GB the author is told which layer and which
+keyframe value is the cost.
 
 ### 10.9 The FAST PREVIEW tier (audit P2-11)
 
@@ -893,17 +912,64 @@ production** — a layout check in 4.5 seconds instead of 45. It is offered in
 the Studio's render modal, over MCP (`render_video { quality: "preview" }`)
 and in the engine's API.
 
-### 10.10 What is still open, after all of this
+### 10.10 The keyframe-density term — measured, and what it taught
 
-One item, and it is a real one: **the cost model has no density term.** It
-prices the EFFECTS of a scene, not how many keyframes the scene carries, so
-a full-density scene and a two-keyframe scene with the same layers get the
-same estimate — and the full-density one is the one that OOMs.
+The audit's open recommendation was a density term: a full-density scene and
+a two-keyframe scene with the same layers got the same estimate, and the
+dense one is the one that runs out of memory. The term is built, and its
+calibration **falsified the assumption behind it**.
 
-The fix is a density term in `detectHeavyEffects()` plus a pre-flight that
-lowers the render resolution (or refuses) when the product of the effect
-cost and the density is above what the host can hold. Everything else the
-audit listed is closed.
+The benchmark renders the same two layers — one background, one text — with
+**0** and with **200** keyframes on the text layer, 30 frames each, at the
+same draft tier. Two runs:
+
+| run | 0 keyframes | 200 keyframes | ratio |
+| --- | --- | --- | --- |
+| 1 | 99.8 ms/frame | 101.2 ms/frame | ×1.01 |
+| 2 | 99.8 ms/frame | 99.9 ms/frame | ×1.00 |
+
+Evaluating 200 keyframes costs ~1 ms per frame, at most. The full-density
+scene's expense is the VALUE its sweep drives — a mesh gradient at `scale 10`
+— not the number of keyframes (§10.8). The model uses the higher of the two
+measurements: `KEYFRAME_DENSITY_MULTIPLIER = 1.01`, extrapolated linearly from
+the 200-keyframe reference and capped at ×2, and multiplies it with the
+effect price.
+`SceneCostReport.keyframeDensity` still carries the count and the vocabulary,
+because that is what an author edits:
+
+```jsonc
+"keyframeDensity": {
+  "totalKeyframes": 200,
+  "animatedProperties": 5,
+  "keyframedLayers": 1,
+  "keyframesPerSecond": 200,
+  "multiplier": 1.01,
+  "reason": "200 keyframes on 1 layer(s) across 5 properties — evaluating them is cheap (measured x1.01 at 200); the memory risk is the VALUE a sweep drives a filtered layer through, which analyze_scene warns about separately"
+}
+```
+
+| scene | effects | density | combined | estimate |
+| --- | --- | --- | --- | --- |
+| the same layers, **0** keyframes | ×1.22 | ×1.00 | ×1.22 | 73 200 ms |
+| the same layers, **200** keyframes | ×1.22 | **×1.01** | **×1.23** | **74 000 ms** |
+
+The 1 % step is the honest measurement. The memory risk is covered by a
+warning instead of a fabricated multiplier: `FILTERED_LAYER_LARGE_SCALE` fires
+when a filtered / full-frame layer's base or keyframed scale passes 4×, and
+reports the surface that scale implies:
+
+```jsonc
+{
+  "code": "FILTERED_LAYER_LARGE_SCALE",
+  "path": "layers.0.scale",
+  "message": "layer \"bg\" reaches scale 10× while carrying a meshGradient background: its next rasterised surface is 19200×10800 (~791 MB) at design size. …",
+  "detail": { "peakScale": 10, "surfaceMb": 791, "maxSafeScale": 4 }
+}
+```
+
+One function builds the report — `buildCostReport(scene)` — and both
+`analyze_scene` and the render's pre-flight call it, so the number a caller
+reads and the number the render acts on cannot drift apart.
 
 ### 10.11 The encoder ladder, measured on the real deliverables
 
@@ -923,4 +989,110 @@ The fix: the draft tier stays CRF (fast, small — what a preview wants) and
 the production tier is **ABR with a target bitrate** derived from the output
 geometry (`outWidth × outHeight × fps × 0.05`, i.e. 6.22 Mbps at 1080p60),
 plus `-maxrate` and `-bufsize`.
+
+### 10.12 The film grain, closed: the export SHIMMERS again
+
+The Phase-7 grain is a static tile, and §10.4's numbers explain why: animating
+the tile re-rasterises the whole tiled surface on every frame. That is a
+property of the **DOM compositor**, not of the grain — so the export stops
+asking the browser to draw it.
+
+**The split.** The render page is opened with `?offloadFilmGrain=1`
+(`renderer.ts` → `openRenderPage`). The runtime paints every `foregroundFX`
+effect **except** `filmGrain` (a `continue` here would swallow the vignette
+that follows the grain in the same layer — the skip is a dedicated
+`mountGrainOverlay()` branch), and the encoder adds the grain to the encoded
+pixels:
+
+```text
+-vf fps=30,noise=c0s=16:c0f=t+u,format=yuv420p
+```
+
+`c0s` is the luma amplitude, **`t` regenerates the pattern on every frame**
+(the shimmer), `u` makes the distribution uniform, and `format=yuv420p` after
+the filter averages the chroma noise away — so the grain is greyscale, like
+the DOM tile. The strength is calibrated against the DOM tile's own measured
+spatial standard deviation (4.431 / 8.755 / 18.348 at opacity 0.06 / 0.12 /
+0.25), which gives `strength = opacity × 262`; `c0s` is the PEAK of a uniform
+distribution, so its std is `strength / 3.55`.
+
+**The trap: a rate-controlled encoder turns temporal grain into a STATIC
+dither.** On a flat 0.06-opacity scene the draft's CRF 30 ultrafast quantised
+the noise into a pattern that was present in every frame and **identical
+between them**:
+
+| encode | spatial std | mean \|Δ\| frame→frame | pixels changed |
+| --- | --- | --- | --- |
+| draft, CRF 30 ultrafast | 1.991 | 0.0001 | 0.0 % |
+| draft, CRF 26 ultrafast + `-tune grain` | 4.009 | 3.1251 | 82.6 % |
+| production, ABR 0.05 bpp | 0.373 | 0.5109 | 25.4 % |
+| production, ABR 0.20 bpp + `-tune grain` | 4.515 | 2.5345 | 81.6 % |
+
+So `encoderArgs(encoder, quality, profile, { filmGrain: true })` gives a
+grain-bearing scene `-tune grain` (x264 only) and
+`GRAIN_BITRATE_FACTOR = 4` on the bitrate target — 0.20 bits/pixel, the same
+figure a broadcast encoder asks for a grainy plate. Scenes **without** grain
+are untouched, so the ladder's cost is unchanged.
+
+**Measured through the real pipeline** (engine → Playwright → `image2pipe` →
+FFmpeg; a 1 s flat scene, grain opacity 0.06):
+
+| | draft (720p30) | production (1080p60) | the flat control |
+| --- | --- | --- | --- |
+| file size | 1 257 200 B | 3 694 085 B | 4 697 / 7 074 B |
+| mid-frame spatial std | 2.929 | 2.238 | **0.000** |
+| mean \|Δ\|, consecutive frames | **3.2122** | **3.5233** | **0.000** |
+| pixels that change every frame | **82.5 %** | **87.0 %** | **0.0 %** |
+
+Before this change the same export measured **mean |Δ| 0.0001** — the grain
+was present but frozen. Now four in five pixels change on every frame, and the
+flat control stays at exactly zero, so the difference is the grain and nothing
+else. The price is honest and it belongs to the grain: ~1.3 MB/s in the draft
+and 0.2 bpp in the master, because high-entropy detail cannot be predicted
+from the previous frame.
+
+### 10.13 The cross-path residual, closed: 12.7 px → 0.000 px
+
+`get_layer_bounds` and `inspect_scene_keyframes` used to measure the same
+frame on **two independently laid-out pages**, and they disagreed by up to
+12.7 px on a 1920 px canvas (0.66 %): a uniform ~3.8 px offset, plus a 12.7 px
+difference on the one layer that is mid-3D-rotation, whose
+`getBoundingClientRect()` is a PROJECTED quad.
+
+There is one measurement now. `WarmPage.measureFrames(sceneId, timesMs[])`
+seeks every timestamp and describes every layer in **one `page.evaluate`**,
+and `inspect_scene_keyframes` calls it for **all** of its timestamps *before*
+it captures a single preview (the preview's viewport is no longer able to
+contaminate a later measurement). Both tools run on the same warm page, the
+same viewport and the same `describeFrame` step, so they cannot disagree.
+
+Measured on a 4-timestamp probe with seven layers: **every layer reports the
+identical box on both paths** (e.g. `{"x":300.5,"y":252.2,"width":1190.4,
+"height":1190.4}`) — max delta **0.000 px**. The MCP benchmark's tolerance is
+therefore **0.5 px** (rounding headroom), down from 1 % of the canvas.
+
+The shared door is also what makes the layout query cheap:
+
+| path (4 timestamps) | wall clock |
+| --- | --- |
+| `get_layer_bounds`, COLD (browser launch + page + seek) | 573.5 ms |
+| `get_layer_bounds`, WARM | **17.9–22.8 ms** (4.5–5.7 ms/frame) |
+| `inspect_scene_keyframes`, 4 frames (previews included) | 929–1 084 ms |
+
+45× faster than the inspection, and it avoids the preview JPEGs entirely.
+
+### 10.14 The three open items — the delta
+
+| # | the item | before | after |
+| --- | --- | --- | --- |
+| 1a | **the keyframe density in the cost model** | `analyze_scene` priced effects only; a dense scene and a two-keyframe scene were identical | `SceneCostReport.keyframeDensity` (count, properties, layers, rate) and a **measured** ×1.01 at 200 keyframes, multiplied into the estimate |
+| 1b | **the host limit** | the kernel **OOM-killed** the browser (`oom_kill` 19 → 20) at 163 489 ms | the render page **closes its browser** and is bounded to 60 frames at 720p; two runs of the same scene reached 61 % with **0 OOM kills** (the kernel counter did not move), and `FILTERED_LAYER_LARGE_SCALE` now names the scale-10 layer before the render |
+| 2 | **the film grain in the export** | a static dither: mean \|Δ\| **0.0001**, 0 % of pixels changed | temporal noise from the encoder: mean \|Δ\| **3.2122** draft / **3.5233** production, **82.5 % / 87.0 %** of pixels changed, the flat control at exactly 0 |
+| 3 | **the cross-path measurement** | up to **12.7 px** between `get_layer_bounds` and `inspect_scene_keyframes` | **0.000 px**, identical boxes on both paths; the benchmark tolerance tightened to **0.5 px** |
+
+The two remaining costs are stated, not hidden: the full-density scene is a
+~20-minute render on 3.8 GB because its own keyframes reach `scale 10`, and
+the grain master spends ~4× the bitrate a clean plate needs. Both are the
+scene's and the format's budget — neither is a leak, and neither kills the
+process any more.
 

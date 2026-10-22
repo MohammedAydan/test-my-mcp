@@ -48,6 +48,20 @@ export const TRANSITION_PEAK_TOO_LONG = "TRANSITION_PEAK_TOO_LONG";
  */
 export const FOREGROUND_COVERAGE_GAP = "FOREGROUND_COVERAGE_GAP";
 
+/**
+ * A filtered / full-frame layer scaled far past the canvas.
+ *
+ * The renderer rasterises a filtered layer at its COMPOSITED size: a
+ * full-frame mesh gradient keyframed to `scale: 10` is a 12 800 × 7 200
+ * surface (~368 MB) for one frame, and a dense keyframe sweep that crosses
+ * that scale repeatedly is what exhausts a 3.8 GB host. The keyframe COUNT is
+ * cheap (measured ×1.01 at 200 keyframes); the VALUE is not.
+ */
+export const FILTERED_LAYER_LARGE_SCALE = "FILTERED_LAYER_LARGE_SCALE";
+
+/** Above this scale a filtered layer is rasterised at more than 16× its area. */
+export const MAX_SAFE_FILTERED_SCALE = 4;
+
 export interface SceneWarning {
   /** stable machine code — an agent can branch on it without parsing prose */
   code: string;
@@ -264,6 +278,75 @@ export function cameraPoses(scene: SceneSpec): CameraPose[] {
  * Structured, NON-BLOCKING warnings for a scene. Returned alongside the stored
  * scene so `create_or_update_scene` can surface them without failing.
  */
+/**
+ * The expensive surfaces a layer can carry, or null when it carries none.
+ * A `filmGrain` overlay is included even though the EXPORT offloads it: the
+ * live preview still paints it, and a scaled overlay is the same raster cost.
+ */
+function expensiveSurface(layer: SceneSpec["layers"][number]): string | null {
+  if (layer.type === "background" && layer.variant.variant === "meshGradient") {
+    return "a meshGradient background";
+  }
+  if (layer.type === "background" && layer.variant.variant === "media") {
+    return "a media background";
+  }
+  if (layer.type === "foregroundFX" && layer.effects.some((effect) => effect.kind === "filmGrain")) {
+    return "a filmGrain overlay";
+  }
+  const blur = layer.filters?.blur;
+  if (typeof blur === "number" && blur >= 8) return `blur(${blur}px)`;
+  return null;
+}
+
+/** A layer's peak scale over its base value and every `scale` keyframe. */
+function peakScale(layer: SceneSpec["layers"][number]): number {
+  let peak = typeof layer.scale === "number" && Number.isFinite(layer.scale) ? layer.scale : 1;
+  for (const keyframe of layer.keyframes ?? []) {
+    if (keyframe.property !== "scale") continue;
+    if (typeof keyframe.value !== "number" || !Number.isFinite(keyframe.value)) continue;
+    peak = Math.max(peak, keyframe.value);
+  }
+  return peak;
+}
+
+/**
+ * Warn when a dense keyframe sweep drives an expensive layer to a scale at
+ * which ONE rasterised surface is bigger than the canvas by an order of
+ * magnitude. The keyframe count is cheap; this value is not.
+ */
+function largeScaleWarnings(scene: SceneSpec): SceneWarning[] {
+  const canvas = resolveCanvasSize(scene.canvas);
+  const warnings: SceneWarning[] = [];
+  scene.layers.forEach((layer, index) => {
+    const peak = peakScale(layer);
+    if (peak <= MAX_SAFE_FILTERED_SCALE) return;
+    const surface = expensiveSurface(layer);
+    if (!surface) return;
+    const surfaceMb = Math.round(
+      (canvas.width * peak * canvas.height * peak * 4) / (1024 * 1024)
+    );
+    warnings.push({
+      code: FILTERED_LAYER_LARGE_SCALE,
+      path: `layers.${index}.scale`,
+      message:
+        `layer "${layer.id}" reaches scale ${round(peak)}× while carrying ${surface}: its next ` +
+        `rasterised surface is ${round(canvas.width * peak)}×${round(canvas.height * peak)} ` +
+        `(~${surfaceMb} MB) at design size. A keyframe sweep that repeatedly crosses that scale is ` +
+        `what exhausts a small render host (the keyframe COUNT is cheap). Keep the scale at or below ` +
+        `${MAX_SAFE_FILTERED_SCALE}×, or frame the subject with a camera move instead of scaling the layer.`,
+      detail: {
+        layerId: layer.id,
+        layerType: layer.type,
+        peakScale: round(peak),
+        surfaceAtPeakPx: [round(canvas.width * peak), round(canvas.height * peak)],
+        surfaceMb,
+        maxSafeScale: MAX_SAFE_FILTERED_SCALE,
+      },
+    });
+  });
+  return warnings;
+}
+
 export function analyzeScene(scene: SceneSpec): SceneWarning[] {
   const warnings: SceneWarning[] = [];
 
@@ -372,6 +455,9 @@ export function analyzeScene(scene: SceneSpec): SceneWarning[] {
       detail: { fromMs: gap.fromMs, toMs: gap.toMs, durationMs: gap.durationMs },
     });
   }
+
+  // a dense sweep across an expensive surface — the host-limit cause
+  warnings.push(...largeScaleWarnings(scene));
 
   return warnings;
 }

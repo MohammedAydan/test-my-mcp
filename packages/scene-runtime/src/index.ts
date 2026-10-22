@@ -53,6 +53,16 @@ interface MountedScene {
 let stage: Stage | null = null;
 let mounted: MountedScene | null = null;
 
+/**
+ * TRUE when the film grain is the ENCODER's job.
+ *
+ * Set from the `?offloadFilmGrain=1` query flag, which the engine's render
+ * page passes. It is a property of the PAGE, not of a scene: the warm page
+ * (which measures) and the render page (which encodes) are different pages
+ * with different jobs.
+ */
+let offloadFilmGrainToEncoder = false;
+
 /** Bounding box of every mounted layer, in design-space pixels. */
 export type LayerBounds = Record<string, LayerBoundsReport>;
 
@@ -129,6 +139,10 @@ async function boot(): Promise<void> {
 
   const params = new URLSearchParams(window.location.search);
   const renderMode = params.get("render") === "1";
+  // THE GRAIN OFFLOAD. The export asks the runtime to leave the film grain
+  // out of the DOM; the video encoder applies FFmpeg's temporal `noise`
+  // filter instead (it shimmers, and it costs the compositor nothing).
+  offloadFilmGrainToEncoder = params.get("offloadFilmGrain") === "1";
   const sceneId = params.get("scene");
   const fps = Number(params.get("fps") ?? 60);
 
@@ -307,6 +321,7 @@ async function mountScene(
     },
     registerSeekable: (seekable) => seekables.push(seekable),
     assetIntrinsicSize: (assetId) => imageSizes.get(assetId),
+    offloadFilmGrainToEncoder,
   });
   // `focusTarget` camera moves measure element boxes, so the rig must be laid
   // out before the first keyframe tween is evaluated
@@ -319,6 +334,7 @@ async function mountScene(
     height,
     durationMs: scene.durationMs,
     totalFrames,
+    offloadFilmGrainToEncoder,
   };
   window.renderConfig = config;
 

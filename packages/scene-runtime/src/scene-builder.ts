@@ -60,6 +60,13 @@ export interface SceneBuildOptions {
   registerSeekable: (seekable: Seekable) => void;
   /** natural pixel size of an image asset, when known */
   assetIntrinsicSize: (assetId: string) => { width: number; height: number } | undefined;
+  /**
+   * Leave the film grain out of the DOM — the encoder applies it instead.
+   *
+   * See `RenderConfig.offloadFilmGrainToEncoder` for why the export path asks
+   * for this. Defaults to false: the interactive preview paints the grain.
+   */
+  offloadFilmGrainToEncoder?: boolean;
 }
 
 export interface BuiltScene {
@@ -219,6 +226,7 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
       lottieData: opts.lottieData,
       registerSeekable: opts.registerSeekable,
       assetIntrinsicSize: opts.assetIntrinsicSize,
+      offloadFilmGrainToEncoder: opts.offloadFilmGrainToEncoder === true,
     };
 
     const built = renderLayer(layer, ctx);

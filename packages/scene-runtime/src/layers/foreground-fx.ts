@@ -129,6 +129,80 @@ function grainTile(tilePx: number): string {
   return url;
 }
 
+/**
+ * Mount the DOM grain overlay — the INTERACTIVE preview's grain.
+ *
+ * WHY A BAKED TILE AND NOT `feTurbulence` (measured on a GPU-less host,
+ * 2 vCPU, 254.5 ms/frame baseline):
+ *
+ *   before: 254.5 ms/frame → 390.5 ms/frame  (+53 %)
+ *   after:  the noise is rasterised ONCE into a tile and then repeated.
+ *
+ * An SVG `feTurbulence` filter is re-evaluated by the compositor on EVERY
+ * frame — the filter output is not cached, so the cost is paid 60 times a
+ * second for a full-frame surface. On top of that the old overlay used
+ * `mix-blend-mode: overlay`, which forces the whole frame through a second
+ * blending pass.
+ *
+ * The replacement is a plain PNG of monochrome noise, tiled with
+ * `background-repeat`. The compositor blends it once, as an ordinary image.
+ *
+ * DETERMINISM: the noise comes from a FIXED SEED, so two renders of the same
+ * scene produce the same pixels — a random grain would differ on every run
+ * and make a frame diff useless.
+ */
+function mountGrainOverlay(
+  ctx: LayerContext,
+  effect: { opacity?: number; sizePx?: number }
+): void {
+  const opacity = clamp(num(effect.opacity, 0.06), 0, 1);
+  const sizePx = clamp(num(effect.sizePx, 2), 1, 6);
+  // THE TILE IS DRAWN 1:1.
+  //
+  // THE BUG THIS FIXES: the tile was a 128 px source scaled to
+  // `sizePx * 80` px (160 px at the default) — a NON-INTEGER scale. A
+  // scaled image is RESAMPLED every time the element is painted, and a
+  // full-frame tiled resample in software rasterisation measured
+  // **+147 ms per frame** (the grain was still ×1.60 of a plain scene
+  // after the `feTurbulence` filter and the `overlay` blend mode were
+  // removed).
+  //
+  // The tile is now generated at the size it is drawn at, and the size
+  // is an INTEGER, so the browser blits it without resampling.
+  const tileSize = GRAIN_TILE_PX * Math.max(1, Math.round(sizePx));
+  const el = document.createElement("div");
+  el.className = "mf-grain";
+  el.style.cssText = [
+    "position:absolute",
+    "inset:0",
+    `background-image:url("${grainTile(tileSize)}")`,
+    // NO `mix-blend-mode: overlay` — the blending pass over the whole
+    // frame was half the cost of the effect.
+    `opacity:${opacity}`,
+    `background-size:${tileSize}px ${tileSize}px`,
+    "background-repeat:repeat",
+    // NEAREST-NEIGHBOUR SAMPLING. A bilinear sample of a repeating
+    // texture over a full frame is the single most expensive thing a
+    // software rasteriser can be asked to do here — and for a NOISE tile
+    // the filtering is not even wanted: it blurs the grain into mush.
+    "image-rendering:pixelated",
+  ].join(";");
+  // THE GRAIN IS STATIC.
+  //
+  // THE BUG THIS FIXES: the grain used to FLICKER — the tile's position
+  // was tweened across the scene so the noise would move like film grain.
+  // A position change on a TILED background re-rasterises the whole
+  // tiled surface: measured on the reference host, the grain cost
+  // **+163 ms per frame** (×1.60 against a plain scene) even after the
+  // `feTurbulence` filter and the `overlay` blend mode were removed.
+  //
+  // A static tile is rasterised ONCE and composited for the rest of the
+  // render, which is what the effect actually needs: a fine, even noise
+  // over the frame. The EXPORT does not use this path at all — it applies
+  // FFmpeg's temporal `noise` filter instead, which really does shimmer.
+  ctx.content.appendChild(el);
+}
+
 export function renderForegroundFx(layer: ForegroundFxLayer, ctx: LayerContext): { content: HTMLElement } {
   // The layer's own content element: a real, full-bleed box, so the unified
   // transform pipeline has an element to own and the bounds report has a box
@@ -151,52 +225,31 @@ export function renderForegroundFx(layer: ForegroundFxLayer, ctx: LayerContext):
       ].join(";");
       ctx.content.appendChild(el);
     } else if (effect.kind === "filmGrain") {
-      const opacity = clamp(num(effect.opacity, 0.06), 0, 1);
-      const sizePx = clamp(num(effect.sizePx, 2), 1, 6);
-      // THE TILE IS DRAWN 1:1.
+      // ─────────────────────────────────────────────────────────────────────
+      // THE ENCODER OWNS THE GRAIN (the export path).
+      // ─────────────────────────────────────────────────────────────────────
       //
-      // THE BUG THIS FIXES: the tile was a 128 px source scaled to
-      // `sizePx * 80` px (160 px at the default) — a NON-INTEGER scale. A
-      // scaled image is RESAMPLED every time the element is painted, and a
-      // full-frame tiled resample in software rasterisation measured
-      // **+147 ms per frame** (the grain was still ×1.60 of a plain scene
-      // after the `feTurbulence` filter and the `overlay` blend mode were
-      // removed).
+      // A full-bleed translucent overlay cannot be composited over the layers
+      // beneath it without FLATTENING them into one texture first. So every
+      // animated layer under a grain overlay is rasterised into an
+      // intermediate surface on EVERY frame — which on a 3.8 GB host is the
+      // difference between a render that fits and one the kernel OOM-kills.
       //
-      // The tile is now generated at the size it is drawn at, and the size
-      // is an INTEGER, so the browser blits it without resampling.
-      const tileSize = GRAIN_TILE_PX * Math.max(1, Math.round(sizePx));
-      const el = document.createElement("div");
-      el.className = "mf-grain";
-      el.style.cssText = [
-        "position:absolute",
-        "inset:0",
-        `background-image:url("${grainTile(tileSize)}")`,
-        // NO `mix-blend-mode: overlay` — the blending pass over the whole
-        // frame was half the cost of the effect.
-        `opacity:${opacity}`,
-        `background-size:${tileSize}px ${tileSize}px`,
-        "background-repeat:repeat",
-        // NEAREST-NEIGHBOUR SAMPLING. A bilinear sample of a repeating
-        // texture over a full frame is the single most expensive thing a
-        // software rasteriser can be asked to do here — and for a NOISE tile
-        // the filtering is not even wanted: it blurs the grain into mush.
-        "image-rendering:pixelated",
-      ].join(";");
-      // THE GRAIN IS STATIC.
+      // The export therefore asks the runtime to paint NO grain at all, and
+      // the video encoder applies FFmpeg's native temporal `noise` filter to
+      // the encoded frames instead. The grain then SHIMMERS (a DOM tile
+      // cannot move without re-rasterising the whole surface) and Chromium
+      // pays zero milliseconds for it.
       //
-      // THE BUG THIS FIXES: the grain used to FLICKER — the tile's position
-      // was tweened across the scene so the noise would move like film grain.
-      // A position change on a TILED background re-rasterises the whole
-      // tiled surface: measured on the reference host, the grain cost
-      // **+163 ms per frame** (×1.60 against a plain scene) even after the
-      // `feTurbulence` filter and the `overlay` blend mode were removed.
+      // The interactive preview does NOT set the flag, so the author still
+      // sees the static grain tile while editing.
       //
-      // A static tile is rasterised ONCE and composited for the rest of the
-      // render, which is what the effect actually needs: a fine, even noise
-      // over the frame. The trade-off is honest and visible in the report —
-      // the grain no longer shimmers.
-      ctx.content.appendChild(el);
+      // ONLY THE GRAIN IS SKIPPED. Every other effect on the layer — the
+      // vignette, the colour grade — still paints: a `continue` here would
+      // swallow the effects that follow the grain in the array.
+      if (!ctx.offloadFilmGrainToEncoder) {
+        mountGrainOverlay(ctx, effect);
+      }
     } else {
       // colorGrade: CSS filter on the whole content stack, tweened in at `at`
       const graded =

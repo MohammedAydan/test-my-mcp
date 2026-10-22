@@ -1536,14 +1536,128 @@ async function benchmarkRender(core, paths) {
     }
   }
 
+  // ---- the KEYFRAME DENSITY term ------------------------------------------
+  //
+  // The cost model used to price a scene by its EFFECTS only, so a scene with
+  // eight keyframes per property per layer carried the same estimate as the
+  // same layers with two — and the dense one is the one that runs out of
+  // memory. This A/B isolates the KEYFRAME COUNT: the same two layers, the
+  // same render tier, 0 keyframes versus 200 on the text layer.
+  //
+  // The multiplier the model uses (`KEYFRAME_DENSITY_MULTIPLIER`) is this
+  // measurement, extrapolated linearly from the reference count:
+  // `1 + total / 200 × (measured − 1)`.
+  sub('cost attribution: KEYFRAME DENSITY (the same layers, 0 vs 200 keyframes)');
+  const densityKeyframes = (layerId, count) => {
+    if (count === 0) return [];
+    const props = ['xPct', 'yPct', 'scale', 'rotation', 'opacity'];
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      const property = props[i % props.length];
+      const t = (i / (count - 1)) * 900;
+      const value =
+        property === 'xPct'
+          ? 40 + 20 * Math.sin(t / 90)
+          : property === 'yPct'
+            ? 45 + 10 * Math.cos(t / 110)
+            : property === 'scale'
+              ? 0.9 + 0.2 * Math.sin(t / 130)
+              : property === 'rotation'
+                ? 12 * Math.sin(t / 150)
+                : 0.65 + 0.3 * Math.sin(t / 170);
+      out.push({
+        id: `kf-${layerId}-${i}`.slice(0, 60),
+        timeMs: Math.round(t),
+        property,
+        value: Math.round(value * 1000) / 1000,
+        easing: 'easeInOut',
+      });
+    }
+    return out;
+  };
+  const densityResults = [];
+  for (const kfCount of [0, 200]) {
+    const densityId = `bench-density-${kfCount}`;
+    const densityScene = {
+      schemaVersion: 1,
+      id: densityId,
+      name: `Density ${kfCount} keyframes`,
+      canvas: { shape: '16:9', scale: 1080 },
+      durationMs: 1000,
+      layers: [
+        {
+          id: 'bg',
+          type: 'background',
+          at: 0,
+          duration: 1000,
+          variant: { variant: 'solid', color: '#05070d' },
+        },
+        {
+          id: 'headline',
+          type: 'kineticText',
+          text: 'Density',
+          sizePx: 96,
+          fontWeight: 700,
+          fill: '#ffffff',
+          position: { xPct: 50, yPct: 50 },
+          at: 0,
+          duration: 1000,
+          keyframes: densityKeyframes('headline', kfCount),
+        },
+      ],
+    };
+    await core.saveScene(densityScene);
+    const tDensity = Date.now();
+    try {
+      const { jobId: dJobId } = await core.startRender(densityId, 'draft');
+      const dJob = await new Promise((resolve, reject) => {
+        const timer = setInterval(() => {
+          const j = core.getRenderStatus(dJobId);
+          if (!j) return;
+          if (j.status === 'succeeded' || j.status === 'failed') {
+            clearInterval(timer);
+            resolve(j);
+          }
+        }, 25);
+        setTimeout(() => {
+          clearInterval(timer);
+          reject(new Error('the density render timed out'));
+        }, 300000);
+      });
+      if (dJob.status === 'succeeded' && dJob.result) {
+        const ms = (Date.now() - tDensity) / dJob.result.frames;
+        densityResults.push({ keyframes: kfCount, msPerFrame: Number(ms.toFixed(1)) });
+        line(
+          `density: ${kfCount} keyframes`,
+          `${dJob.result.frames} frames — ${ms.toFixed(1)} ms/frame`
+        );
+      } else {
+        line(`density: ${kfCount} keyframes`, `FAILED — ${dJob.error}`);
+      }
+    } catch (err) {
+      line(`density: ${kfCount} keyframes`, `FAILED — ${String(err).slice(0, 120)}`);
+    }
+  }
+  const densitySparse = densityResults.find((r) => r.keyframes === 0)?.msPerFrame ?? null;
+  const densityDense = densityResults.find((r) => r.keyframes === 200)?.msPerFrame ?? null;
+  const densityRatio =
+    densitySparse && densityDense ? Number((densityDense / densitySparse).toFixed(2)) : null;
+  if (densityRatio !== null) {
+    line(
+      'the density multiplier at 200 keyframes',
+      `x${densityRatio} (${densityDense} vs ${densitySparse} ms/frame)`
+    );
+    line('the model uses', `x${CORE.KEYFRAME_DENSITY_MULTIPLIER} at 200 keyframes`);
+  }
+
   // `--only=ab` runs JUST the cost attribution: it is the measurement that
   // has to be repeated every time an effect is optimised, and the full
   // benchmark takes 25 minutes.
   if (HAS_FLAG('--only=ab')) {
-    report.abOnly = { ab: abResults, isolated: isoResults, oomKills: oomKilled };
+    const abOnly = { ab: abResults, isolated: isoResults, density: densityResults, oomKills: oomKilled };
     console.log('\n=== A/B ONLY ===');
-    console.log(JSON.stringify(report.abOnly, null, 2));
-    return report.abOnly;
+    console.log(JSON.stringify(abOnly, null, 2));
+    return abOnly;
   }
 
   // ---- the real render ----------------------------------------------------
@@ -1916,6 +2030,158 @@ async function benchmarkHostLimits(core) {
 }
 
 /**
+ * THE GRAIN — a static dither, or a temporal shimmer?
+ *
+ * The DOM grain was a translucent TILE: it looked like grain in a still and
+ * like a printed dither in motion, because the tile never changed. The export
+ * now adds the grain in the ENCODER (`noise=…:c0f=t+u`), and the encoder is
+ * told to spend the bits it needs (`encoderArgs(..., { filmGrain: true })`).
+ *
+ * This measurement proves the result on real exported pixels: a flat scene
+ * with a 0.06-opacity grain, rendered through the REAL pipeline at draft, then
+ * decoded back to grey and compared frame to frame. A static dither has
+ * `mean|Δ| = 0`; a temporal grain has a substantial fraction of its pixels
+ * changing on every frame — while the flat control must stay at exactly 0.
+ */
+async function benchmarkFilmGrain(core) {
+  section('THE GRAIN — does it shimmer, or is it a static dither?');
+  const flatScene = (id, withGrain) => ({
+    schemaVersion: 1,
+    id,
+    name: id,
+    canvas: { shape: '16:9', scale: 1080 },
+    durationMs: 1000,
+    layers: [
+      {
+        id: 'bg',
+        type: 'background',
+        at: 0,
+        duration: 1000,
+        variant: { variant: 'solid', color: '#202020' },
+      },
+      ...(withGrain
+        ? [
+            {
+              id: 'fx',
+              type: 'foregroundFX',
+              at: 0,
+              duration: 1000,
+              effects: [{ kind: 'filmGrain', opacity: 0.06, sizePx: 2 }],
+            },
+          ]
+        : []),
+    ],
+  });
+
+  const renderFlat = async (id) => {
+    const t = Date.now();
+    const { jobId } = await core.startRender(id, 'draft');
+    const job = await new Promise((resolve, reject) => {
+      const timer = setInterval(() => {
+        const j = core.getRenderStatus(jobId);
+        if (!j) return;
+        if (j.status === 'succeeded' || j.status === 'failed') {
+          clearInterval(timer);
+          resolve(j);
+        }
+      }, 50);
+      setTimeout(() => {
+        clearInterval(timer);
+        reject(new Error(`the grain render (${id}) timed out`));
+      }, 600000);
+    });
+    if (job.status !== 'succeeded') throw new Error(`the grain render (${id}) failed: ${job.error}`);
+    return { path: job.result.mp4Path, wallMs: Date.now() - t };
+  };
+
+  /** Decode the export to grey and measure its spatial + temporal statistics. */
+  const measureGrain = (mp4) => {
+    const info = JSON.parse(
+      execFileSync('ffprobe', [
+        '-v', 'error', '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height', '-of', 'json', mp4,
+      ]).toString()
+    ).streams[0];
+    const size = info.width * info.height;
+    const raw = execFileSync('ffmpeg', ['-v', 'error', '-i', mp4, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], {
+      maxBuffer: 512 * 1024 * 1024,
+    });
+    const frames = Math.floor(raw.length / size);
+    if (frames < 2) throw new Error(`the grain export has ${frames} decodable frames`);
+    // the grain's AMPLITUDE on a mid frame
+    const f = Math.floor(frames / 2);
+    let sum = 0;
+    let sum2 = 0;
+    for (let i = 0; i < size; i++) {
+      const v = raw[f * size + i];
+      sum += v;
+      sum2 += v * v;
+    }
+    const mean = sum / size;
+    const std = Math.sqrt(Math.max(0, sum2 / size - mean * mean));
+    // the SHIMMER: consecutive frames, averaged over the whole export
+    let total = 0;
+    let count = 0;
+    let max = 0;
+    let changed = 0;
+    for (let k = 1; k < frames; k++) {
+      let rowChanged = 0;
+      for (let i = 0; i < size; i++) {
+        const d = Math.abs(raw[k * size + i] - raw[(k - 1) * size + i]);
+        total += d;
+        count++;
+        if (d > max) max = d;
+        if (d > 0) rowChanged++;
+      }
+      changed += rowChanged;
+    }
+    return {
+      width: info.width,
+      height: info.height,
+      frames,
+      sizeBytes: fs.statSync(mp4).size,
+      spatialStd: +std.toFixed(3),
+      meanDelta: +(total / count).toFixed(4),
+      maxDelta: max,
+      changedPct: +((100 * changed) / count).toFixed(1),
+    };
+  };
+
+  await core.saveScene(flatScene('bench-grain', true));
+  await core.saveScene(flatScene('bench-grain-plain', false));
+
+  const withGrain = await renderFlat('bench-grain');
+  const plain = await renderFlat('bench-grain-plain');
+  const grainStats = measureGrain(withGrain.path);
+  const plainStats = measureGrain(plain.path);
+
+  line('filmGrain 0.06 — draft render', `${withGrain.wallMs} ms, ${grainStats.frames} frames`);
+  line('  grain amplitude (mid-frame spatial std)', grainStats.spatialStd);
+  line(
+    '  consecutive-frame difference',
+    `mean|Δ| ${grainStats.meanDelta}, max|Δ| ${grainStats.maxDelta}`
+  );
+  line('  pixels that CHANGE every frame', `${grainStats.changedPct}%`);
+  line(
+    '  the flat control (no grain)',
+    `std ${plainStats.spatialStd}, mean|Δ| ${plainStats.meanDelta}, changed ${plainStats.changedPct}%`
+  );
+  line('  the draft file size', `${grainStats.sizeBytes} B vs ${plainStats.sizeBytes} B plain`);
+
+  // A static dither is bit-identical frame to frame; a temporal grain is not.
+  if (!(grainStats.meanDelta > 0.5) || grainStats.changedPct < 25) {
+    fail(
+      'the exported grain is NOT temporal — it is a static dither',
+      `mean|Δ| ${grainStats.meanDelta}, ${grainStats.changedPct}% changed`
+    );
+  }
+  if (plainStats.meanDelta !== 0) {
+    fail('the control scene is not flat', `mean|Δ| ${plainStats.meanDelta}`);
+  }
+  return { withGrain: { ...grainStats, wallMs: withGrain.wallMs }, plain: plainStats };
+}
+
+/**
  * Capture N frames with the real zero-port route, then encode exactly those
  * buffers with the real encoder args — the two phases, measured apart.
  */
@@ -2085,12 +2351,21 @@ async function main() {
     core = await createEngineCore({ port: 4000, log: (m) => console.log(`  [engine] ${m}`) });
     writeVaultAssets(core.paths.vaultDir);
 
-    report.schema = benchmarkSchemaSanitizer();
-    report.concurrency = await benchmarkConcurrency(core);
-    report.inspection = await benchmarkInspection(core);
-    report.render = await benchmarkRender(core, core.paths);
+    // `--only=host-limits` runs JUST the scenes that do not fit — it is the
+    // measurement to repeat after a render-path change, and it must not spend
+    // 20 minutes on the rest of the benchmark first.
+    if (!HAS_FLAG('--only=host-limits')) {
+      report.schema = benchmarkSchemaSanitizer();
+      report.concurrency = await benchmarkConcurrency(core);
+      report.inspection = await benchmarkInspection(core);
+      report.render = await benchmarkRender(core, core.paths);
+    }
+    // `--only=ab` already printed its JSON and returns here: the cost
+    // attribution is the measurement, and it must not be followed by the
+    // grain / cold / host-limit phases (another 15 minutes).
+    if (HAS_FLAG('--only=ab')) return report;
 
-    if (!HAS_FLAG('--production')) {
+    if (!HAS_FLAG('--only=host-limits') && !HAS_FLAG('--production')) {
       sub('render (production) — 1920x1080 @ 60fps  [SKIPPED: pass --production]');
       line(
         'the production ladder is measured by the UI benchmark',
@@ -2198,10 +2473,20 @@ async function main() {
         fail(`production render failed: ${job.error}`);
       }
     }
+    // THE GRAIN — measured in the warm engine, before the cold phase (the
+    // cold phase launches a second Chromium).
+    if (!HAS_FLAG('--only=host-limits')) {
+      report.grain = await benchmarkFilmGrain(core);
+    }
+
     // THE COLD PHASE — the child process launches a SECOND Chromium, and on a
     // 3.8 GB host the two together can get one of them OOM-killed. So it runs
     // AFTER every warm measurement, never before.
-    if (!HAS_FLAG('--skip-cold') && process.env.MOTIONFORGE_BENCH_SKIP_COLD !== '1') {
+    if (
+      !HAS_FLAG('--only=host-limits') &&
+      !HAS_FLAG('--skip-cold') &&
+      process.env.MOTIONFORGE_BENCH_SKIP_COLD !== '1'
+    ) {
       sub('cold measurements (child process, fresh Chromium) — the LAST measurement');
       const coldInspect = runColdPhase('inspect-cold');
       const coldBounds = runColdPhase('bounds-cold');
@@ -2242,7 +2527,19 @@ async function main() {
   process.exit(0);
 }
 
-main().catch((err) => {
-  console.error('benchmark failed:', err);
-  process.exit(1);
-});
+// `require()`-able: the host-limit SCENE is reused by focused probes, and a
+// library load must never start a 25-minute benchmark.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('benchmark failed:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  buildRichScene,
+  compressScene,
+  oomKillCount,
+  writeVaultAssets,
+  SCENE_DURATION_MS,
+};

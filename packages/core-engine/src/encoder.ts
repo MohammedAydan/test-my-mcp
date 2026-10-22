@@ -137,6 +137,44 @@ function rateControl(floor: number): string[] {
 }
 
 /**
+ * FILM GRAIN COSTS BITS — the encoder has to be told.
+ *
+ * Grain is per-pixel high-entropy detail: unlike a flat area it cannot be
+ * predicted from the previous frame, so a rate-controlled encoder answers it
+ * by *quantising it away*. That is exactly what the measurements showed on a
+ * flat 0.06-opacity grain scene (1280×720@30 draft, 1920×1080@60 production,
+ * `noise=c0s=16:c0f=t+u`):
+ *
+ * | tier                         | spatial std | mean \|Δ\| frame→frame | pixels changed |
+ * | ---------------------------- | ----------- | ---------------------- | -------------- |
+ * | production ABR 0.05 bpp      | 0.37        | 0.51                   | 25 %           |
+ * | production ABR 0.20 bpp, tune| 4.52        | 2.53                   | 82 %           |
+ * | draft CRF 30 ultrafast       | 1.99        | 0.0001                 | 0.0 %          |
+ * | draft CRF 26 ultrafast, tune | 4.01        | 3.13                   | 83 %           |
+ *
+ * Without the fix the grain was encoded as a *static* dither: the amplitude
+ * survived, the shimmer did not. Two things restore it:
+ *
+ *   - `-tune grain` tells x264 to keep the fine residual instead of treating
+ *     it as dead-zone noise (it raises psy-rd and shrinks the dead zone);
+ *   - the bitrate target is multiplied by `GRAIN_BITRATE_FACTOR`, because a
+ *     grain master genuinely needs ~0.2 bit/pixel — the same 4× a broadcast
+ *     encoder asks for when a client delivers a grainy plate.
+ *
+ * Scenes WITHOUT grain are untouched, so the ladder's cost is unchanged.
+ */
+export interface EncoderOptions {
+  /** the scene carries film grain — spend the bits the noise needs */
+  filmGrain?: boolean;
+}
+
+/** x264's grain-preserving tune. Not understood by the hardware encoders. */
+const GRAIN_TUNE = ["-tune", "grain"];
+
+/** The bitrate multiplier a grain-bearing master needs (0.05 → 0.2 bpp). */
+export const GRAIN_BITRATE_FACTOR = 4;
+
+/**
  * The FFmpeg arguments for one encoder + quality profile.
  *
  * `profile` is OPTIONAL: the old two-argument call still works and falls back
@@ -145,10 +183,13 @@ function rateControl(floor: number): string[] {
 export function encoderArgs(
   encoder: string,
   quality: "preview" | "draft" | "production",
-  profile?: RenderProfile
+  profile?: RenderProfile,
+  opts: EncoderOptions = {}
 ): string[] {
   const size = profile ?? DEFAULT_PROFILE;
-  const floor = productionBitrateFloor(size);
+  const grain = opts.filmGrain === true;
+  const floor = productionBitrateFloor(size) * (grain ? GRAIN_BITRATE_FACTOR : 1);
+  const grainTune = grain && encoder === "libx264" ? GRAIN_TUNE : [];
   switch (encoder) {
     case "h264_nvenc":
       // draft: the fastest preset, CRF (the smallest file the content allows)
@@ -157,7 +198,7 @@ export function encoderArgs(
         return ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "1M"];
       }
       return quality === "draft"
-        ? ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", "30", "-b:v", "0"]
+        ? ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", grain ? "24" : "30", "-b:v", "0"]
         : [
             "-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21",
             ...rateControl(floor),
@@ -167,24 +208,29 @@ export function encoderArgs(
         return ["-c:v", "h264_qsv", "-b:v", "1M"];
       }
       return quality === "draft"
-        ? ["-c:v", "h264_qsv", "-b:v", "4M"]
+        ? ["-c:v", "h264_qsv", "-b:v", grain ? "16M" : "4M"]
         : ["-c:v", "h264_qsv", ...rateControl(Math.max(floor, 14_000_000))];
     case "h264_videotoolbox":
       if (quality === "preview") {
         return ["-c:v", "h264_videotoolbox", "-b:v", "1M"];
       }
       return quality === "draft"
-        ? ["-c:v", "h264_videotoolbox", "-b:v", "6M"]
+        ? ["-c:v", "h264_videotoolbox", "-b:v", grain ? "24M" : "6M"]
         : ["-c:v", "h264_videotoolbox", ...rateControl(Math.max(floor, 14_000_000))];
     default:
       // libx264: the preview and the draft are CRF (fast and small), the
       // production is ABR with a guaranteed target bitrate.
       if (quality === "preview") {
+        // A LAYOUT CHECK, not a look check: 360p of grain is a sub-pixel
+        // affair anyway, and the preview must stay seconds-fast.
         return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "32"];
       }
-      return quality === "draft"
-        ? ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]
-        : ["-c:v", "libx264", "-preset", "medium", ...rateControl(floor)];
+      if (quality === "draft") {
+        return grain
+          ? ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", ...grainTune]
+          : ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"];
+      }
+      return ["-c:v", "libx264", "-preset", "medium", ...rateControl(floor), ...grainTune];
   }
 }
 
@@ -284,6 +330,93 @@ export function profileFor(quality: "preview" | "draft" | "production", scene: S
     outHeight: height,
     jpegQuality: 92,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Film grain — offloaded to the encoder
+// ---------------------------------------------------------------------------
+
+/**
+ * THE FILM GRAIN OF A SCENE.
+ *
+ * The grain is a full-frame effect, and in the DOM it was the single most
+ * expensive thing a software compositor could be asked to draw: a
+ * translucent overlay cannot be composited over the layers beneath it
+ * without FLATTENING them into one texture first, so every animated layer
+ * under it was rasterised into an intermediate surface on EVERY frame.
+ *
+ * In the export the grain is the ENCODER's job instead. FFmpeg's `noise`
+ * filter adds the grain to the encoded pixels:
+ *
+ *   - `c0s=<strength>` — the luma amplitude, in 0-255 units. The scene's
+ *     `opacity` (0..1) maps straight onto it: 0.06 → 6, 0.12 → 12.
+ *   - `c0f=t+u` — TEMPORAL + UNIFORM noise. `t` is the important one: the
+ *     pattern is regenerated on every frame, so the grain SHIMMERS the way
+ *     film grain does. The DOM tile could never do that — moving a tiled
+ *     background re-rasterises the whole surface.
+ *   - only `c0` (the luma plane) carries noise, so the grain is greyscale —
+ *     exactly like the DOM's monochrome tile.
+ *
+ * The default FFmpeg seed is 0 and the temporal pattern is a function of the
+ * frame index, so two renders of the same scene carry the same grain on the
+ * same frame: a random grain would make a frame diff useless.
+ *
+ * The filter only ADDS the noise — `encoderArgs()` is what stops the encoder
+ * from quantising it back into a static dither (see the table there).
+ */
+export interface FilmGrainSpec {
+  /** the layer that carries the grain */
+  layerId: string;
+  /** the authored opacity, 0..1 */
+  opacity: number;
+  /** the authored tile size, px (the DOM tile's repetition period) */
+  sizePx: number;
+}
+
+/** The scene's film-grain effect, or `null` when it has none. */
+export function filmGrainForScene(scene: SceneSpec): FilmGrainSpec | null {
+  for (const layer of scene.layers) {
+    if (layer.type !== "foregroundFX") continue;
+    const effects = (layer as { effects?: Array<{ kind?: string; opacity?: number; sizePx?: number }> })
+      .effects;
+    for (const effect of effects ?? []) {
+      if (effect?.kind !== "filmGrain") continue;
+      return {
+        layerId: layer.id,
+        opacity: typeof effect.opacity === "number" ? effect.opacity : 0.06,
+        sizePx: typeof effect.sizePx === "number" ? effect.sizePx : 2,
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * The FFmpeg `-vf` fragment that applies the scene's grain, or `null`.
+ *
+ * `null` means "this scene has no grain" — the caller must then NOT ask the
+ * runtime to skip the DOM grain either, so the two can never disagree.
+ *
+ * THE AMPLITUDE IS CALIBRATED, not guessed. The DOM grain's own amplitude was
+ * MEASURED on the reference host (a flat mid-grey background, the spatial
+ * standard deviation of the rendered frame):
+ *
+ * | opacity | the DOM grain's spatial std | the FFmpeg strength that matches it |
+ * | --- | --- | --- |
+ * | 0.06 | 4.43 | 16 |
+ * | 0.12 | 8.76 | 31 |
+ * | 0.25 | 18.35 | 65 |
+ *
+ * FFmpeg's `c0s` is the PEAK of a uniform distribution, so its standard
+ * deviation is `strength / 3.55`. The mapping is therefore
+ * `strength = opacity × 262` — the number that makes the exported grain look
+ * like the grain the author previewed.
+ */
+export function filmGrainFilter(scene: SceneSpec): string | null {
+  const grain = filmGrainForScene(scene);
+  if (!grain) return null;
+  const strength = Math.min(100, Math.max(1, Math.round(grain.opacity * 262)));
+  return `noise=c0s=${strength}:c0f=t+u`;
 }
 
 // ---------------------------------------------------------------------------

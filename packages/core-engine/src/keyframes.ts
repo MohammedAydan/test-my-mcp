@@ -74,11 +74,10 @@ export interface InspectedFrame {
   meta?: FrameMeta;
 }
 
-/** The maximum width of an inline preview, in device pixels. */
-export const PREVIEW_MAX_WIDTH = 960;
+import { PREVIEW_JPEG_QUALITY, PREVIEW_MAX_WIDTH } from "./warm-page.js";
 
-/** JPEG quality of an inline preview. */
-export const PREVIEW_JPEG_QUALITY = 75;
+/** The maximum width of an inline preview, in device pixels. */
+export { PREVIEW_MAX_WIDTH, PREVIEW_JPEG_QUALITY };
 
 /**
  * Insider screenshots at exact timestamps for visual verification — the tool

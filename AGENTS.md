@@ -289,10 +289,29 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
   reads the sidecar out of the live page with a pure `page.evaluate`; the
   runtime exposes `window.seekToFrameForLayout()` for it (the same geometry,
   without the media resync and the image decode).
+- **The layout oracle and the inspection are the SAME measurement.**
+  `inspect_scene_keyframes` and `get_layer_bounds` both go through
+  `WarmPage.measureFrames()` — one page, one viewport, one `page.evaluate` for
+  every timestamp — and the inspection runs it for ALL its frames **before**
+  it captures a single preview. Two pages laid out independently is how the
+  cross-path residual became 12.7 px; one page makes it 0.000 px.
+- **The cost model reports the VOCABULARY and prices what it measured.** The
+  per-frame multiplier is `effects × keyframe density` (`buildCostReport()` is
+  the one function both `analyze_scene` and the render pre-flight call), but
+  the density term is the MEASURED ×1.01 at 200 keyframes — evaluating
+  keyframes is cheap. What exhausts a host is the VALUE a sweep drives a
+  filtered/full-frame layer through, so `analyze_scene` warns
+  `FILTERED_LAYER_LARGE_SCALE` above 4× instead of pretending the count
+  predicts the memory.
 - **A heavy scene renders on ONE worker** when the host has ≤ 4.5 GB of RAM or
   the scene has heavy effects: `computeWorkerBudget()` in
   `packages/core-engine/src/cost-analysis.ts`. Two browsers rasterising a
   blurred full-frame gradient on a 4 GB host is how a render is OOM-killed.
+- **A render PAGE is bounded.** `openRenderPage` closes the BROWSER (not just
+  the context), and on a ≤ 6 GB host a heavy scene renders in chunks of
+  `HEAVY_SCENE_PIXEL_FRAME_BUDGET` (60 frames at 720p) so the renderer's
+  accumulated surfaces are released between chunks. The parts concatenate in
+  frame order; a chunk boundary does not change a pixel.
 - **The cost model's multipliers are MEASURED, in isolation** — one effect on
   a minimal scene. The A/B on a scene full of 200 px blurs measures the
   INTERACTION between an alpha overlay and the filters beneath it, not the
@@ -301,6 +320,14 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
   check — 3.2× faster than `draft`; `draft` (720p/30) is the working
   preview; `production` (full canvas/60) is the master. The production tier
   is ABR with a TARGET bitrate, so it is never lower-bitrate than the draft.
+- **Film grain is the ENCODER's job in the export.** The render page carries
+  `?offloadFilmGrain=1`, the runtime paints every other `foregroundFX` effect
+  but skips the grain overlay, and `renderer.ts` adds
+  `noise=c0s=<opacity × 262>:c0f=t+u` to the FFmpeg chain — temporal grain
+  that never flattens the layers beneath it. The live Studio preview keeps the
+  static tile. `encoderArgs(..., { filmGrain: true })` adds `-tune grain` and
+  4× the bitrate target, because a rate-controlled encoder otherwise quantises
+  the noise back into a STATIC dither (measured: mean|Δ| 0.0001 → 3.21).
 
 ## Camera & transitions (the invariants)
 

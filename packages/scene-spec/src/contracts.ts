@@ -150,6 +150,22 @@ export interface HeavyEffectReport {
   reason: string;
 }
 
+/** The keyframe density of a scene — the cost term the first model forgot. */
+export interface KeyframeDensityReport {
+  /** every keyframe in the scene, canonical + legacy */
+  totalKeyframes: number;
+  /** the number of DISTINCT properties animated anywhere in the scene */
+  animatedProperties: number;
+  /** the number of layers that carry at least one keyframe */
+  keyframedLayers: number;
+  /** the keyframes per second of screen time */
+  keyframesPerSecond: number;
+  /** the per-frame cost multiplier the density adds (1 = no keyframes) */
+  multiplier: number;
+  /** why the density costs what it costs, in one sentence */
+  reason: string;
+}
+
 /** The estimated cost of rendering a scene. */
 export interface SceneCostReport {
   /** the combined per-frame cost multiplier (1 = a plain scene) */
@@ -164,6 +180,13 @@ export interface SceneCostReport {
   workerBudget: number;
   /** the individual expensive features, biggest first */
   heavyEffects: HeavyEffectReport[];
+  /**
+   * THE KEYFRAME DENSITY TERM.
+   *
+   * A scene with 280 keyframes is not the same scene as one with 4, and the
+   * first cost model priced effects only — so the two got the same estimate.
+   */
+  keyframeDensity: KeyframeDensityReport;
   /** the host facts the estimate is based on */
   host: { cpus: number; totalMemGb: number; softwareRasterised: boolean };
   /** human-readable reasons for the estimate */

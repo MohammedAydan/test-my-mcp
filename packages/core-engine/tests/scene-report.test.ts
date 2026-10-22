@@ -18,14 +18,25 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseScene, type SceneSpecInput } from "@motionforge/scene-spec";
 import { buildBoundsFrameReport } from "../src/bounds-report.js";
 import {
+  buildCostReport,
   computeWorkerBudget,
   detectHeavyEffects,
   HEAVY_EFFECT_MULTIPLIERS,
+  KEYFRAME_DENSITY_MULTIPLIER,
+  measureKeyframeDensity,
+  MAX_KEYFRAME_DENSITY_MULTIPLIER,
   MAX_PER_FRAME_MULTIPLIER,
   perFrameMultiplier,
   sceneHasHeavyEffects,
 } from "../src/cost-analysis.js";
-import { encoderArgs, productionBitrateFloor, profileFor } from "../src/encoder.js";
+import {
+  encoderArgs,
+  filmGrainFilter,
+  filmGrainForScene,
+  GRAIN_BITRATE_FACTOR,
+  productionBitrateFloor,
+  profileFor,
+} from "../src/encoder.js";
 import { createEngineCore, type EngineCore } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -205,6 +216,83 @@ describe("detectHeavyEffects", () => {
     );
     // 1.10 × 1.11 = 1.221 → 1.22
     expect(perFrameMultiplier(pair)).toBe(1.22);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 1b. the keyframe-density term
+// ---------------------------------------------------------------------------
+
+describe("measureKeyframeDensity", () => {
+  const textLayer = PLAIN_SCENE.layers[1] as Extract<
+    SceneSpecInput["layers"][number],
+    { type: "kineticText" }
+  >;
+  const keyframes = (count: number) => {
+    const properties = ["xPct", "yPct", "scale", "rotation", "opacity"] as const;
+    return Array.from({ length: count }, (_, i) => ({
+      id: `kf-${i}`,
+      timeMs: Math.round((i / Math.max(1, count - 1)) * 3800),
+      property: properties[i % properties.length]!,
+      value: properties[i % properties.length] === "opacity" ? 0.5 : 1,
+      easing: "linear" as const,
+    }));
+  };
+  /** `layerCount` text layers, each carrying `count` keyframes. */
+  const withKeyframes = (count: number, layerCount = 1): SceneSpecInput => ({
+    ...PLAIN_SCENE,
+    layers: [
+      PLAIN_SCENE.layers[0]!,
+      ...Array.from({ length: layerCount }, (_, i) => ({
+        ...textLayer,
+        id: `text-${i}`,
+        position: { xPct: 10 + i * 12, yPct: 50 },
+        keyframes: keyframes(count),
+      })),
+    ],
+  });
+
+  it("prices an un-keyframed scene at exactly x1", () => {
+    const density = measureKeyframeDensity(parseScene(PLAIN_SCENE));
+    expect(density.totalKeyframes).toBe(0);
+    expect(density.keyframedLayers).toBe(0);
+    expect(density.multiplier).toBe(1);
+    expect(density.reason).toMatch(/no keyframes/i);
+  });
+
+  it("applies the MEASURED x1.01 at the 200-keyframe reference", () => {
+    const density = measureKeyframeDensity(parseScene(withKeyframes(200)));
+    expect(density.totalKeyframes).toBe(200);
+    expect(density.animatedProperties).toBe(5);
+    expect(density.keyframedLayers).toBe(1);
+    expect(density.keyframesPerSecond).toBe(50); // 200 keyframes over 4 s
+    expect(density.multiplier).toBe(KEYFRAME_DENSITY_MULTIPLIER);
+  });
+
+  it("extrapolates linearly from the measured reference", () => {
+    const half = measureKeyframeDensity(parseScene(withKeyframes(100)));
+    expect(half.multiplier).toBe(
+      Math.round((1 + 0.5 * (KEYFRAME_DENSITY_MULTIPLIER - 1)) * 100) / 100
+    );
+    // 6 × 200 = 1200 keyframes — the schema's per-layer ceiling, spread across
+    // layers — is still far below the ×2 cap, because the measured term is ×1.01
+    const huge = measureKeyframeDensity(parseScene(withKeyframes(200, 6)));
+    expect(huge.totalKeyframes).toBe(1200);
+    expect(huge.multiplier).toBe(1.06);
+    expect(huge.multiplier).toBeLessThan(MAX_KEYFRAME_DENSITY_MULTIPLIER);
+  });
+
+  it("multiplies the effect price, so the SAME layers price differently", () => {
+    const sparse = buildCostReport(parseScene(HEAVY_SCENE));
+    const dense = buildCostReport(parseScene({ ...withKeyframes(200), layers: [
+      ...HEAVY_SCENE.layers,
+      (withKeyframes(200).layers[1] as SceneSpecInput["layers"][number]),
+    ] }));
+    expect(sparse.keyframeDensity.multiplier).toBe(1);
+    expect(dense.keyframeDensity.multiplier).toBe(KEYFRAME_DENSITY_MULTIPLIER);
+    // the effect product is identical; the density is what moves
+    expect(dense.perFrameMultiplier).toBeGreaterThan(sparse.perFrameMultiplier);
+    expect(dense.notes.some((note) => note.includes("keyframe"))).toBe(true);
   });
 });
 
@@ -426,6 +514,74 @@ describe("encoderArgs", () => {
         productionArgs[productionArgs.indexOf("-b:v") + 1]
       );
       expect(productionBitrate).toBeGreaterThan(draftBitrate);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. the film grain — the encoder's job, and it must SHIMMER
+// ---------------------------------------------------------------------------
+
+describe("film grain offload", () => {
+  const grainScene = parseScene({
+    ...PLAIN_SCENE,
+    layers: [
+      PLAIN_SCENE.layers[0]!,
+      {
+        id: "grain",
+        type: "foregroundFX",
+        effects: [{ kind: "filmGrain", opacity: 0.06, sizePx: 2 }],
+      },
+    ],
+  });
+  const plainScene = parseScene(PLAIN_SCENE);
+
+  it("finds the effect and calibrates the amplitude to the DOM tile", () => {
+    const grain = filmGrainForScene(grainScene);
+    expect(grain).not.toBeNull();
+    expect(grain?.layerId).toBe("grain");
+    expect(grain?.opacity).toBe(0.06);
+    // 0.06 × 262 = 15.72 → 16: the FFmpeg uniform peak whose std (16 / 3.55
+    // = 4.51) matches the DOM tile's measured spatial std (4.431)
+    expect(filmGrainFilter(grainScene)).toBe("noise=c0s=16:c0f=t+u");
+    expect(filmGrainFilter(grainScene)).toContain("c0f=t+u"); // temporal + uniform
+    expect(filmGrainFilter(plainScene)).toBeNull();
+  });
+
+  it("clamps the strength into FFmpeg's legal range", () => {
+    const faint = parseScene({
+      ...PLAIN_SCENE,
+      layers: [
+        PLAIN_SCENE.layers[0]!,
+        { id: "grain", type: "foregroundFX", effects: [{ kind: "filmGrain", opacity: 0 }] },
+      ],
+    });
+    expect(filmGrainFilter(faint)).toBe("noise=c0s=1:c0f=t+u");
+  });
+
+  it("spends the bits a grain master needs — and only when there IS grain", () => {
+    const production = profileFor("production", plainScene);
+    const draft = profileFor("draft", plainScene);
+    const floor = productionBitrateFloor(production);
+    const plainDraft = encoderArgs("libx264", "draft", draft);
+    const grainDraft = encoderArgs("libx264", "draft", draft, { filmGrain: true });
+    const plainProduction = encoderArgs("libx264", "production", production);
+    const grainProduction = encoderArgs("libx264", "production", production, { filmGrain: true });
+
+    // a scene WITHOUT grain is untouched
+    expect(grainDraft).not.toEqual(plainDraft);
+    expect(grainDraft).toContain("-tune");
+    expect(grainDraft[grainDraft.indexOf("-tune") + 1]).toBe("grain");
+    expect(grainDraft[grainDraft.indexOf("-crf") + 1]).toBe("26");
+
+    expect(grainProduction[grainProduction.indexOf("-b:v") + 1]).toBe(
+      String(floor * GRAIN_BITRATE_FACTOR)
+    );
+    expect(plainProduction[plainProduction.indexOf("-b:v") + 1]).toBe(String(floor));
+
+    // `-tune grain` is x264-only; the hardware encoders just get more bits
+    for (const encoder of ["h264_nvenc", "h264_qsv", "h264_videotoolbox"]) {
+      expect(encoderArgs(encoder, "production", production, { filmGrain: true })).not.toContain("-tune");
     }
   });
 });

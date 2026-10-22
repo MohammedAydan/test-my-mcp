@@ -31,6 +31,19 @@ import type { EnginePaths } from "./config.js";
 import { setupPlaywrightZeroPortRoutes } from "./renderer.js";
 import { sceneHash, type SceneStore } from "./scene-store.js";
 
+/**
+ * THE INLINE PREVIEW — the maximum width, in device pixels, and the JPEG
+ * quality.
+ *
+ * MCP over stdio is a PIPE: twelve full-resolution 1080p PNGs are ~15 MB of
+ * base64, which overflows the pipe buffer, closes the client end and kills
+ * the server with an unhandled `write EPIPE`. The preview is the same frame
+ * at a fraction of the size, and the full-resolution original is still
+ * written to disk.
+ */
+export const PREVIEW_MAX_WIDTH = 960;
+export const PREVIEW_JPEG_QUALITY = 75;
+
 /** The scene id the zero-port routes are registered under for the warm page. */
 const WARM_SCENE_ID = "__warm__";
 
@@ -53,6 +66,17 @@ export interface WarmFrameReport {
   describe: unknown;
   /** the composition-space box of every mounted layer, keyed by layer id */
   bounds: Record<string, unknown>;
+}
+
+/** One measured + captured frame — the inspection's answer. */
+export interface WarmInspectedFrame {
+  atMs: number;
+  /** the lightweight inline preview (a JPEG data URL) */
+  preview: string;
+  /** the FULL-RESOLUTION PNG as a data URL (empty unless asked for) */
+  image: string;
+  /** the numeric frame description — the `framesMeta` sidecar */
+  describe: unknown;
 }
 
 /**
@@ -129,28 +153,166 @@ export class WarmPage {
    * check needs is a number, and a number does not need pixels.
    */
   async frameReport(atMs: number): Promise<WarmFrameReport> {
+    const reports = await this.measureFrames([atMs]);
+    return reports[0] ?? { describe: null, bounds: {} };
+  }
+
+  /**
+   * Measure a LIST of timestamps in ONE page round-trip.
+   *
+   * ONE round-trip, not one per timestamp: the per-call overhead of a
+   * Playwright `evaluate` (serialise the callback, cross the process
+   * boundary, deserialise the answer) is a large part of a cheap
+   * measurement, and a layout question is always asked about several
+   * timestamps at once.
+   *
+   * THE MEASUREMENT IS THE LAYOUT SETTLE — the same door `get_layer_bounds`
+   * uses, and now the same door the inspection's sidecar uses. That is what
+   * makes the two paths agree to the PIXEL: they are the same page, the same
+   * settle and the same `describeFrame` call.
+   */
+  async measureFrames(atMs: number[]): Promise<WarmFrameReport[]> {
+    if (atMs.length === 0) return [];
     const page = await this.ensurePage();
     return this.serialise(async () => {
       const fps = this.mountedFps;
       return await page.evaluate(
-        async (payload: { atMs: number; fps: number }) => {
+        async (payload: { atMs: number[]; fps: number }) => {
           const g = globalThis as unknown as RuntimeGlobals;
-          const frame = Math.max(0, Math.round((payload.atMs / 1000) * payload.fps));
-          // The LAYOUT door when the runtime has it: the same geometry,
-          // without the media resync and the image decode. A bounding box
-          // does not depend on either.
-          if (typeof g.seekToFrameForLayout === "function") {
-            await g.seekToFrameForLayout(frame);
-          } else if (typeof g.seekToFrame === "function") {
-            await g.seekToFrame(frame);
+          const out: Array<{ describe: unknown; bounds: Record<string, unknown> }> = [];
+          for (const stamp of payload.atMs) {
+            const frame = Math.max(0, Math.round((stamp / 1000) * payload.fps));
+            // THE LAYOUT DOOR when the runtime has it: the same geometry,
+            // without the media resync and the image decode. A bounding box
+            // does not depend on either.
+            if (typeof g.seekToFrameForLayout === "function") {
+              await g.seekToFrameForLayout(frame);
+            } else if (typeof g.seekToFrame === "function") {
+              await g.seekToFrame(frame);
+            }
+            const describe =
+              typeof g.describeFrame === "function" ? g.describeFrame(stamp) : null;
+            const bounds =
+              typeof g.getLayerBounds === "function" ? g.getLayerBounds() : {};
+            out.push({ describe, bounds: (bounds ?? {}) as Record<string, unknown> });
           }
-          const describe = typeof g.describeFrame === "function" ? g.describeFrame(payload.atMs) : null;
-          const bounds = typeof g.getLayerBounds === "function" ? g.getLayerBounds() : {};
-          return { describe, bounds: (bounds ?? {}) as Record<string, unknown> };
+          return out;
         },
         { atMs, fps }
       );
     });
+  }
+
+  /**
+   * MEASURE and CAPTURE a list of timestamps — the inspection path.
+   *
+   * TWO PASSES, ON PURPOSE:
+   *
+   * 1. MEASURE every frame with the layout settle — the same measurement
+   *    `get_layer_bounds` makes, on the same page. The numbers an agent reads
+   *    are therefore the numbers the cheap oracle would have given it.
+   * 2. CAPTURE the frames with the FULL settle (media resynced, images
+   *    decoded) so the PICTURE is right.
+   *
+   * The capture pass resizes the viewport to render a smaller copy of the
+   * frame, and restoring it can leave the page with a residual scroll offset
+   * — which used to move the stage and make every frame after the first
+   * disagree with the first. Measuring FIRST removes that contamination
+   * entirely.
+   */
+  async inspectFrames(
+    atMs: number[],
+    opts: { width: number; height: number; includeFullResolution?: boolean }
+  ): Promise<WarmInspectedFrame[]> {
+    if (atMs.length === 0) return [];
+    const measured = await this.measureFrames(atMs);
+    const page = await this.ensurePage();
+    return this.serialise(async () => {
+      const fps = this.mountedFps;
+      const frames: WarmInspectedFrame[] = [];
+      for (const [index, stamp] of atMs.entries()) {
+        const frame = Math.max(0, Math.round((stamp / 1000) * fps));
+        // the FULL settle: the picture needs the media and the bitmaps
+        await page.evaluate((f) => {
+          return (globalThis as unknown as { seekToFrame(frame: number): Promise<void> }).seekToFrame(f);
+        }, frame);
+        const preview = await this.capturePreview(page, opts.width, opts.height);
+        const image = opts.includeFullResolution
+          ? `data:image/png;base64,${((await page.screenshot({ type: "png" })) as Buffer).toString("base64")}`
+          : "";
+        frames.push({
+          atMs: stamp,
+          preview,
+          image,
+          describe: measured[index]?.describe ?? null,
+        });
+      }
+      return frames;
+    });
+  }
+
+  /**
+   * Capture the current frame as a small JPEG preview.
+   *
+   * The canvas keeps its exact LAYOUT — only the rasterization shrinks.
+   * Playwright re-applies its own device metrics immediately before every
+   * screenshot, so a CDP `deviceScaleFactor` override is silently discarded;
+   * the stage's own fit-to-window transform is the one scale the page honours.
+   */
+  private async capturePreview(page: Page, width: number, height: number): Promise<string> {
+    const scale = Math.min(1, PREVIEW_MAX_WIDTH / Math.max(1, width));
+    if (scale >= 1) return "";
+    const previewWidth = Math.round(width * scale);
+    const previewHeight = Math.round(height * scale);
+
+    // NOTE: every `page.evaluate` snippet below is SELF-CONTAINED. Playwright
+    // serializes the callback into the browser, so nothing from this module's
+    // scope reaches it — and the engine's tsconfig has no DOM lib, hence the
+    // `globalThis` cast inside the snippet rather than a shared helper.
+    const original = await page.evaluate(() => {
+      const g = globalThis as unknown as {
+        document: { getElementById(id: string): { style: { transform: string } } | null };
+      };
+      return g.document.getElementById("stage")?.style.transform ?? null;
+    });
+    try {
+      await page.setViewportSize({ width: previewWidth, height: previewHeight });
+      await page.evaluate((s) => {
+        const g = globalThis as unknown as {
+          document: { getElementById(id: string): { style: { transform: string } } | null };
+        };
+        const stage = g.document.getElementById("stage");
+        if (stage) stage.style.transform = `translate(-50%, -50%) scale(${s})`;
+      }, scale);
+      const buffer = (await page.screenshot({ type: "jpeg", quality: PREVIEW_JPEG_QUALITY })) as Buffer;
+      return `data:image/jpeg;base64,${buffer.toString("base64")}`;
+    } catch {
+      // a preview is a convenience — never fail an inspection over it
+      return "";
+    } finally {
+      await page
+        .evaluate((transform) => {
+          if (transform === null) return;
+          const g = globalThis as unknown as {
+            document: { getElementById(id: string): { style: { transform: string } } | null };
+          };
+          const stage = g.document.getElementById("stage");
+          if (stage) stage.style.transform = transform;
+          // the viewport dance can leave the document scrolled — and a
+          // scrolled document moves every box by the scroll offset
+          const w = globalThis as unknown as { scrollTo?: (x: number, y: number) => void };
+          w.scrollTo?.(0, 0);
+        }, original)
+        .catch(() => undefined);
+      const canvas = this.viewport ?? { width, height };
+      await page.setViewportSize({ width: canvas.width, height: canvas.height }).catch(() => undefined);
+      await page
+        .evaluate(() => {
+          const w = globalThis as unknown as { scrollTo?: (x: number, y: number) => void };
+          w.scrollTo?.(0, 0);
+        })
+        .catch(() => undefined);
+    }
   }
 
   /** Close the context and the browser. The page is unusable afterwards. */
