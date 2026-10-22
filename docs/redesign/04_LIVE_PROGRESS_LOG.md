@@ -204,6 +204,28 @@ Legend: `⬜` not started · `🟡` in progress · `✅` complete · `⛔` block
 
 ---
 
+## The Phase-7 remediation — every open item closed
+
+| ID | Defect | Fix |
+| --- | --- | --- |
+| P7-D1 | **The inspector could not author a rich background** — a `meshGradient` was written as a `solid` payload and the engine refused the save. | `packages/studio/src/services/background-variant.ts` rebuilds the discriminated union per variant; `BackgroundEditor.tsx` gives the user the blob / particle / media controls. |
+| P7-D2 | **A malformed background variant crashed the preview renderer.** | `packages/scene-runtime/src/layers/guards.ts` + every renderer: total guards, a `TypeError` is now impossible. |
+| P7-D3 | **A failed save left an unhandled promise rejection and no actionable message.** | `state.saveIssues[]` + a non-transient `#inspector-save-issues` banner; every `void store.executeSave()` handles its rejection; a layer window past the composition end is auto-clamped. |
+| P7-D4 | **The store never recorded the render queue.** | `packages/studio/src/services/render-queue.ts` — a session-long bridge writes every job and every tick into `state.renderQueue`; the modal is a view of it. |
+| P7-D5 | **`Ctrl+K` was bound twice.** | `preventDefault()` + `stopImmediatePropagation()` in `App.tsx`; the razor split lives on `Ctrl+E`. |
+| P7-D6 | **The Text and Card tools were dead ends** — they armed the cursor and never created a layer. | The canvas treats them as creation tools: a click creates the layer where the user clicked. |
+| P7-D7 | **The "Add Layer" modal had no entry point** — no button, no menu item, no command. | Three new commands: `Add Layer…`, `Add Text Layer`, `Add Card Layer`. |
+| P7-D8 | **The card editor wrote an illegal `accent-color` key**, so every save with an edited card was rejected. | `packages/studio/src/services/card-variant.ts` rebuilds the card variant per treatment. |
+| P7-D9 | **The inspection path cost 5 938 ms/frame** — a fresh browser context, a navigation and a `networkidle` wait per call. | `packages/core-engine/src/warm-page.ts`: ONE warm page for the life of the engine, `domcontentloaded`, and a zero-rasterisation `getLayerBoundsAt`. |
+| P7-D10 | **A blurred mesh gradient (+95 %) and a live `feTurbulence` grain (+53 %) dominated the frame cost** and could OOM-kill the browser. | A pre-softened multi-stop radial gradient and a pre-baked 128×128 noise tile; a RAM-aware worker budget; a pre-flight that prices the scene before the workers spawn. |
+| P7-D11 | **The `textOverflow` flag fired on layers with no text** — the root's scroll width was measured on a background and a grain overlay. | The root check now applies only to a root that actually holds text. |
+| P7-D12 | **The sanitizer deleted a `particleField`'s numeric `size`** (it ran the layout-size normaliser first). | The new-kind normaliser runs FIRST, and the layout-size normaliser skips a numeric `size`. |
+| P7-D13 | **The UI benchmark could not even start** — a `const tool` shadowed a parameter (`SyntaxError`, committed in `336d73b`). | Renamed. The benchmark now runs. |
+| P7-D14 | **The Electron harnesses wrote the render queue, the panel sizes and the workspace layout into the developer's real Electron profile** (`localStorage` lives in `userData`, not in the engine's storage). | `makeTestElectronArgs()` adds `--user-data-dir` inside the throw-away tree. |
+
+
+---
+
 ## Regression ledger
 
 | Date | Change | Tests | Typecheck | Build | Electron |
@@ -215,3 +237,4 @@ Legend: `⬜` not started · `🟡` in progress · `✅` complete · `⛔` block
 | 2026-10-21 | v5 Phase 5 — UI polish (test isolation, navigator, left-dock splitter, inspector re-order, badge no-wrap) | 496 passing (unchanged) | 0 errors (6 workspaces) | 0 errors | ✅ 60/60 v3 checks + ✅ 66/66 v4 checks |
 | 2026-10-21 | v6 Phase 6 — production audit (3 benchmarks, 3 reports) + 8 product fixes | 496 → 499 passing | 0 errors (6 workspaces) | 0 errors | ✅ 72/72 UI-benchmark + ✅ 31/33 MCP-benchmark + the v3 (60/60) and v4 (66/66) harnesses |
 | 2026-10-21 | v6 the `textOverflow` false positive (the sidecar told an agent its background was clipped text) | 499 passing (unchanged) | 0 errors (6 workspaces) | 0 errors | ✅ the MCP benchmark's layout check now passes: "No text overflow at any inspected frame" |
+| 2026-10-21 | **v7 Phase 7 — the full remediation**: 4 new layer kinds, 13 MCP tools, the warm browser page, the heavy-effect optimisations, and every BUG/F/G/R/P finding closed | 499 → 561 passing | 0 errors (6 workspaces) | 0 errors | ✅ the UI benchmark, the MCP benchmark and the backend benchmark all at 100 % |

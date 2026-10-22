@@ -515,8 +515,11 @@ function registerIpcHandlers(): void {
     'ingestAsset',
     'inspectKeyframes',
     'getLayerBounds',
+    'getLayerBoundsAt',
+    'analyzeScene',
     'startRender',
     'getRenderStatus',
+    'getRenderResult',
   ]);
 
   ipcMain.handle('engine:invoke', async (_event, method: string, ...args: unknown[]) => {

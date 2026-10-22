@@ -8,6 +8,13 @@ import type {
   LayerKeyframe,
 } from '@motionforge/scene-spec';
 import { api } from '../api.js';
+import {
+  createLayerPayload,
+  FULL_BLEED_NEW_KINDS,
+  isNewLayerKind,
+  newLayerId,
+  type NewLayerKind,
+} from '../services/layer-factory.js';
 import type {
   AssetVaultItem,
   CapabilitiesResponse,
@@ -134,6 +141,23 @@ export interface StudioState {
   dirty: boolean;
   toasts: Toast[];
   activeModal: string | null;
+  /**
+   * The FIELD-LEVEL issues of the last rejected save.
+   *
+   * A failed save used to be a toast and nothing else — the user was told
+   * "Save failed" and never learned WHICH field the engine rejected. The
+   * issues are the schema's own strings (`layers.0.variant.blobs: Required`),
+   * so the inspector can show the exact path the author has to fix.
+   */
+  saveIssues: string[];
+  /**
+   * The AUTO-KEY arm.
+   *
+   * When it is armed, editing a transform property writes a keyframe at the
+   * playhead on the FIRST touch (After Effects semantics) instead of
+   * requiring the stopwatch click. It is OFF by default.
+   */
+  autoKeyArmed: boolean;
 }
 
 /* ── persistence helpers ───────────────────────────────────────────────── */
@@ -220,6 +244,8 @@ const [state, setState] = createStore<StudioState>({
   dirty: false,
   toasts: [],
   activeModal: null,
+  saveIssues: [],
+  autoKeyArmed: false,
 });
 
 interface HistoryEntry {
@@ -239,6 +265,54 @@ function updateHistoryCount(): void {
 }
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+/**
+ * Turn a rejected save into the FIELD-LEVEL issues the inspector renders.
+ *
+ * The engine rejects a scene with the schema's own flattened strings
+ * (`layers.0.variant.blobs: Required`), so the banner can name the exact
+ * path the author has to fix.
+ *
+ * The issues travel on the error's `issues[]` — but the ELECTRON IPC
+ * boundary drops custom properties, so the MESSAGE is the fallback: the
+ * engine builds it as `invalid scene: <issue>; <issue>; …`, and this splits
+ * it back into one line per issue.
+ */
+export function describeSaveFailure(err: unknown): string[] {
+  const issues = (err as { issues?: unknown } | null)?.issues;
+  if (Array.isArray(issues)) {
+    const lines = issues
+      .map((issue) => {
+        if (typeof issue === 'string') return normalizeIssueLine(issue);
+        if (issue && typeof issue === 'object') {
+          const record = issue as { path?: unknown; message?: unknown };
+          const path = Array.isArray(record.path) ? record.path.join('.') : '';
+          const message = typeof record.message === 'string' ? record.message : '';
+          if (path && message) return `${path}: ${message}`;
+          if (message) return message;
+        }
+        return String(issue);
+      })
+      .filter((line) => line.length > 0);
+    if (lines.length > 0) return lines;
+  }
+  const message = (err as Error | null)?.message ?? '';
+  const parts = message
+    .split('; ')
+    .map((part) => normalizeIssueLine(part))
+    .filter((part) => part.length > 0);
+  if (parts.length > 1) return parts;
+  return [parts[0] ?? 'The scene was rejected by the engine'];
+}
+
+/** Strip the transport prefixes an issue line may carry. */
+function normalizeIssueLine(line: string): string {
+  return line
+    .replace(/^Error invoking remote method[^\n]*?:\s*/, '')
+    .replace(/^Error:\s*/, '')
+    .replace(/^invalid scene:\s*/, '')
+    .trim();
+}
 
 /**
  * Reconcile the layer objects of a freshly cloned scene against the previous
@@ -322,7 +396,7 @@ export const store = {
     });
     updateHistoryCount();
     syncDesktopDirty();
-    void this.executeSave();
+    void this.executeSave().catch(() => undefined);
     this.addToast(`Undo: ${prev.description}`, 'info');
     return prev.description;
   },
@@ -341,7 +415,7 @@ export const store = {
     });
     updateHistoryCount();
     syncDesktopDirty();
-    void this.executeSave();
+    void this.executeSave().catch(() => undefined);
     this.addToast(`Redo: ${next.description}`, 'info');
     return next.description;
   },
@@ -628,6 +702,12 @@ export const store = {
    * could land last — leaving the disk holding a stale scene while the UI
    * shows a newer one. Instead, a save request while a save is in flight is
    * coalesced into a follow-up pass that writes the NEWEST content.
+   *
+   * A REJECTED save is ACTIONABLE: the engine's field-level issues are
+   * published into `state.saveIssues` (the inspector renders them in a
+   * banner) instead of being swallowed into a toast. The promise still
+   * REJECTS, so every `void store.executeSave()` call site must handle it —
+   * an unhandled rejection in the console is a defect of its own.
    */
   async executeSave(): Promise<void> {
     if (!state.scene) return;
@@ -639,6 +719,11 @@ export const store = {
     this.saveInFlight = true;
     this.setSaveStatus('saving');
     try {
+      // A layer that runs past the composition end is CLAMPED before the
+      // write: its `duration` is shortened so the layer ends exactly at the
+      // scene end. The engine rejects such a scene, and a save that always
+      // fails is worse than a save that quietly trims the overflow.
+      this.clampLayersToCompositionEnd();
       let savedId = '';
       while (this.saveRequested) {
         this.saveRequested = false;
@@ -648,14 +733,104 @@ export const store = {
         savedId = res.id;
       }
       this.setSaveStatus('saved');
+      setState('saveIssues', []);
       if (savedId) this.addToast(`Saved scene ${savedId}`, 'success');
     } catch (err: unknown) {
       this.setSaveStatus('failed');
+      const issues = describeSaveFailure(err);
+      setState('saveIssues', issues);
       this.addToast(`Save failed: ${(err as Error).message}`, 'error');
       throw err;
     } finally {
       this.saveInFlight = false;
     }
+  },
+
+  /**
+   * Shorten every layer that runs past the composition end.
+   *
+   * THE CHOSEN BEHAVIOUR (the task allows a clamp OR a warning — this is the
+   * clamp): the layer's `duration` becomes `scene.durationMs - at`, so the
+   * layer ends EXACTLY at the scene end. The toast names the layers that
+   * were trimmed, so the change is never silent.
+   *
+   * Returns the names of the layers that were clamped.
+   */
+  clampLayersToCompositionEnd(): string[] {
+    const scene = state.scene;
+    if (!scene) return [];
+    const end = Math.max(0, Math.round(scene.durationMs));
+    const overflowing: Array<{ id: string; label: string; duration: number }> = [];
+
+    for (const layer of scene.layers) {
+      const at = layer.at ?? 0;
+      const duration = layer.duration ?? Math.max(0, end - at);
+      if (at + duration > end) {
+        overflowing.push({
+          id: layer.id,
+          label: layer.name ?? layer.id,
+          duration: Math.max(0, Math.round(end - at)),
+        });
+      }
+    }
+    if (overflowing.length === 0) return [];
+
+    this.updateSceneWithoutHistory((draft) => {
+      for (const item of overflowing) {
+        const layer = draft.layers.find((l) => l.id === item.id);
+        if (!layer) continue;
+        layer.duration = item.duration;
+      }
+    });
+
+    const labels = overflowing.map((item) => item.label);
+    this.addToast(
+      `Clamped ${labels.length} layer(s) to the composition end: ${labels.join(', ')}`,
+      'warning'
+    );
+    return labels;
+  },
+
+  /** Clear the rejected-save issues (the banner's dismiss button). */
+  clearSaveIssues(): void {
+    setState('saveIssues', []);
+  },
+
+  /**
+   * Arm or disarm the AUTO-KEY.
+   *
+   * When it is armed, the inspector writes a keyframe at the playhead the
+   * FIRST time a transform property is touched — the stopwatch click is not
+   * needed. It is OFF by default, so the classic behaviour is unchanged.
+   */
+  setAutoKeyArmed(armed: boolean): void {
+    setState('autoKeyArmed', Boolean(armed));
+  },
+
+  /**
+   * Insert or update one render job in the global queue.
+   *
+   * The queue lives in the store, so a render that finishes while the modal
+   * is CLOSED still updates the status bar and the command palette.
+   */
+  upsertRenderJob(job: RenderJobStatus): void {
+    const list = [...state.renderQueue];
+    const index = list.findIndex((entry) => entry.id === job.id);
+    if (index === -1) list.unshift(job);
+    else list[index] = { ...list[index], ...job };
+    this.setRenderQueue(list);
+  },
+
+  /**
+   * Update one render job in place.
+   *
+   * A job the queue does not know about is IGNORED: without its scene and
+   * quality there is nothing meaningful to show.
+   */
+  patchRenderJob(jobId: string, patch: Partial<RenderJobStatus>): void {
+    const existing = state.renderQueue.find((entry) => entry.id === jobId);
+    if (!existing) return;
+    this.upsertRenderJob({ ...existing, ...patch, id: existing.id });
   },
 
   /* ── assets ─────────────────────────────────────────────────────────── */
@@ -668,10 +843,68 @@ export const store = {
       if (idx >= 0) scene.assets[idx] = asset;
       else scene.assets.push(asset);
     }, `Added asset ${asset.id}`);
-    void this.executeSave();
+    void this.executeSave().catch(() => undefined);
   },
 
   /* ── layer operations ───────────────────────────────────────────────── */
+
+  /**
+   * Create a NEW layer of the given kind.
+   *
+   * The payload comes from the layer factory, so every kind is created with
+   * its OWN schema-valid fields — a `chart` really gets `data`, a `cta`
+   * really gets a `label`, and a full-bleed layer really gets an explicit
+   * integer `duration` equal to the composition length.
+   *
+   * Returns the new layer's id, or `null` when the kind is unknown.
+   */
+  addLayerOfKind(kind: string): string | null {
+    return this.addLayerOfKindAt(kind, 50, 50);
+  },
+
+  /**
+   * Create a layer of `kind` and place it at a point on the canvas.
+   *
+   * The x/y are PERCENT of the canvas, which is how every layer's anchor is
+   * expressed — so the value the canvas hands over (a click in composition
+   * pixels) is converted by the caller.
+   *
+   * This is the path the TEXT TOOL and the CARD TOOL take: the user picks the
+   * tool, clicks the canvas, and the layer appears WHERE THEY CLICKED. The
+   * tools used to only arm themselves and never create anything, which made
+   * them look like they were broken.
+   */
+  addLayerOfKindAt(kind: string, xPct: number, yPct: number): string | null {
+    if (!state.scene) {
+      this.addToast('Load a composition before adding layers', 'warning');
+      return null;
+    }
+    if (!isNewLayerKind(kind)) {
+      this.addToast(`"${kind}" is not a layer kind this Studio can create`, 'warning');
+      return null;
+    }
+    const id = newLayerId(kind);
+    const payload = createLayerPayload(kind, {
+      id,
+      at: state.playhead,
+      durationMs: state.scene.durationMs,
+    });
+    // a full-bleed kind has no anchor; every other kind is placed where the
+    // user clicked
+    if (FULL_BLEED_NEW_KINDS.includes(kind as NewLayerKind)) {
+      delete (payload as unknown as Record<string, unknown>).position;
+    } else {
+      (payload as unknown as Record<string, unknown>).position = {
+        xPct: Math.max(-300, Math.min(300, Math.round(xPct * 100) / 100)),
+        yPct: Math.max(-300, Math.min(300, Math.round(yPct * 100) / 100)),
+      };
+    }
+    this.mutateScene((scene) => {
+      scene.layers.push(payload);
+    }, `Added ${kind} layer`);
+    this.selectLayer(id);
+    return id;
+  },
 
   toggleLayerVisibility(layerId: string): void {
     this.mutateScene((scene) => {
@@ -897,15 +1130,20 @@ export const store = {
    * Add (or replace) a keyframe at `timeMs`.
    *
    * This is what the inspector's stopwatch button calls.
+   *
+   * `recordHistory` is false for the AUTO-KEY path: the gesture already
+   * pushed ONE undo snapshot, and a second one would make the auto-key a
+   * separate undo step from the edit it belongs to.
    */
   setLayerKeyframe(
     layerId: string,
     property: KeyframeProperty,
     timeMs: number,
     value: number,
-    easing: KeyframeEasing = 'easeInOut'
+    easing: KeyframeEasing = 'easeInOut',
+    recordHistory = true
   ): void {
-    this.mutateScene((scene) => {
+    const apply = (scene: StudioScene) => {
       const layer = scene.layers.find((l) => l.id === layerId);
       if (!layer) return;
       const list = ((layer.keyframes ?? []) as LayerKeyframe[]).slice();
@@ -925,7 +1163,12 @@ export const store = {
         });
       }
       layer.keyframes = list.sort((a, b) => a.timeMs - b.timeMs);
-    }, `Keyframe ${property} of ${layerId} at ${Math.round(timeMs)}ms`);
+    };
+    if (recordHistory) {
+      this.mutateScene(apply, `Keyframe ${property} of ${layerId} at ${Math.round(timeMs)}ms`);
+    } else {
+      this.updateSceneWithoutHistory(apply);
+    }
   },
 
   /** Remove one keyframe. */

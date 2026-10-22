@@ -15,6 +15,29 @@ export { ensureSfxBank, SFX_BANK } from "./sfx-bank.js";
 export { doctor, type DoctorReport } from "./doctor.js";
 export { RenderRunner, type RenderJob, type RenderQuality } from "./render-runner.js";
 export { profileFor, pickEncoder, buildAudioGraph, availableEncoders, type RenderProfile } from "./encoder.js";
+export { encoderArgs, productionBitrateFloor } from "./encoder.js";
+export {
+  buildBoundsFrameReport,
+  buildCameraReport,
+  buildCompositionBox,
+  findOffscreen,
+  findOverlaps,
+  type RuntimeFrameDescription,
+} from "./bounds-report.js";
+export {
+  computeWorkerBudget,
+  detectHeavyEffects,
+  estimatedFrameMs,
+  hostFacts,
+  perFrameMultiplier,
+  sceneHasHeavyEffects,
+  workerBudgetForScene,
+  HEAVY_EFFECT_MULTIPLIERS,
+  MAX_PER_FRAME_MULTIPLIER,
+  type WorkerBudgetInput,
+} from "./cost-analysis.js";
+export { probeMedia, toStreamReport } from "./media-probe.js";
+export { WarmPage, WARM_FPS, type WarmFrameReport, type WarmPageOptions } from "./warm-page.js";
 export {
   EngineCore,
   createEngineCore,

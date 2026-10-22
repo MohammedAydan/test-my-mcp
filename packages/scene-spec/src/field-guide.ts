@@ -24,6 +24,10 @@ import { FOREGROUND_FX_KINDS, foregroundFxLayerSchema } from "./layers/foregroun
 import { imageLogoLayerSchema, LOGO_MASKS } from "./layers/image-logo.js";
 import { kineticTextLayerSchema } from "./layers/kinetic-text.js";
 import { lottieLayerSchema } from "./layers/lottie.js";
+import { chartLayerSchema, CHART_TYPES } from "./layers/chart.js";
+import { codeBlockLayerSchema, CODE_BLOCK_THEMES } from "./layers/code-block.js";
+import { particleFieldLayerSchema, PARTICLE_PATTERNS } from "./layers/particle-field.js";
+import { ctaLayerSchema, CTA_ICONS, CTA_VARIANTS } from "./layers/cta.js";
 import {
   KEYFRAME_EASINGS,
   KEYFRAME_PROPERTIES,
@@ -39,6 +43,10 @@ export type KineticTextLayerInput = z.input<typeof kineticTextLayerSchema>;
 export type CardLayerInput = z.input<typeof cardLayerSchema>;
 export type LottieLayerInput = z.input<typeof lottieLayerSchema>;
 export type ForegroundFxLayerInput = z.input<typeof foregroundFxLayerSchema>;
+export type ChartLayerInput = z.input<typeof chartLayerSchema>;
+export type CodeBlockLayerInput = z.input<typeof codeBlockLayerSchema>;
+export type ParticleFieldLayerInput = z.input<typeof particleFieldLayerSchema>;
+export type CtaLayerInput = z.input<typeof ctaLayerSchema>;
 
 export type AnyLayerInput =
   | BackgroundLayerInput
@@ -46,7 +54,11 @@ export type AnyLayerInput =
   | KineticTextLayerInput
   | CardLayerInput
   | LottieLayerInput
-  | ForegroundFxLayerInput;
+  | ForegroundFxLayerInput
+  | ChartLayerInput
+  | CodeBlockLayerInput
+  | ParticleFieldLayerInput
+  | CtaLayerInput;
 
 /** Keys every layer needs, plus the timing/motion knobs shared by all of them. */
 export const COMMON_LAYER_REQUIRED = ["id", "type"] as const;
@@ -194,6 +206,106 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
         { kind: "vignette", strength: 0.5 },
         { kind: "filmGrain", opacity: 0.06 },
       ],
+    },
+  },
+  chart: {
+    required: [
+      "position { xPct, yPct }",
+      "data (2-12 points: [{ label, value, color? }])",
+    ],
+    optional: [
+      "chartType: bar | line | donut (default bar)",
+      "title (a heading drawn above the plot)",
+      "accentColor (base colour; a per-datum `color` wins)",
+      "showValues (print the numeric value on each bar / point)",
+      "gridOpacity (0 hides the grid lines)",
+      "labelColor, widthPx, heightPx, labelSizePx",
+    ],
+    example: {
+      id: "chart",
+      type: "chart",
+      at: 1200,
+      position: { xPct: 50, yPct: 50 },
+      chartType: "bar",
+      title: "Frames per second",
+      data: [
+        { label: "Draft", value: 8.9 },
+        { label: "Production", value: 4.2 },
+      ],
+      accentColor: "#38bdf8",
+      showValues: true,
+      entrance: { name: "smoothSlideUp" },
+    },
+  },
+  codeBlock: {
+    required: ["position { xPct, yPct }", "code (the source)"],
+    optional: [
+      "language (e.g. typescript, python, bash — drives the highlighter)",
+      "title (the window chrome title)",
+      "theme: dark | midnight | matrix",
+      "highlightLines (1-indexed line numbers to emphasise)",
+      "fontSize (design px; `fontSizePx` is accepted as an alias)",
+      "widthPx, showChrome, showLineNumbers",
+    ],
+    example: {
+      id: "snippet",
+      type: "codeBlock",
+      at: 800,
+      position: { xPct: 50, yPct: 50 },
+      language: "typescript",
+      title: "capture.ts",
+      code: "const frame = await page.screenshot({ type: 'jpeg' });",
+      theme: "midnight",
+      highlightLines: [1],
+      entrance: { name: "3dFlipIn" },
+    },
+  },
+  particleField: {
+    required: [
+      "(none — every particleField field has a default, so `id` + `type` are the only requirements)",
+    ],
+    optional: [
+      "count (1-400 particles, default 80)",
+      "pattern: float | grid | constellation | sparkle (default float)",
+      "color, color2 (a second colour the particles interpolate towards)",
+      "speed (0.1-4, default 1)",
+      "size (radius in design px; `sizePx` is accepted as an alias)",
+      "seed (same seed => the same field, every machine)",
+      "opacity (per-particle ceiling)",
+    ],
+    example: {
+      id: "dust",
+      type: "particleField",
+      pattern: "constellation",
+      count: 120,
+      color: "#7dd3fc",
+      speed: 0.6,
+      size: 2.5,
+      seed: 42,
+      entrance: { name: "blurFadeIn", durationMs: 800 },
+    },
+  },
+  cta: {
+    required: ["position { xPct, yPct }", "label (the button text)"],
+    optional: [
+      "sublabel (a second line)",
+      "variant: primary | glass | outline | pill (default primary)",
+      "accentColor, bgColor, textColor",
+      "icon: arrow | sparkles | play | none (default arrow) — a VECTOR glyph, never an emoji",
+      "widthPx, heightPx, radiusPx, labelSizePx",
+    ],
+    example: {
+      id: "cta",
+      type: "cta",
+      at: 6000,
+      position: { xPct: 50, yPct: 72 },
+      label: "Start free trial",
+      sublabel: "No credit card required",
+      variant: "primary",
+      accentColor: "#38bdf8",
+      icon: "arrow",
+      entrance: { name: "springPop" },
+      sfx: [{ sfx: "pop", offsetMs: 0 }],
     },
   },
 };
@@ -348,6 +460,57 @@ export const SHOWCASE_SCENE_SKETCH: SceneSpecInput = {
         { kind: "colorGrade", contrast: 0.06, saturation: 0.08, warmth: 0.12 },
       ],
     },
+    {
+      id: "chart",
+      type: "chart",
+      at: 8600,
+      position: { xPct: 50, yPct: 62 },
+      chartType: "bar",
+      title: "Frames per second",
+      data: [
+        { label: "Draft", value: 8.9 },
+        { label: "Production", value: 4.2 },
+        { label: "Capture", value: 1.1 },
+      ],
+      accentColor: "#38bdf8",
+      showValues: true,
+      entrance: { name: "smoothSlideUp" },
+    },
+    {
+      id: "snippet",
+      type: "codeBlock",
+      at: 6000,
+      position: { xPct: 26, yPct: 26 },
+      language: "typescript",
+      title: "capture.ts",
+      code: "const frame = await page.screenshot({ type: 'jpeg' });",
+      theme: "midnight",
+      highlightLines: [1],
+      fontSize: 20,
+      entrance: { name: "3dFlipIn" },
+    },
+    {
+      id: "dust",
+      type: "particleField",
+      pattern: "constellation",
+      count: 90,
+      color: "#7dd3fc",
+      speed: 0.6,
+      size: 2.5,
+      seed: 42,
+    },
+    {
+      id: "cta",
+      type: "cta",
+      at: 9200,
+      position: { xPct: 50, yPct: 80 },
+      label: "Start free trial",
+      sublabel: "No credit card required",
+      variant: "primary",
+      accentColor: "#38bdf8",
+      icon: "arrow",
+      entrance: { name: "springPop" },
+    },
   ],
   camera: {
     keyframes: [
@@ -424,6 +587,23 @@ export function authoringDigest(): Record<string, unknown> {
       layerFilterKeys: LAYER_FILTER_KEYS,
       keyframeProperties: KEYFRAME_PROPERTIES,
       keyframeEasings: KEYFRAME_EASINGS,
+      chartTypes: CHART_TYPES,
+      codeBlockThemes: CODE_BLOCK_THEMES,
+      particlePatterns: PARTICLE_PATTERNS,
+      ctaVariants: CTA_VARIANTS,
+      ctaIcons: CTA_ICONS,
+    },
+    keyframePrecedence: {
+      canonical: "keyframes",
+      legacy: "tracks",
+      rule:
+        "A layer may carry BOTH a flat `keyframes` array and a legacy `tracks` array. The FLAT `keyframes` array is canonical and WINS for every property it drives; `tracks` still applies the properties the flat array does not mention (e.g. widthPx / heightPx, which are layout writes, not transform writes). Write `keyframes` — never `tracks`.",
+      conflictExample:
+        'layer { keyframes: [{ property: "xPct", value: 40 }], tracks: [{ property: "position.xPct", keyframes: [{ at: 0, value: 10 }] }] } → the flat value (40) is the one that plays.',
+      legacyShape:
+        'tracks: [{ "property": "position.yPct", "keyframes": [{ "at": 0, "value": 10 }] }]',
+      canonicalShape:
+        'keyframes: [{ "id": "k1", "timeMs": 0, "property": "yPct", "value": 10 }]',
     },
     notes: {
       howToStart:
@@ -435,6 +615,10 @@ export function authoringDigest(): Record<string, unknown> {
       camera: "keyframes inherit unset fields from the previous keyframe; at scale s the safe pan range is [50/s, 100-50/s]",
       effects: "emphasis presets and camera moves are temporary — they return to the baseline when their window ends",
       inspection: "inspect_scene_keyframes returns framesMeta[] (camera pose, transition phase, per-layer lifecycle/opacity/bbox/textOverflow) — read it before judging a frame",
+      layerKinds:
+        "There are TEN layer types: background, imageLogo, kineticText, card, lottie, foregroundFX, chart, codeBlock, particleField, cta. The last four are first-class and behave like the others — they carry their own timing, motion presets, position, filters and keyframes.",
+      sizeUnits:
+        "Sizes normally carry a `*Px` suffix (widthPx, heightPx, labelSizePx). `codeBlock.fontSize` and `particleField.size` are the two exceptions; their `*Px` aliases (fontSizePx, sizePx) are also accepted and are normalised on save.",
     },
   };
 }

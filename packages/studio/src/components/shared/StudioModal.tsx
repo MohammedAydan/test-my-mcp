@@ -2,6 +2,7 @@ import { Component, For, Show, createSignal } from 'solid-js';
 import { store } from '../../state/store.js';
 import { api } from '../../api.js';
 import { createDefaultScene } from '../../services/commands.js';
+import { createLayerPayload, isNewLayerKind, newLayerId } from '../../services/layer-factory.js';
 import type { StudioLayer } from '../../types.js';
 import { IconComposition, IconSearch } from '../icons/NleIcons.js';
 
@@ -18,76 +19,53 @@ const LAYER_TEMPLATES: Array<{ kind: string; label: string; description: string 
   { kind: 'imageLogo', label: 'Image / Logo', description: 'An image asset with a mask and shadow' },
   { kind: 'lottie', label: 'Lottie', description: 'A Lottie JSON animation scrubbed by the timeline' },
   { kind: 'foregroundFX', label: 'Effect Overlay', description: 'Vignette, film grain or colour grade' },
+  { kind: 'chart', label: 'Chart', description: 'A bar, line or donut data visualisation' },
+  { kind: 'codeBlock', label: 'Code Block', description: 'A syntax-highlighted source snippet' },
+  { kind: 'particleField', label: 'Particle Field', description: 'A full-bleed field of drifting particles' },
+  { kind: 'cta', label: 'Call To Action', description: 'A button with a label and a vector glyph' },
 ];
 
-/** Build a layer of the requested kind at the playhead. */
-export function buildLayer(kind: string, id: string): StudioLayer {
+/**
+ * Build a layer of the requested kind at the playhead.
+ *
+ * The payload comes from the LAYER FACTORY, so every kind gets its own
+ * schema-valid fields — and a full-bleed layer (`background`,
+ * `foregroundFX`) gets an explicit INTEGER `duration` equal to the
+ * composition length instead of the schema's 1200 ms default.
+ *
+ * The two ASSET-backed kinds are the exception: they may only reference an
+ * asset the composition DECLARES, so the caller passes the resolved id (or
+ * `null`, and no layer is created).
+ */
+export function buildLayer(kind: string, id: string, assetId?: string | null): StudioLayer | null {
   const at = store.state.playhead;
-  const duration = 3000;
-  switch (kind) {
-    case 'card':
-      return {
-        id,
-        type: 'card',
-        at,
-        duration,
-        position: { xPct: 50, yPct: 50 },
-        variant: {
-          variant: 'glassCard',
-          title: 'Card Title',
-          body: 'Description',
-          widthPx: 800,
-          paddingPx: 32,
-          radiusPx: 16,
-        },
-      };
-    case 'background':
-      return {
-        id,
-        type: 'background',
-        at: 0,
-        variant: { variant: 'solid', color: '#101017' },
-      };
-    case 'imageLogo':
-      return {
-        id,
-        type: 'imageLogo',
-        at,
-        duration,
-        assetId: 'logo',
-        widthPx: 240,
-        position: { xPct: 50, yPct: 50 },
-      };
-    case 'lottie':
-      return {
-        id,
-        type: 'lottie',
-        at,
-        duration,
-        assetId: 'lottie',
-        position: { xPct: 50, yPct: 50 },
-      };
-    case 'foregroundFX':
-      return {
-        id,
-        type: 'foregroundFX',
-        at: 0,
-        effects: [{ kind: 'vignette', strength: 0.5, color: '#000000' }],
-      };
-    default:
-      return {
-        id,
-        type: 'kineticText',
-        at,
-        duration,
-        text: 'New Text',
-        sizePx: 80,
-        position: { xPct: 50, yPct: 50 },
-        fill: '#ffffff',
-        animateBy: 'word',
-        entrance: { name: 'springPop' },
-      };
+  const durationMs = store.state.scene?.durationMs ?? 8000;
+
+  if (kind === 'imageLogo') {
+    if (!assetId) return null;
+    return {
+      id,
+      type: 'imageLogo',
+      at,
+      duration: Math.max(1, Math.min(3000, durationMs - at)),
+      assetId,
+      widthPx: 240,
+      position: { xPct: 50, yPct: 50 },
+    };
   }
+  if (kind === 'lottie') {
+    if (!assetId) return null;
+    return {
+      id,
+      type: 'lottie',
+      at,
+      duration: Math.max(1, Math.min(3000, durationMs - at)),
+      assetId,
+      position: { xPct: 50, yPct: 50 },
+    };
+  }
+  if (!isNewLayerKind(kind)) return null;
+  return createLayerPayload(kind, { id, at, durationMs });
 }
 
 export const StudioModal: Component = () => {
@@ -146,9 +124,29 @@ export const StudioModal: Component = () => {
       store.addToast('Load a composition before adding layers', 'warning');
       return;
     }
-    const id = `${kind}-${Math.random().toString(36).slice(2, 7)}`;
+    const id = newLayerId(kind);
+    // an asset-backed layer may only reference an asset the composition
+    // DECLARES — an invented id is a broken reference the engine rejects
+    let assetId: string | null = null;
+    if (kind === 'imageLogo' || kind === 'lottie') {
+      const wanted = kind === 'lottie' ? 'lottie' : 'image';
+      const asset = (state.scene.assets ?? []).find((entry) => entry.kind === wanted);
+      if (!asset) {
+        store.addToast(
+          `Import a ${wanted} asset in the Project Bin before adding a ${kind} layer`,
+          'warning'
+        );
+        return;
+      }
+      assetId = asset.id;
+    }
+    const layer = buildLayer(kind, id, assetId);
+    if (!layer) {
+      store.addToast(`"${kind}" is not a layer kind this Studio can create`, 'warning');
+      return;
+    }
     store.mutateScene((scene) => {
-      scene.layers.push(buildLayer(kind, id));
+      scene.layers.push(layer);
     }, `Added ${kind} layer`);
     store.selectLayer(id);
     store.addToast(`Created ${kind} layer`, 'success');

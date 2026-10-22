@@ -13,7 +13,7 @@ import { store } from '../../state/store.js';
 import type { StudioLayer } from '../../types.js';
 import { formatTimecode } from '../../state/timecode.js';
 import { AudioVuMeter } from './AudioVuMeter.js';
-import { readAssetPayload } from '../../services/drag-payload.js';
+import { readAssetPayload, isSfxPayload } from '../../services/drag-payload.js';
 import {
   IconChevronRight,
   IconEye,
@@ -67,8 +67,22 @@ const LANE_GAP = 3;
 /** the gap between the ruler and the first lane row */
 const LANE_TOP_PAD = 4;
 
-/** the trim-handle hit zone, in CSS pixels */
-const EDGE_ZONE = 10;
+/**
+ * The trim-handle hit zone, in CSS pixels.
+ *
+ * Twelve pixels is the width of the visible bracket affordance, so the thing
+ * the user SEES is exactly the thing they can grab.
+ */
+const EDGE_ZONE = 12;
+
+/**
+ * The SFX drop snap radius, in milliseconds.
+ *
+ * A cue dropped within this distance of the playhead (or of the very start
+ * of the composition) SNAPS to it — the audio lands exactly where the
+ * picture does.
+ */
+const SFX_SNAP_MS = 120;
 
 /** the magnetic snap radius, in CSS pixels */
 const SNAP_RADIUS_PX = 10;
@@ -90,6 +104,10 @@ const KIND_TOKENS: Record<string, string> = {
   imageLogo: '--mf-kind-imageLogo',
   lottie: '--mf-kind-lottie',
   foregroundFX: '--mf-kind-foregroundFX',
+  chart: '--mf-kind-chart',
+  codeBlock: '--mf-kind-codeBlock',
+  particleField: '--mf-kind-particleField',
+  cta: '--mf-kind-cta',
 };
 
 /** The rendered length of every built-in SFX cue, in milliseconds. */
@@ -282,6 +300,12 @@ export const TimelinePanel: Component = () => {
 
   const [isDragOver, setIsDragOver] = createSignal(false);
   const [dropTime, setDropTime] = createSignal<number | null>(null);
+  /** true while a built-in SFX cue is dragged over the timeline */
+  const [sfxDragOver, setSfxDragOver] = createSignal(false);
+  /** the snapped drop time of the SFX cue */
+  const [sfxSnapTime, setSfxSnapTime] = createSignal<number | null>(null);
+  /** true when the SFX drop time SNAPPED to the playhead / the start */
+  const [sfxSnapped, setSfxSnapped] = createSignal(false);
   const [hoverLayerId, setHoverLayerId] = createSignal<string | null>(null);
   const [hoverKeyframe, setHoverKeyframe] = createSignal<KeyframeHit | null>(null);
   const [dropLaneIndex, setDropLaneIndex] = createSignal<number | null>(null);
@@ -302,6 +326,10 @@ export const TimelinePanel: Component = () => {
   let dragAssignedLaneIndex = -1;
   let dragHasMoved = false;
   let tooltip: { x: number; y: number; text: string } | null = null;
+  /** the "→ Track Vn" badge of a vertical clip drag */
+  const [trackBadge, setTrackBadge] = createSignal<{ x: number; y: number; text: string } | null>(
+    null
+  );
   let panStartX = 0;
   let initialPan = 0;
   /** the navigator gesture — `handle` drags the viewport, `scrub` jumps to a time */
@@ -832,6 +860,18 @@ export const TimelinePanel: Component = () => {
         roundRectPath(context, 0.75, lane.y + 0.75, w - 1.5, lane.h - 1.5, 4);
         context.stroke();
       }
+
+      // the SFX drop target — the AUDIO lane lights up while a built-in cue
+      // is dragged over the timeline
+      if (sfxDragOver() && lane.kind === 'audio') {
+        context.fillStyle = withAlpha(p.audio, 0.2);
+        roundRectPath(context, 0, lane.y, w, lane.h, 4);
+        context.fill();
+        context.strokeStyle = p.audio;
+        context.lineWidth = 1.5;
+        roundRectPath(context, 0.75, lane.y + 0.75, w - 1.5, lane.h - 1.5, 4);
+        context.stroke();
+      }
     });
 
     /* ── the work area ── */
@@ -889,6 +929,14 @@ export const TimelinePanel: Component = () => {
         context.fill();
         roundRectPath(context, box.x + box.w - 4.5, clipTop + 7, 3, clipHeight - 14, 1.5);
         context.fill();
+      }
+
+      // the TRIM BRACKET affordance — a `[` and a `]` on HOVER, so the
+      // handle is discoverable before the clip is even selected. It is drawn
+      // as a PATH (never a glyph): the bracket must read at any density.
+      if (hovered && box.w > 18) {
+        drawTrimBracket(context, box.x + 3, clipTop + 5, clipHeight - 10, 'left', p.keyframe);
+        drawTrimBracket(context, box.x + box.w - 3, clipTop + 5, clipHeight - 10, 'right', p.keyframe);
       }
 
       // the label
@@ -1103,6 +1151,54 @@ export const TimelinePanel: Component = () => {
       context.textBaseline = 'middle';
       context.fillText(tooltip.text, x + 7, y + 10);
     }
+
+    /* ── the SFX drop snap line + its timecode badge ── */
+    const sfxTime = sfxSnapTime();
+    if (sfxDragOver() && sfxTime !== null) {
+      const x = timeToX(sfxTime);
+      context.strokeStyle = p.audio;
+      context.lineWidth = 1.5;
+      // a solid line when the cue SNAPPED, a dashed one when it did not
+      context.setLineDash(sfxSnapped() ? [] : [4, 3]);
+      context.beginPath();
+      context.moveTo(x + 0.5, m.rulerH);
+      context.lineTo(x + 0.5, h);
+      context.stroke();
+      context.setLineDash([]);
+
+      const label = formatTimecode(sfxTime, FPS);
+      context.font = `600 10px ${fontMono}`;
+      const width = context.measureText(label).width + 14;
+      const bx = Math.max(4, Math.min(w - width - 4, x - width / 2));
+      const by = m.rulerH + 4;
+      context.fillStyle = p.bgElevated;
+      context.strokeStyle = p.audio;
+      context.lineWidth = 1;
+      roundRectPath(context, bx, by, width, 18, 4);
+      context.fill();
+      context.stroke();
+      context.fillStyle = p.audio;
+      context.textBaseline = 'middle';
+      context.fillText(label, bx + 7, by + 9);
+    }
+
+    /* ── the "→ Track Vn" badge of a vertical clip drag ── */
+    const badge = trackBadge();
+    if (badge) {
+      context.font = `600 10px ${fontUi}`;
+      const width = context.measureText(badge.text).width + 16;
+      const x = Math.max(6, Math.min(w - width - 6, badge.x - width / 2));
+      const y = Math.max(m.rulerH + 4, badge.y - 44);
+      context.fillStyle = p.bgElevated;
+      context.strokeStyle = p.accent;
+      context.lineWidth = 1;
+      roundRectPath(context, x, y, width, 20, 4);
+      context.fill();
+      context.stroke();
+      context.fillStyle = p.accentText;
+      context.textBaseline = 'middle';
+      context.fillText(badge.text, x + 8, y + 10);
+    }
   };
 
   /** The major tick step of the ruler, in milliseconds. */
@@ -1150,6 +1246,10 @@ export const TimelinePanel: Component = () => {
     snapIndicatorX();
     razorX();
     razorLaneIndex();
+    sfxDragOver();
+    sfxSnapTime();
+    sfxSnapped();
+    trackBadge();
     metrics();
     palette();
     canvasWidth();
@@ -1263,6 +1363,25 @@ export const TimelinePanel: Component = () => {
   onMount(() => {
     resize();
     window.addEventListener('resize', resize);
+
+    /* ── the canvas follows its container ────────────────────────────────
+     *
+     * THE BUG THIS FIXES: the canvas' BACKING STORE was only resized on a
+     * WINDOW resize. Dragging the timeline splitter changes the panel's
+     * height — and the canvas element grew with it, while its backing store
+     * kept the old size. The timeline then painted itself into a smaller
+     * buffer than the box it was displayed in: the ruler, the waveforms and
+     * the playhead were drawn for the OLD height, and the audio lane fell
+     * outside the buffer entirely (the benchmark measured 0 green pixels in
+     * the A1 band while 6 768 green pixels existed 50 rows above it).
+     *
+     * A ResizeObserver on the container is the fix: whatever changes the
+     * timeline's size — the splitter, a panel maximisation, a window
+     * resize — the canvas is re-sized and re-painted.
+     */
+    const containerObserver = new ResizeObserver(() => resize());
+    const container = canvasRef?.parentElement;
+    if (container) containerObserver.observe(container);
 
     /* ── the navigator ── */
     resizeNavigator();
@@ -1643,6 +1762,10 @@ export const TimelinePanel: Component = () => {
               dragAssignedLaneIndex = hoveredLane.index;
               store.moveClipToTrack(dragLayer.id, hoveredLane.index);
             }
+            // the badge: the track the clip WILL land on
+            setTrackBadge({ x, y, text: `→ Track ${hoveredLane.name}` });
+          } else {
+            setTrackBadge(null);
           }
         } else if (dragMode === 'trim-left') {
           const snapped = snappedTimeAt(timeToX(dragInitialAt + deltaMs), dragLayer.id);
@@ -1710,6 +1833,7 @@ export const TimelinePanel: Component = () => {
       }
       dragHasMoved = false;
       tooltip = null;
+      setTrackBadge(null);
       dragMode = null;
       dragLayer = null;
       dragKeyframe = null;
@@ -1736,6 +1860,7 @@ export const TimelinePanel: Component = () => {
 
     onCleanup(() => {
       observer.disconnect();
+      containerObserver.disconnect();
       navObserver.disconnect();
       window.removeEventListener('resize', resize);
       window.removeEventListener('keydown', handleKeyDown);
@@ -1754,21 +1879,64 @@ export const TimelinePanel: Component = () => {
 
   /* ── drag & drop from the project bin ────────────────────────────────── */
 
+  /**
+   * The drop time of a dragged SFX cue.
+   *
+   * A cue SNAPS to the playhead (or to the very start of the composition)
+   * when the pointer is within `SFX_SNAP_MS` of it, so the audio lands
+   * exactly where the picture does. The result reports whether it snapped,
+   * so the timeline can draw the snap line and the badge.
+   */
+  const sfxDropTime = (raw: number): { time: number; snapped: boolean } => {
+    const candidates = [state.playhead, 0];
+    let best: number | null = null;
+    let bestDistance = Infinity;
+    for (const candidate of candidates) {
+      const distance = Math.abs(raw - candidate);
+      if (distance <= SFX_SNAP_MS && distance < bestDistance) {
+        best = candidate;
+        bestDistance = distance;
+      }
+    }
+    if (best !== null) return { time: Math.round(best), snapped: true };
+    return { time: Math.round(raw), snapped: false };
+  };
+
   const handleDragOver = (event: DragEvent) => {
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-    if (canvasRef) {
-      const rect = canvasRef.getBoundingClientRect();
-      setDropTime(
-        Math.max(0, Math.min(totalDuration(), Math.round(xToRawTime(event.clientX - rect.left))))
-      );
+    if (!canvasRef) return;
+    const rect = canvasRef.getBoundingClientRect();
+    const raw = Math.max(
+      0,
+      Math.min(totalDuration(), xToRawTime(event.clientX - rect.left))
+    );
+
+    // an SFX cue is a DIFFERENT drop: it lands on the AUDIO lane and it
+    // snaps to the playhead
+    const payload = readAssetPayload(event);
+    if (isSfxPayload(payload)) {
+      const snapped = sfxDropTime(raw);
+      setSfxDragOver(true);
+      setSfxSnapTime(snapped.time);
+      setSfxSnapped(snapped.snapped);
+      setDropTime(snapped.time);
+      return;
     }
+
+    setSfxDragOver(false);
+    setSfxSnapTime(null);
+    setSfxSnapped(false);
+    setDropTime(Math.round(raw));
   };
 
   const handleDrop = (event: DragEvent) => {
     event.preventDefault();
     setIsDragOver(false);
     setDropTime(null);
+    setSfxDragOver(false);
+    setSfxSnapTime(null);
+    setSfxSnapped(false);
 
     if (!state.scene) {
       store.addToast('Load a composition before dropping assets', 'warning');
@@ -1776,9 +1944,9 @@ export const TimelinePanel: Component = () => {
     }
     if (!canvasRef) return;
     const rect = canvasRef.getBoundingClientRect();
-    const at = Math.max(
+    const raw = Math.max(
       0,
-      Math.min(totalDuration(), Math.round(xToRawTime(event.clientX - rect.left)))
+      Math.min(totalDuration(), xToRawTime(event.clientX - rect.left))
     );
 
     const payload = readAssetPayload(event);
@@ -1787,20 +1955,37 @@ export const TimelinePanel: Component = () => {
       return;
     }
 
-    if (payload.kind === 'audio') {
+    if (isSfxPayload(payload)) {
       const valid = ['whoosh', 'pop', 'click', 'subImpact', 'shimmer', 'riser'];
       const sfx = valid.includes(payload.assetId) ? payload.assetId : 'pop';
+      // the cue lands on the snapped time — the playhead when the pointer
+      // was close to it
+      const snapped = sfxDropTime(raw);
+      const at = snapped.time;
       store.mutateScene((scene) => {
         if (!scene.audio) scene.audio = { cues: [] };
         const cues = scene.audio.cues ?? [];
         cues.push({ id: `cue-${Math.random().toString(36).slice(2, 7)}`, at, sfx: sfx as never, gain: 1, pan: 0 });
         scene.audio.cues = cues;
       }, `Add audio cue "${sfx}" at ${at}ms`);
-      store.addToast(`Added audio cue "${sfx}" at ${formatTimecode(at, FPS)}`, 'success');
+      store.addToast(
+        `Added audio cue "${sfx}" at ${formatTimecode(at, FPS)}${snapped.snapped ? ' (snapped)' : ''}`,
+        'success'
+      );
       void store.executeSave().catch(() => undefined);
       return;
     }
 
+    if (payload.kind === 'audio') {
+      // a vault audio file is not a cue — it needs a music track
+      store.addToast(
+        'Audio files go into the music track — only the built-in SFX cues drop on the timeline',
+        'warning'
+      );
+      return;
+    }
+
+    const at = Math.round(raw);
     const layerId = `${payload.kind}-${Math.random().toString(36).slice(2, 7)}`;
     store.mutateScene((scene) => {
       if (!scene.assets) scene.assets = [];
@@ -2108,6 +2293,9 @@ export const TimelinePanel: Component = () => {
             if (current === e.target || !current.contains(e.relatedTarget as Node)) {
               setIsDragOver(false);
               setDropTime(null);
+              setSfxDragOver(false);
+              setSfxSnapTime(null);
+              setSfxSnapped(false);
             }
           }}
           onDrop={handleDrop}
@@ -2120,7 +2308,7 @@ export const TimelinePanel: Component = () => {
                 top: '0',
                 bottom: '0',
                 width: '1px',
-                background: 'var(--mf-accent)',
+                background: sfxDragOver() ? 'var(--mf-audio)' : 'var(--mf-accent)',
                 'pointer-events': 'none',
                 'z-index': '5',
                 left: `${timeToX(dropTime()!)}px`,
@@ -2255,6 +2443,39 @@ function drawChevron(
   context.closePath();
   context.fillStyle = fill;
   context.fill();
+}
+
+/**
+ * The TRIM BRACKET — a `[` or a `]` at the edge of a clip.
+ *
+ * It is drawn as a PATH, never as a text glyph: a bracket must read at any
+ * density and must never depend on a font that happens to have it.
+ */
+function drawTrimBracket(
+  context: CanvasRenderingContext2D,
+  x: number,
+  top: number,
+  height: number,
+  side: 'left' | 'right',
+  color: string
+): void {
+  const arm = 4;
+  context.strokeStyle = color;
+  context.lineWidth = 1.5;
+  context.lineCap = 'round';
+  context.beginPath();
+  if (side === 'left') {
+    context.moveTo(x + arm, top);
+    context.lineTo(x, top);
+    context.lineTo(x, top + height);
+    context.lineTo(x + arm, top + height);
+  } else {
+    context.moveTo(x - arm, top);
+    context.lineTo(x, top);
+    context.lineTo(x, top + height);
+    context.lineTo(x - arm, top + height);
+  }
+  context.stroke();
 }
 
 /** `mm:ss` — the compact duration a clip tooltip reads. */

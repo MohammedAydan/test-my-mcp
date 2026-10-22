@@ -126,9 +126,18 @@ export async function inspectKeyframes(opts: {
       ...(opts.paths ? { paths: opts.paths } : {}),
     });
     const page = await context.newPage();
+    // `network-idle` waited ~940 ms for a network silence that never came
+    // (the runtime keeps a channel open), so it was pure dead time on every
+    // inspection. The explicit readiness probe below waits for the things a
+    // frame actually depends on — the scene, the fonts and the timeline.
+    //
+    // The probe's budget is 60 s, not 30 s: the navigation used to spend its
+    // OWN 30 s waiting for the network, and the probe then had another 30 s.
+    // `domcontentloaded` returns in milliseconds, so the probe inherits the
+    // whole budget — the worst case is unchanged.
     await page.goto(
       `${opts.baseUrl}/preview?scene=${encodeURIComponent(opts.sceneId)}&render=1&fps=60`,
-      { waitUntil: "networkidle" }
+      { waitUntil: "domcontentloaded" }
     );
     await page.waitForFunction(
       () => {
@@ -136,7 +145,7 @@ export async function inspectKeyframes(opts: {
         return typeof g.renderConfig === "object" && typeof g.seekToFrame === "function";
       },
       null,
-      { timeout: 30_000 }
+      { timeout: 60_000 }
     );
     await page.evaluate(() =>
       (globalThis as unknown as { whenSceneReady?: () => Promise<unknown> }).whenSceneReady?.()
@@ -292,9 +301,18 @@ export async function getFrameBounds(opts: {
       ...(opts.paths ? { paths: opts.paths } : {}),
     });
     const page = await context.newPage();
+    // `network-idle` waited ~940 ms for a network silence that never came
+    // (the runtime keeps a channel open), so it was pure dead time on every
+    // measurement. The explicit readiness probe below waits for the scene,
+    // the fonts and the timeline instead.
+    //
+    // The probe's budget is 60 s, not 30 s: the navigation used to spend its
+    // OWN 30 s waiting for the network, and the probe then had another 30 s.
+    // `domcontentloaded` returns in milliseconds, so the probe inherits the
+    // whole budget — the worst case is unchanged.
     await page.goto(
       `${opts.baseUrl}/preview?scene=${encodeURIComponent(opts.sceneId)}&render=1&fps=60`,
-      { waitUntil: "networkidle" }
+      { waitUntil: "domcontentloaded" }
     );
     await page.waitForFunction(
       () => {
@@ -302,7 +320,7 @@ export async function getFrameBounds(opts: {
         return typeof g.renderConfig === "object" && typeof g.seekToFrame === "function";
       },
       null,
-      { timeout: 30_000 }
+      { timeout: 60_000 }
     );
     await page.evaluate(() =>
       (globalThis as unknown as { whenSceneReady?: () => Promise<unknown> }).whenSceneReady?.()

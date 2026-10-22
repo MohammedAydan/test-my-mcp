@@ -31,7 +31,36 @@ export const LAYER_KIND_COLORS: Record<string, string> = {
   imageLogo: 'var(--mf-kind-imageLogo)',
   lottie: 'var(--mf-kind-lottie)',
   foregroundFX: 'var(--mf-kind-foregroundFX)',
+  chart: 'var(--mf-kind-chart)',
+  codeBlock: 'var(--mf-kind-codeBlock)',
+  particleField: 'var(--mf-kind-particleField)',
+  cta: 'var(--mf-kind-cta)',
 };
+
+/**
+ * The READABLE name of a layer kind.
+ *
+ * The schema's `type` is camelCase (`codeBlock`, `particleField`), which is
+ * fine for code and wrong for a compositor reading a table. The stack shows
+ * the label; the swatch shows the kind.
+ */
+export const LAYER_KIND_LABELS: Record<string, string> = {
+  background: 'Background',
+  kineticText: 'Text',
+  card: 'Card',
+  imageLogo: 'Image',
+  lottie: 'Lottie',
+  foregroundFX: 'FX',
+  chart: 'Chart',
+  codeBlock: 'Code',
+  particleField: 'Particles',
+  cta: 'CTA',
+};
+
+/** The readable label of a layer kind. */
+export function layerKindLabel(type: string): string {
+  return LAYER_KIND_LABELS[type] ?? type;
+}
 
 export function layerKindColor(type: string): string {
   return LAYER_KIND_COLORS[type] ?? 'var(--mf-warning)';
@@ -201,7 +230,9 @@ export const LayerStackPanel: Component = () => {
                     />
                   </Show>
 
-                  <span class="mf-row-kind">{layer.type}</span>
+                  <span class="mf-row-kind" title={layer.type}>
+                    {layerKindLabel(layer.type)}
+                  </span>
 
                   <span class="mf-stack-track">
                     <span>{trackLabel(layer)}</span>

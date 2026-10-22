@@ -28,12 +28,7 @@ const { _electron: electron } = require('playwright');
 const path = require('node:path');
 const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
-const {
-  makeTestEnv,
-  makeTestDirs,
-  cleanupTestDirs,
-  describeTestDirs,
-} = require('./lib/test-env.cjs');
+const { makeTestEnv, makeTestDirs, cleanupTestDirs, describeTestDirs, makeTestElectronArgs } = require('./lib/test-env.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCREENSHOT_DIR = path.join(ROOT, 'screenshots');
@@ -414,6 +409,70 @@ async function openSection(page, section) {
   }
 }
 
+/**
+ * Start a render through the Render modal and wait for a terminal state.
+ *
+ * The host this benchmark runs on is SHARED — other agents render on the same
+ * two cores. When the machine is starved, Playwright's 30 s frame-capture
+ * timeout is exceeded and the job fails with
+ * "page.screenshot: Timeout 30000ms exceeded". That is a TRANSIENT failure,
+ * so the render is RETRIED; every attempt, its duration and its status are
+ * recorded, so a flaky render is never hidden from the report.
+ */
+async function renderThroughModal(page, { quality, readJob, attempts = 3 }) {
+  const history = [];
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    // the queue is persisted, so the ids of the PREVIOUS jobs are "known"
+    const known = await page.evaluate(() =>
+      (window.store.state.renderQueue ?? []).map((j) => j.id)
+    );
+    await page.selectOption('#render-quality', quality);
+    const t0 = Date.now();
+    await page.click('#render-start');
+    const clickMs = Date.now() - t0;
+    const progress = [];
+    const deadline = Date.now() + 25 * 60 * 1000;
+    let status = null;
+    let outputPath = null;
+    while (Date.now() < deadline) {
+      const snap = await readJob(known);
+      if (snap && progress[progress.length - 1]?.status !== snap.status) {
+        progress.push({ status: snap.status, text: snap.text, atMs: Date.now() - t0 });
+      }
+      if (snap && (snap.status === 'succeeded' || snap.status === 'completed' || snap.status === 'failed')) {
+        status = snap.status;
+        outputPath = snap.outputPath;
+        break;
+      }
+      if (snap && snap.storeQueueLength > 0) metrics.renderQueueSeenDuringRender = true;
+      await page.waitForTimeout(400);
+    }
+    const durationMs = Date.now() - t0;
+    history.push({ attempt, status, durationMs, outputPath, clickMs, progress });
+    if (status === 'succeeded' || status === 'completed') {
+      return { ok: true, status, outputPath, durationMs, clickMs, attempts: attempt, history, progress };
+    }
+    if (attempt < attempts) {
+      console.log(
+        `  WARN  the ${quality} render ended as "${status}" after ${(durationMs / 1000).toFixed(1)} s — ` +
+          `retrying (attempt ${attempt + 1}/${attempts})`
+      );
+      await page.waitForTimeout(3000);
+    }
+  }
+  const last = history[history.length - 1] ?? {};
+  return {
+    ok: false,
+    status: last.status ?? null,
+    outputPath: last.outputPath ?? null,
+    durationMs: last.durationMs ?? 0,
+    clickMs: last.clickMs ?? 0,
+    attempts,
+    history,
+    progress: last.progress ?? [],
+  };
+}
+
 /** Select a layer through the LAYER STACK panel (the real UI affordance). */
 async function selectLayerInStack(page, layerId) {
   await page.click(`#layer-stack-list .mf-stack-row[data-layer-id="${layerId}"]`);
@@ -562,7 +621,10 @@ async function main() {
       );
     }
 
-    app = await electron.launch({ args: ['--no-sandbox', mainPath], env: testEnv });
+    app = await electron.launch({
+      args: ['--no-sandbox', mainPath, ...makeTestElectronArgs(testDirs)],
+      env: testEnv,
+    });
 
     const mainErrors = [];
     app.process().stderr?.on('data', (data) => {
@@ -685,15 +747,15 @@ async function main() {
       await page.mouse.click(stage.x, stage.y);
       await page.waitForTimeout(600);
       const after = await layerCount();
-      const tool = await page.evaluate(() => window.store.state.activeTool);
+      const activeToolAfterCanvas = await page.evaluate(() => window.store.state.activeTool);
       metrics[`toolProbe_${label}`] = {
         activeToolAfterClick: activeTool,
         ariaPressed: pressed,
-        activeToolAfterCanvasClick: tool,
+        activeToolAfterCanvasClick: activeToolAfterCanvas,
         layersBefore: before,
         layersAfter: after,
       };
-      return { activeTool, pressed, before, after, tool };
+      return { activeTool, pressed, before, after, tool: activeToolAfterCanvas };
     };
 
     const textProbe = await toolProbe('text', 'text');
@@ -737,9 +799,24 @@ async function main() {
     await page.click('#tool-dock [data-tool="select"]');
     await page.waitForTimeout(300);
 
-    /* the tool dock's preset tools (chart / code / device) */
+    // The tool probes are DIAGNOSTIC: they create a layer on purpose, so they
+    // have to clean up after themselves or every later check (the track lanes,
+    // the gizmo, the render) measures a scene the probes polluted.
+    const probeCleanup = await page.evaluate(() => {
+      const store = window.store;
+      const ids = store.state.scene.layers
+        .filter((l) => /^kineticText-|^card-|^chart-|^codeBlock-|^particleField-|^cta-/.test(l.id))
+        .map((l) => l.id);
+      for (const id of ids) store.deleteLayer(id);
+      return ids.length;
+    });
+    await page.waitForTimeout(700);
+    await waitForSave(page, 15000);
+    note('The tool probes cleaned up their layers', `${probeCleanup} layer(s) removed`);
+
+    /* the tool dock's preset tools (chart / code / particles / cta) */
     const presetBefore = await layerCount();
-    await page.click('#tool-dock #tool-preset-0');
+    await page.click('#tool-dock [data-layer-kind="chart"]');
     await page.waitForTimeout(900);
     const presetLayer = await page.evaluate(() => {
       const layers = window.store.state.scene.layers;
@@ -756,13 +833,34 @@ async function main() {
       bug(
         'BUG-7',
         'The tool dock\'s preset tools all create a kineticText layer — the requested kind is discarded',
-        `Clicking #tool-dock #tool-preset-0 ("Chart Layer", packages/studio/src/components/shell/ToolDock.tsx:85) created ` +
-          `a layer of type "${presetLayer.type}"${presetLayer.text ? ` with the text "${presetLayer.text}"` : ''}. ` +
-          'The detail is carried in the CustomEvent (motionforge:add-layer), but the handler in ' +
-          '(packages/studio/src/App.tsx:236-248) ignores it and always pushes `type: "kineticText"`. ' +
-          'There is no "chart" layer kind in the schema at all (packages/scene-spec/src/scene.ts:113-121), so the ' +
-          'three preset buttons are three ways to add the same text layer.'
+        `Clicking #tool-dock [data-layer-kind="chart"] ("Chart Layer") created ` +
+          `a layer of type "${presetLayer.type}"${presetLayer.text ? ` with the text "${presetLayer.text}"` : ''}.`
       );
+    }
+
+    // every preset button must create ITS OWN kind
+    for (const kind of ['codeBlock', 'particleField', 'cta']) {
+      const before = await layerCount();
+      await page.click(`#tool-dock [data-layer-kind="${kind}"]`);
+      await page.waitForTimeout(800);
+      const created = await page.evaluate(() => {
+        const layers = window.store.state.scene.layers;
+        const last = layers[layers.length - 1];
+        return last ? { id: last.id, type: last.type } : null;
+      });
+      check(
+        `The "${kind}" preset tool creates a "${kind}" layer`,
+        created?.type === kind,
+        `created ${JSON.stringify(created)}`
+      );
+      if (created?.id) {
+        await page.click(`#layer-stack-list .mf-stack-row[data-layer-id="${created.id}"]`);
+        await page.waitForTimeout(250);
+        await page.click(
+          `#layer-stack-list .mf-stack-row[data-layer-id="${created.id}"] .mf-stack-action.is-danger`
+        );
+        await page.waitForTimeout(600);
+      }
     }
     // clean the probe layer up through the layer stack's own delete button
     if (presetLayer?.id) {
@@ -873,6 +971,16 @@ async function main() {
       );
     } else {
       check('The Mesh Gradient background was persisted', true, JSON.stringify(persistedVariant));
+      check(
+        'The persisted gradient carries at least TWO schema-valid blobs',
+        Array.isArray(persistedVariant?.blobs) && persistedVariant.blobs.length >= 2,
+        `${persistedVariant?.blobs?.length ?? 0} blobs`
+      );
+      check(
+        'The persisted gradient carries NO stray `color` key (the discriminated union rejects it)',
+        persistedVariant?.color === undefined,
+        JSON.stringify(Object.keys(persistedVariant || {}))
+      );
     }
 
     // recover: a valid, rich solid background
@@ -1130,9 +1238,16 @@ async function main() {
     await page.click('[data-layer-template="card"]');
     await page.waitForTimeout(900);
     metrics.addLayerMs = Date.now() - tAdd;
+    // The SELECTED card is the one the modal just created. Picking "the
+    // first card in the array" would pick a leftover probe layer instead.
     const card1Id = await page.evaluate(() => {
-      const layer = window.store.state.scene.layers.find((l) => l.type === 'card');
-      return layer ? layer.id : null;
+      const sel = window.store.state.selectedLayerId;
+      const bySelection = window.store.state.scene.layers.find(
+        (l) => l.id === sel && l.type === 'card'
+      );
+      if (bySelection) return bySelection.id;
+      const cards = window.store.state.scene.layers.filter((l) => l.type === 'card');
+      return cards.length ? cards[cards.length - 1].id : null;
     });
     check('A card layer was created', Boolean(card1Id), `card id ${card1Id}`);
     metrics.card1Id = card1Id;
@@ -1375,9 +1490,15 @@ async function main() {
     await openAddLayer();
     await page.click('[data-layer-template="card"]');
     await page.waitForTimeout(900);
+    // again: the SELECTED card, not "the second card in the array"
     const card2Id = await page.evaluate(() => {
-      const layers = window.store.state.scene.layers.filter((l) => l.type === 'card');
-      return layers.length > 1 ? layers[1].id : null;
+      const sel = window.store.state.selectedLayerId;
+      const bySelection = window.store.state.scene.layers.find(
+        (l) => l.id === sel && l.type === 'card'
+      );
+      if (bySelection) return bySelection.id;
+      const cards = window.store.state.scene.layers.filter((l) => l.type === 'card');
+      return cards.length > 1 ? cards[cards.length - 1].id : null;
     });
     metrics.card2Id = card2Id;
     check('A second card layer was created', Boolean(card2Id), `card id ${card2Id}`);
@@ -1844,6 +1965,110 @@ async function main() {
     });
 
     /* ── 8b. the Ctrl+K shortcut conflict ───────────────────────────────── */
+    /* ── 6c. the four new layer kinds ───────────────────────────────────── */
+    section('Step 6c — chart · codeBlock · particleField · cta through the UI');
+    const NEW_KINDS = ['chart', 'codeBlock', 'particleField', 'cta'];
+    const kindResults = {};
+    for (const kind of NEW_KINDS) {
+      const before = await page.evaluate(() => window.store.state.scene.layers.length);
+      // the tool dock asks for a layer through a custom event — the same
+      // contract the Studio's own dock buttons use
+      await page.evaluate((k) => {
+        window.dispatchEvent(new CustomEvent('motionforge:add-layer', { detail: k }));
+      }, kind);
+      await page.waitForTimeout(700);
+      const added = await page.evaluate(
+        (k) => {
+          const layers = window.store.state.scene.layers;
+          const layer = layers[layers.length - 1];
+          return layer && layer.type === k ? layer : null;
+        },
+        kind
+      );
+      kindResults[kind] = added;
+      check(
+        `The "${kind}" tool created a "${kind}" layer`,
+        Boolean(added),
+        added ? JSON.stringify(Object.keys(added)) : 'no layer of that type was created'
+      );
+      if (added) {
+        check(
+          `The "${kind}" layer carries the fields its schema requires`,
+          kind === 'chart'
+            ? Array.isArray(added.data) && added.data.length >= 2 && Boolean(added.position)
+            : kind === 'codeBlock'
+            ? typeof added.code === 'string' && added.code.length > 0 && Boolean(added.position)
+            : kind === 'cta'
+            ? typeof added.label === 'string' && added.label.length > 0 && Boolean(added.position)
+            : typeof added.pattern === 'string',
+          JSON.stringify(added).slice(0, 200)
+        );
+      }
+    }
+    metrics.newKindLayers = kindResults;
+
+    // the inspector must render a CONTENT & STYLE block for the new kinds
+    for (const kind of ['chart', 'codeBlock', 'particleField', 'cta']) {
+      await page.evaluate((k) => {
+        const layer = window.store.state.scene.layers.find((l) => l.type === k);
+        if (layer) window.store.selectLayer(layer.id);
+      }, kind);
+      await page.waitForTimeout(500);
+      const fieldCount = await page.evaluate(() => {
+        const body = document.querySelector(
+          '#layer-properties .mf-accordion-body[data-section="content"]'
+        );
+        return body ? body.querySelectorAll('.mf-field').length : 0;
+      });
+      check(
+        `The inspector exposes CONTENT & STYLE controls for the "${kind}" layer`,
+        fieldCount > 0,
+        `${fieldCount} fields`
+      );
+    }
+
+    // and the new layers must SAVE — a payload the schema rejects would fail here
+    await waitForSave(page, 20000);
+    const newKindSave = await page.evaluate(() => ({
+      status: window.store.state.saveStatus,
+      issues: window.store.state.saveIssues ?? [],
+    }));
+    check(
+      'Every new-kind layer saved without a schema error',
+      newKindSave.status === 'saved' || newKindSave.status === 'idle',
+      `saveStatus=${newKindSave.status} issues=${JSON.stringify(newKindSave.issues)}`
+    );
+
+    // the new layers must also be measurable on the timeline (their own lanes)
+    const newKindLanes = await page.evaluate(() => {
+      const lanes = new Set();
+      for (const l of window.store.state.scene.layers) {
+        if (['chart', 'codeBlock', 'particleField', 'cta'].includes(l.type)) {
+          lanes.add(l.trackIndex ?? 'auto');
+        }
+      }
+      return [...lanes];
+    });
+    check(
+      'Each new-kind layer landed on its own timeline lane',
+      newKindLanes.length >= 1,
+      `lanes: ${newKindLanes.join(', ')}`
+    );
+
+    // clean the probe layers up: the deliverable composition must not carry
+    // four stacked probe layers in the middle of the video
+    const removed = await page.evaluate(() => {
+      const store = window.store;
+      const ids = window.store.state.scene.layers
+        .filter((l) => ['chart', 'codeBlock', 'particleField', 'cta'].includes(l.type))
+        .map((l) => l.id);
+      for (const id of ids) store.deleteLayer(id);
+      return ids.length;
+    });
+    await page.waitForTimeout(800);
+    await waitForSave(page, 15000);
+    note('The new-kind probe layers were removed before the render', `${removed} layers`);
+
     section('Step 6b — The Ctrl+K shortcut conflict (the command palette vs the razor split)');
     await selectLayerInStack(page, 'title');
     await scrubTo(page, 1200);
@@ -1864,7 +2089,11 @@ async function main() {
           'Neither handler stops the propagation, so both run.'
       );
     } else {
-      note('Ctrl+K did not split the selected layer', `layer count ${layersBefore} -> ${layersAfter}`);
+      check(
+        'Ctrl+K did NOT split the selected layer (one chord, one owner)',
+        layersAfter === layersBefore,
+        `layer count ${layersBefore} -> ${layersAfter}`
+      );
     }
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
@@ -1959,15 +2188,12 @@ async function main() {
     check('The render modal opened', true, `${metrics.openRenderModalMs} ms`);
 
     await page.selectOption('#render-quality', 'draft');
-    const tRender = Date.now();
-    await page.click('#render-start');
-    metrics.renderStartMs = Date.now() - tRender;
 
-    const progress = [];
-    const readJob = () =>
-      page.evaluate(() => {
+    const readJob = (known = []) =>
+      page.evaluate((known) => {
         const rows = Array.from(document.querySelectorAll('#render-modal [data-job-id]'));
-        const row = rows[0];
+        const fresh = rows.filter((r) => !known.includes(r.getAttribute('data-job-id')));
+        const row = fresh[fresh.length - 1];
         if (!row) return null;
         const path = row.querySelector('span[title]');
         return {
@@ -1976,35 +2202,37 @@ async function main() {
           outputPath: path ? path.getAttribute('title') : null,
           text: (row.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200),
           storeQueueLength: window.store.state.renderQueue?.length ?? 0,
+          storeQueue: (window.store.state.renderQueue ?? []).map((j) => ({
+            id: j.id,
+            status: j.status,
+            progressPct: j.progressPct,
+            outputPath: j.outputPath ?? null,
+          })),
         };
-      });
+      }, known);
 
-    const deadline = Date.now() + 20 * 60 * 1000;
-    let jobStatus = null;
-    let draftPath = null;
-    while (Date.now() < deadline) {
-      const snap = await readJob();
-      if (snap && progress[progress.length - 1]?.status !== snap.status) {
-        progress.push({ status: snap.status, text: snap.text, atMs: Date.now() - tRender });
-      }
-      if (snap && (snap.status === 'succeeded' || snap.status === 'failed')) {
-        jobStatus = snap.status;
-        draftPath = snap.outputPath;
-        break;
-      }
-      await page.waitForTimeout(400);
-    }
-    metrics.renderDurationMs = Date.now() - tRender;
-    metrics.renderProgress = progress;
+    const draft = await renderThroughModal(page, { quality: 'draft', readJob });
+    const jobStatus = draft.status;
+    const draftPath = draft.outputPath;
+    metrics.renderDurationMs = draft.durationMs;
+    metrics.renderStartMs = draft.clickMs;
+    metrics.renderAttempts = draft.attempts;
+    metrics.renderHistory = draft.history;
+    metrics.renderProgress = draft.progress;
     metrics.renderStoreQueueLength = await page.evaluate(
       () => window.store.state.renderQueue?.length ?? 0
     );
     check(
       'The draft render succeeded',
-      jobStatus === 'succeeded',
-      `${jobStatus} after ${(metrics.renderDurationMs / 1000).toFixed(1)} s`
+      draft.ok,
+      `${jobStatus} after ${(metrics.renderDurationMs / 1000).toFixed(1)} s (attempt ${draft.attempts})`
     );
-    note('The render queue rows the modal showed', JSON.stringify(progress));
+    note('The render queue rows the modal showed', JSON.stringify(draft.progress));
+    check(
+      '`state.renderQueue` was LIVE in the global store DURING the render',
+      metrics.renderQueueSeenDuringRender === true,
+      `the store's queue held the job while it ran`
+    );
     if (metrics.renderStoreQueueLength === 0) {
       bug(
         'BUG-3',
@@ -2018,28 +2246,23 @@ async function main() {
 
     /* ── 12. the production render (1920x1080) ─────────────────────────── */
     section('Step 9 — Production render (the Studio only offers 720p/30 and 1080p/60)');
-    await page.selectOption('#render-quality', 'production');
-    const tProduction = Date.now();
-    await page.click('#render-start');
-    const prodDeadline = Date.now() + 25 * 60 * 1000;
-    let prodStatus = null;
-    let prodPath = null;
-    while (Date.now() < prodDeadline) {
-      const snap = await readJob();
-      if (snap && (snap.status === 'succeeded' || snap.status === 'failed')) {
-        prodStatus = snap.status;
-        prodPath = snap.outputPath;
-        break;
-      }
-      await page.waitForTimeout(500);
-    }
-    metrics.productionRenderDurationMs = Date.now() - tProduction;
+    const production = await renderThroughModal(page, { quality: 'production', readJob });
+    const prodStatus = production.status;
+    const prodPath = production.outputPath;
+    metrics.productionRenderDurationMs = production.durationMs;
+    metrics.productionRenderAttempts = production.attempts;
+    metrics.productionRenderHistory = production.history;
     check(
       'The production render succeeded',
-      prodStatus === 'succeeded',
-      `${prodStatus} after ${(metrics.productionRenderDurationMs / 1000).toFixed(1)} s`
+      production.ok,
+      `${prodStatus} after ${(metrics.productionRenderDurationMs / 1000).toFixed(1)} s (attempt ${production.attempts})`
     );
     metrics.productionOutputPath = prodPath;
+    check(
+      'The production render produced its OWN file (not the draft\'s)',
+      Boolean(prodPath) && prodPath !== draftPath && /production-/.test(prodPath),
+      `draft ${draftPath}\n     production ${prodPath}`
+    );
 
     await page.click('#render-modal-done');
     await page.waitForTimeout(500);

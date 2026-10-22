@@ -30,7 +30,7 @@
 const { _electron: electron } = require('playwright');
 const path = require('node:path');
 const fs = require('node:fs');
-const { makeTestEnv, makeTestDirs, cleanupTestDirs, describeTestDirs } = require('./lib/test-env.cjs');
+const { makeTestEnv, makeTestDirs, cleanupTestDirs, describeTestDirs, makeTestElectronArgs } = require('./lib/test-env.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCREENSHOT_DIR = path.join(ROOT, 'screenshots');
@@ -282,7 +282,7 @@ async function main() {
     }
 
     app = await electron.launch({
-      args: ['--no-sandbox', mainPath],
+      args: ['--no-sandbox', mainPath, ...makeTestElectronArgs(testDirs)],
       env: testEnv,
     });
 

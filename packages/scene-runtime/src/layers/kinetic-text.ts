@@ -1,6 +1,7 @@
 import type { KineticTextLayer, Paint } from "@motionforge/scene-spec";
 import { CRISP_TEXT_CSS, TEXT_UNIT_GUARD_CSS } from "../determinism.js";
 import { fontFamilyFor } from "../fonts.js";
+import { clamp, num, safeColor } from "./guards.js";
 import type { LayerContext } from "./context.js";
 
 /** Arabic, Arabic Supplement/Extended-A/B and Arabic Presentation Forms-A. */
@@ -11,7 +12,7 @@ const ARABIC_RE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF]/;
  * Thai, Hangul). Splitting these per glyph detaches marks and clusters just as
  * Arabic does, so they share the same guard.
  */
-const CURSIVE_RE = /[\u0590-\u05FF\u3040-\u30FF\u0900-\u097F\u0E00-\u0E7F\uAC00-\uD7AF]/;
+const CURSIVE_RE = /[\u0590-\u05FF\u3040-\u309F\u30A0-\u30FF\u0900-\u097F\u0E00-\u0E7F\uAC00-\uD7AF]/;
 
 export type TextGranularity = "char" | "word" | "line";
 
@@ -49,14 +50,20 @@ export interface KineticTextBuild {
    * `maskRevealWipe` / `collapseMask` drive these instead of the per-word
    * units: a per-word horizontal clip slices an Arabic sentence open along
    * every word boundary at once, so for most of the wipe the headline reads as
-   * scattered fragments (`"مو   ن"`). One continuous line-level clip reveals the
-   * phrase as a phrase, in the reading direction, without ever cutting a word.
+   * scattered fragments (`"مو   ن"`). One continuous line-level clip reveals
+   * the phrase as a phrase, in the reading direction, without ever cutting a word.
    */
   lines?: HTMLElement[];
 }
 
 export function renderKineticText(layer: KineticTextLayer, ctx: LayerContext): KineticTextBuild {
   const family = fontFamilyFor(ctx.fonts, layer.role, layer.googleFamily);
+
+  const source = typeof layer.text === "string" ? layer.text : "";
+  const direction: "ltr" | "rtl" = layer.direction === "rtl" ? "rtl" : "ltr";
+  const align = layer.align === "left" || layer.align === "right" ? layer.align : "center";
+  const animateBy: TextGranularity =
+    layer.animateBy === "char" || layer.animateBy === "line" ? layer.animateBy : "word";
 
   const block = document.createElement("div");
   // The anchor (`left` / `top`) is authored here; the TRANSFORM is owned by
@@ -65,46 +72,51 @@ export function renderKineticText(layer: KineticTextLayer, ctx: LayerContext): K
   // used to desync the preview from the scene.
   block.style.cssText = [
     "position:absolute",
-    `left:${layer.position.xPct}%`,
-    `top:${layer.position.yPct}%`,
-    `text-align:${layer.align}`,
-    `direction:${layer.direction}`,
+    `left:${clamp(num(layer.position?.xPct, 50), -300, 300)}%`,
+    `top:${clamp(num(layer.position?.yPct, 50), -300, 300)}%`,
+    `text-align:${align}`,
+    `direction:${direction}`,
     `font-family:${family}`,
-    `font-weight:${layer.fontWeight}`,
-    `font-size:${layer.sizePx}px`,
-    `line-height:${layer.lineHeight}`,
-    `letter-spacing:${layer.letterSpacingPx}px`,
+    `font-weight:${clamp(Math.round(num(layer.fontWeight, 800)), 100, 900)}`,
+    `font-size:${clamp(num(layer.sizePx, 48), 4, 900)}px`,
+    `line-height:${clamp(num(layer.lineHeight, 1.15), 0.5, 4)}`,
+    `letter-spacing:${num(layer.letterSpacingPx, 0)}px`,
     "unicode-bidi:plaintext",
     CRISP_TEXT_CSS,
   ].join(";");
 
-  if (layer.box) {
-    block.style.width = `${layer.box.maxWidthPct}%`;
-    block.style.maxWidth = `${layer.box.maxWidthPct}%`;
-    if (layer.box.paddingPx > 0) block.style.padding = `${layer.box.paddingPx}px`;
-    if (layer.box.chip) {
-      block.style.borderRadius = `${layer.box.chip.radiusPx}px`;
+  const box = layer.box;
+  if (box && typeof box === "object") {
+    const maxWidthPct = clamp(num(box.maxWidthPct, 70), 1, 400);
+    block.style.width = `${maxWidthPct}%`;
+    block.style.maxWidth = `${maxWidthPct}%`;
+    const paddingPx = clamp(num(box.paddingPx, 0), 0, 400);
+    if (paddingPx > 0) block.style.padding = `${paddingPx}px`;
+    const chip = box.chip;
+    if (chip && typeof chip === "object") {
+      block.style.borderRadius = `${clamp(num(chip.radiusPx, 18), 0, 400)}px`;
       const chipLayer = document.createElement("div");
       chipLayer.style.cssText = [
         "position:absolute",
         "inset:0",
         `border-radius:inherit`,
-        `background:${layer.box.chip.color}`,
-        `opacity:${layer.box.chip.opacity}`,
+        `background:${safeColor(chip.color, "#ffffff")}`,
+        `opacity:${clamp(num(chip.opacity, 0.14), 0, 1)}`,
       ].join(";");
       block.prepend(chipLayer);
     }
   }
 
-  if (layer.shadow) {
+  const shadow = layer.shadow;
+  if (shadow && typeof shadow === "object") {
     block.style.textShadow =
-      `0 ${layer.shadow.offsetYpx}px ${layer.shadow.blurPx}px ` +
-      `rgba(0,0,0,${layer.shadow.opacity})`;
+      `0 ${num(shadow.offsetYpx, 10)}px ${clamp(num(shadow.blurPx, 24), 0, 400)}px ` +
+      `rgba(0,0,0,${clamp(num(shadow.opacity, 0.45), 0, 1)})`;
   }
 
-  const granularity = resolveGranularity(layer.text, layer.direction, layer.animateBy);
+  const granularity = resolveGranularity(source, direction, animateBy);
 
-  const lines = layer.text.split("\n");
+  const lines = source.split("\n");
   const units: HTMLElement[] = [];
   const lineEls: HTMLElement[] = [];
 
@@ -191,18 +203,19 @@ function buildHighlight(highlight: NonNullable<KineticTextLayer["highlight"]>): 
   const pill = document.createElement("span");
   pill.className = "mf-highlight";
   pill.dataset.mfHighlight = "true";
+  const paddingPx = clamp(num(highlight.paddingPx, 8), -200, 400);
   pill.style.cssText = [
     "position:absolute",
     // symmetric bleed: the fill sits behind the glyphs, never on them
-    `top:${-highlight.paddingPx}px`,
-    `bottom:${-highlight.paddingPx}px`,
-    `left:${-highlight.paddingPx}px`,
-    `right:${-highlight.paddingPx}px`,
+    `top:${-paddingPx}px`,
+    `bottom:${-paddingPx}px`,
+    `left:${-paddingPx}px`,
+    `right:${-paddingPx}px`,
     // longhand, because the `border` shorthand is not reliably parsed
     "border-style:none",
     "border-width:0px",
     "border-radius:0.28em",
-    `background:${highlight.color}`,
+    `background:${safeColor(highlight.color, "#ffffff")}`,
     "z-index:1",
     "pointer-events:none",
   ].join(";");
@@ -211,23 +224,27 @@ function buildHighlight(highlight: NonNullable<KineticTextLayer["highlight"]>): 
 
 /** Solid color → color; gradient → background-clip:text gradient fill. */
 function applyTextPaint(el: HTMLElement, fill?: Paint, stroke?: { color: string; widthPx: number }): void {
-  if (!fill) {
-    el.style.color = "#ffffff";
-  } else if (typeof fill === "string") {
+  if (typeof fill === "string") {
     el.style.color = fill;
-  } else if (fill && Array.isArray((fill as any).stops)) {
-    const stops = (fill as any).stops
-      .map((s: any) => `${rgbaOf(s.color, s.opacity ?? 1)} ${s.at}%`)
+  } else if (fill && typeof fill === "object" && Array.isArray((fill as { stops?: unknown }).stops)) {
+    const gradient = fill as { angleDeg?: number; stops: Array<{ color: string; at: number; opacity?: number }> };
+    const stops = gradient.stops
+      .filter((s) => s && typeof s.color === "string")
+      .map((s) => `${rgbaOf(s.color, s.opacity ?? 1)} ${num(s.at, 0)}%`)
       .join(", ");
-    el.style.backgroundImage = `linear-gradient(${(fill as any).angleDeg || 0}deg, ${stops})`;
-    el.style.webkitBackgroundClip = "text";
-    el.style.backgroundClip = "text";
-    el.style.color = "transparent";
+    if (stops.length > 0) {
+      el.style.backgroundImage = `linear-gradient(${num(gradient.angleDeg, 0)}deg, ${stops})`;
+      el.style.webkitBackgroundClip = "text";
+      el.style.backgroundClip = "text";
+      el.style.color = "transparent";
+    } else {
+      el.style.color = "#ffffff";
+    }
   } else {
     el.style.color = "#ffffff";
   }
-  if (stroke) {
-    el.style.webkitTextStroke = `${stroke.widthPx}px ${stroke.color}`;
+  if (stroke && typeof stroke.color === "string") {
+    el.style.webkitTextStroke = `${clamp(num(stroke.widthPx, 1), 0, 40)}px ${stroke.color}`;
   }
 }
 
@@ -238,5 +255,6 @@ function rgbaOf(color: string, opacity: number): string {
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return color;
   return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 }

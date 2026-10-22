@@ -131,6 +131,45 @@ export const IconDevice = makeIcon(
     <path d="M12 17.5V20" />
   </>
 );
+/**
+ * The particle field — a constellation of drifting dots.
+ *
+ * VECTOR ONLY (rule 11): a field of small circles, never a glyph and never
+ * an emoji.
+ */
+export const IconParticles = makeIcon(
+  'IconParticles',
+  <>
+    <circle cx="7" cy="7" r="1.6" />
+    <circle cx="16.5" cy="5.5" r="1.1" />
+    <circle cx="12" cy="11.5" r="1.9" />
+    <circle cx="18" cy="13" r="1.3" />
+    <circle cx="6" cy="15.5" r="1.2" />
+    <circle cx="10.5" cy="18.5" r="1.5" />
+    <path d="M7 7l5 4.5M12 11.5l6 1.5M12 11.5l-6 4" stroke-dasharray="2 2" />
+  </>
+);
+/**
+ * The call-to-action button — a rounded pill with a glyph.
+ *
+ * VECTOR ONLY (rule 11).
+ */
+export const IconCta = makeIcon(
+  'IconCta',
+  <>
+    <rect x="2.5" y="7.5" width="19" height="9" rx="4.5" />
+    <path d="M9 12h6" />
+    <path d="M12.5 9.5L15 12l-2.5 2.5" />
+  </>
+);
+/** The right-pointing arrow — the `cta` icon glyph. */
+export const IconArrowRight = makeIcon(
+  'IconArrowRight',
+  <>
+    <path d="M4 12h15" />
+    <path d="M13 6l6 6-6 6" />
+  </>
+);
 export const IconMagnet = makeIcon(
   'IconMagnet',
   <>

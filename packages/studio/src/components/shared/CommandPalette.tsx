@@ -1,6 +1,7 @@
 import { Component, For, Show, createMemo, createSignal } from 'solid-js';
 import { store } from '../../state/store.js';
 import { CATEGORY_ORDER, commands, runCommand } from '../../services/commands.js';
+import { summarizeRenderQueue } from '../../services/render-queue.js';
 import { IconSearch } from '../icons/NleIcons.js';
 
 /**
@@ -8,10 +9,17 @@ import { IconSearch } from '../icons/NleIcons.js';
  *
  * A fuzzy-ish search over the SAME command registry the menu bar uses, so
  * every command is reachable by keyboard.
+ *
+ * The header strip reads the GLOBAL render queue, so the palette can report
+ * that a render is running (or that one failed) without the Render Modal
+ * ever being open.
  */
 export const CommandPalette: Component = () => {
   const [query, setQuery] = createSignal('');
   const [index, setIndex] = createSignal(0);
+
+  /** the live render queue, projected out of the store */
+  const renderSummary = createMemo(() => summarizeRenderQueue(store.state.renderQueue));
 
   const results = createMemo(() => {
     const q = query().toLowerCase().trim();
@@ -90,6 +98,33 @@ export const CommandPalette: Component = () => {
         </div>
 
         <div style={{ 'max-height': '380px', 'overflow-y': 'auto', padding: '4px' }}>
+          {/* the LIVE render queue — the store is the single source of truth */}
+          <Show when={renderSummary().total > 0}>
+            <div
+              class="mf-palette-render"
+              id="command-palette-render"
+              data-render-active={renderSummary().active}
+              data-render-total={renderSummary().total}
+              style={{
+                padding: '6px 8px',
+                'margin-bottom': '4px',
+                border: '1px solid var(--mf-border)',
+                'border-radius': 'var(--radius-sm)',
+                'font-size': 'var(--mf-text-xs)',
+                'font-family': 'var(--mf-font-mono)',
+                color: 'var(--mf-accent-text)',
+                background: 'var(--mf-bg-sunken)',
+              }}
+            >
+              <span>
+                Render queue — {renderSummary().active} active · {renderSummary().completed} done
+                {renderSummary().failed > 0 ? ` · ${renderSummary().failed} failed` : ''}
+              </span>
+              <Show when={renderSummary().active > 0}>
+                <span style={{ float: 'right' }}>{Math.round(renderSummary().progressPct)}%</span>
+              </Show>
+            </div>
+          </Show>
           <Show
             when={results().length > 0}
             fallback={

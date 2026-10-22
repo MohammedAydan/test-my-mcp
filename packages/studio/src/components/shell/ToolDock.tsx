@@ -3,10 +3,11 @@ import { store, type ActiveTool } from '../../state/store.js';
 import {
   IconChart,
   IconCode,
+  IconCta,
   IconCursor,
-  IconDevice,
   IconHand,
   IconMagnet,
+  IconParticles,
   IconRazor,
   IconRedo,
   IconShape,
@@ -38,13 +39,20 @@ const TOOLS: ToolDef[] = [
 ];
 
 /**
- * The preset tools (chart / code / device) share one dropdown: they all
+ * The preset tools (chart / code / particles / cta) share one row: they all
  * create a layer, they only differ in the kind.
+ *
+ * EVERY entry here is a REAL layer kind of the scene schema. `deviceMockup`
+ * used to sit in this list, but no such kind exists — pressing it created a
+ * `kineticText` with the word "New Text" in it, which the engine then
+ * rejected. A button that cannot create what it claims is worse than no
+ * button at all.
  */
-const PRESET_TOOLS = [
-  { label: 'Chart Layer', icon: IconChart },
-  { label: 'Code Block Layer', icon: IconCode },
-  { label: 'Device Mockup Layer', icon: IconDevice },
+const PRESET_TOOLS: Array<{ kind: string; label: string; icon: typeof IconCursor }> = [
+  { kind: 'chart', label: 'Chart Layer', icon: IconChart },
+  { kind: 'codeBlock', label: 'Code Block Layer', icon: IconCode },
+  { kind: 'particleField', label: 'Particle Field Layer', icon: IconParticles },
+  { kind: 'cta', label: 'Call To Action Layer', icon: IconCta },
 ];
 
 export const ToolDock: Component = () => {
@@ -76,13 +84,14 @@ export const ToolDock: Component = () => {
       <div class="mf-tool-sep" />
 
       <For each={PRESET_TOOLS}>
-        {(preset, index) => (
+        {(preset) => (
           <button
             class="mf-tool-btn"
-            id={`tool-preset-${index()}`}
+            id={`tool-preset-${preset.kind}`}
+            data-layer-kind={preset.kind}
             title={preset.label}
             aria-label={preset.label}
-            onClick={() => addLayer(index() === 0 ? 'chart' : index() === 1 ? 'codeBlock' : 'deviceMockup')}
+            onClick={() => addLayer(preset.kind)}
           >
             <preset.icon size={15} />
           </button>

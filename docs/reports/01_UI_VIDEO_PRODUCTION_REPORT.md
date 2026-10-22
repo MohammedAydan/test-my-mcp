@@ -211,23 +211,23 @@ touches.
 
 ### 4.1 Friction points, in the order they were hit
 
-| # | Friction | Severity | Detail |
+| # | Friction | Severity | Detail | Status |
 | --- | --- | --- | --- |
-| F1 | **The inspector cannot author a gradient background.** | **High** | Selecting "Mesh Gradient" writes `{"variant":"meshGradient","color":"#05070d"}`. The schema requires `blobs` (min 2) for that variant and rejects the extra `color`, so the save is refused with `layers.0.variant.blobs: Required; layers.0.variant: Unrecognized key(s) in object: 'color'`. "Particles" fails the same way (`count` is required). The user picks a gradient, the app accepts it, and then the engine rejects the scene — with no hint in the UI about which field is missing. |
-| F2 | **An invalid background variant CRASHES the preview renderer.** | **High** | The same invalid variant produced `TypeError: Cannot read properties of undefined (reading 'forEach')` at `renderBackground` — `packages/scene-runtime/src/layers/background.ts` reads `v.blobs.forEach()` without a guard. The preview dies before the user sees why the save failed. |
-| F3 | **A failed save is invisible in the UI and leaks an unhandled rejection.** | **High** | The inspector commits with `void store.executeSave()` and `executeSave()` re-throws after the toast. The renderer logged an unhandled `SceneServiceError: invalid scene: layers.3.duration: layer window extends past scene end`. The user sees a toast that flashes away, then a red console error, and no indication of WHICH field is wrong. |
-| F4 | **The store never records the render queue.** | Medium | `state.renderQueue` stayed `0` after a successful render. The render modal keeps its own local `queue` signal, so anything outside the modal (a status bar, a command, a test) cannot see the render state. The benchmark had to scrape the modal's DOM rows to follow the progress. |
-| F5 | **`Ctrl+K` is bound twice.** | Medium | One `Ctrl+K` with the title selected opened the command palette **and** razor-split the layer (5 → 6 layers). `App.tsx` maps `Ctrl+K` to the palette; the timeline maps the same chord to "razor split at playhead"; neither stops propagation. The accidental split had to be undone. |
-| F6 | **The background layer's "duration" is `null` in the persisted scene.** | Low | `bg` persisted with `duration: null` while the timeline shows it spanning the whole composition. Harmless today, but a consumer reading the JSON sees a layer with no duration. |
-| F7 | **The `foregroundFX` template has no duration.** | Low | The overlay template creates a layer with no `duration`, so the schema's 1200 ms default applied — it would have covered only the first fifth of the composition. The benchmark had to set the duration explicitly. A "full-bleed" template should default to the scene length. |
-| F8 | **The SFX drag has no drop-target feedback.** | Low | Dragging a cue from the bin onto A1 works, but nothing highlights the lane or snaps the cue to the playhead while the drag is in flight. The cue landed at 117 ms and 2998 ms — the 117 ms is an accident of where the pointer was released. |
-| F9 | **The trim handles are 10 px of *hit area* with no visible affordance.** | Low | The clip edges highlight on hover, but the handles themselves are invisible until the clip is selected. A user has to discover that the edges are draggable. |
-| F10 | **A layer without an explicit track defaults to the next free lane, but the UI offers no "which track is this?" readout while dragging.** | Low | The `TRACK ASSIGNMENT` section has a "Video Track" select, which is good, but the timeline drag itself gives no lane highlight (the spec asked for one). |
-| F11 | **Keyframing a property requires three separate interactions.** | Low | Scrub to the time → click the stopwatch → change the value. The auto-key (added in v4) removes the second click for an *already* keyframed property, but the first keyframe on a new property still needs the stopwatch. An "auto-key arm" switch would remove it. |
-| F12 | **The composition inspector has no "fit the canvas to the composition" affordance.** | Low | The monitor has one (the `Fit` zoom), but the composition panel offers no indication that the canvas shape and the content are mismatched. |
-| F13 | **The render modal's quality selector does not say what "production" costs.** | Low | 23.6 s vs 79.4 s for the same 6 seconds. The user picks blind. |
-| F14 | **Editing a card's title requires expanding `CONTENT & STYLE`, scrolling to the field and typing.** | Low | Now that `CONTENT & STYLE` is first this is much better than it was, but the title/body inputs are plain `<input>`/`<textarea>` with no "type here" affordance on the canvas. The inline canvas editor only works for `kineticText`. |
-| F15 | **The gradient background cannot be authored at all** (F1) means the *only* rich background a user can make is a solid colour. | Medium | The mesh-gradient blob model exists in the schema and in the renderer, but no UI can produce it. A user who wants the showcase look must edit JSON. |
+| F1 | **The inspector cannot author a gradient background.** | **High** | Selecting "Mesh Gradient" writes `{"variant":"meshGradient","color":"#05070d"}`. The schema requires `blobs` (min 2) for that variant and rejects the extra `color`, so the save is refused with `layers.0.variant.blobs: Required; layers.0.variant: Unrecognized key(s) in object: 'color'`. "Particles" fails the same way (`count` is required). The user picks a gradient, the app accepts it, and then the engine rejects the scene — with no hint in the UI about which field is missing. ✅ FIXED |
+| F2 | **An invalid background variant CRASHES the preview renderer.** | **High** | The same invalid variant produced `TypeError: Cannot read properties of undefined (reading 'forEach')` at `renderBackground` — `packages/scene-runtime/src/layers/background.ts` reads `v.blobs.forEach()` without a guard. The preview dies before the user sees why the save failed. ✅ FIXED |
+| F3 | **A failed save is invisible in the UI and leaks an unhandled rejection.** | **High** | The inspector commits with `void store.executeSave()` and `executeSave()` re-throws after the toast. The renderer logged an unhandled `SceneServiceError: invalid scene: layers.3.duration: layer window extends past scene end`. The user sees a toast that flashes away, then a red console error, and no indication of WHICH field is wrong. ✅ FIXED |
+| F4 | **The store never records the render queue.** | Medium | `state.renderQueue` stayed `0` after a successful render. The render modal keeps its own local `queue` signal, so anything outside the modal (a status bar, a command, a test) cannot see the render state. The benchmark had to scrape the modal's DOM rows to follow the progress. ✅ FIXED |
+| F5 | **`Ctrl+K` is bound twice.** | Medium | One `Ctrl+K` with the title selected opened the command palette **and** razor-split the layer (5 → 6 layers). `App.tsx` maps `Ctrl+K` to the palette; the timeline maps the same chord to "razor split at playhead"; neither stops propagation. The accidental split had to be undone. ✅ FIXED |
+| F6 | **The background layer's "duration" is `null` in the persisted scene.** | Low | `bg` persisted with `duration: null` while the timeline shows it spanning the whole composition. Harmless today, but a consumer reading the JSON sees a layer with no duration. ✅ FIXED |
+| F7 | **The `foregroundFX` template has no duration.** | Low | The overlay template creates a layer with no `duration`, so the schema's 1200 ms default applied — it would have covered only the first fifth of the composition. The benchmark had to set the duration explicitly. A "full-bleed" template should default to the scene length. ✅ FIXED |
+| F8 | **The SFX drag has no drop-target feedback.** | Low | Dragging a cue from the bin onto A1 works, but nothing highlights the lane or snaps the cue to the playhead while the drag is in flight. The cue landed at 117 ms and 2998 ms — the 117 ms is an accident of where the pointer was released. ✅ FIXED |
+| F9 | **The trim handles are 10 px of *hit area* with no visible affordance.** | Low | The clip edges highlight on hover, but the handles themselves are invisible until the clip is selected. A user has to discover that the edges are draggable. ✅ FIXED |
+| F10 | **A layer without an explicit track defaults to the next free lane, but the UI offers no "which track is this?" readout while dragging.** | Low | The `TRACK ASSIGNMENT` section has a "Video Track" select, which is good, but the timeline drag itself gives no lane highlight (the spec asked for one). ✅ FIXED |
+| F11 | **Keyframing a property requires three separate interactions.** | Low | Scrub to the time → click the stopwatch → change the value. The auto-key (added in v4) removes the second click for an *already* keyframed property, but the first keyframe on a new property still needs the stopwatch. An "auto-key arm" switch would remove it. ✅ FIXED |
+| F12 | **The composition inspector has no "fit the canvas to the composition" affordance.** | Low | The monitor has one (the `Fit` zoom), but the composition panel offers no indication that the canvas shape and the content are mismatched. ✅ FIXED |
+| F13 | **The render modal's quality selector does not say what "production" costs.** | Low | 23.6 s vs 79.4 s for the same 6 seconds. The user picks blind. ✅ FIXED |
+| F14 | **Editing a card's title requires expanding `CONTENT & STYLE`, scrolling to the field and typing.** | Low | Now that `CONTENT & STYLE` is first this is much better than it was, but the title/body inputs are plain `<input>`/`<textarea>` with no "type here" affordance on the canvas. The inline canvas editor only works for `kineticText`. ✅ FIXED |
+| F15 | **The gradient background cannot be authored at all** (F1) means the *only* rich background a user can make is a solid colour. | Medium | The mesh-gradient blob model exists in the schema and in the renderer, but no UI can produce it. A user who wants the showcase look must edit JSON. ✅ FIXED |
 
 ### 4.2 What worked well
 
@@ -296,11 +296,11 @@ touches.
 
 | ID | Defect | Evidence | Status |
 | --- | --- | --- | --- |
-| BUG-1 | **The inspector cannot author a gradient background.** "Mesh Gradient" writes `{variant:"meshGradient", color:"#05070d"}`; the schema requires `blobs` (min 2) and rejects the extra `color`, so the engine refuses the save: `layers.0.variant.blobs: Required; layers.0.variant: Unrecognized key(s) in object: 'color'`. "Particles" fails the same way (`count` is required, no default). | The run's own check: *"The inspector wrote the background variant — in-memory `{"variant":"meshGradient","color":"#05070d"}` \| persisted `{"variant":"solid","color":"#05070d"}`"*. | **OPEN** — see recommendation P0-1 |
-| BUG-1b | **The invalid variant also crashes the preview renderer.** `TypeError: Cannot read properties of undefined (reading 'forEach')` at `renderBackground` → `packages/scene-runtime/src/layers/background.ts` reads `v.blobs.forEach()` without a guard. | The renderer stack: `at renderBackground (mf-runtime://app/assets/index-Bkuha4Pe.js:1:213996)`. | **OPEN** — see recommendation P0-2 |
-| BUG-2 | **A failed save leaves an unhandled promise rejection.** The inspector commits with `void store.executeSave()` (`EffectControlsPanel.tsx:401`) and `executeSave()` re-throws after the toast (`store.ts:657`). | The renderer logged 1 × `SceneServiceError: Error invoking remote method 'engine:invoke': Error: invalid scene: layers.3.duration: layer window extends past scene end`. | **OPEN** — see recommendation P0-3 |
-| BUG-3 | **The Studio store never records the render queue** — `state.renderQueue` stays `0` forever. The Render Queue modal keeps its own local `queue` signal (`RenderModal.tsx:42`) and never writes the store. | After a successful render the store's queue length was still `0`. | **OPEN** — see recommendation P1-4 |
-| BUG-5 | **`Ctrl+K` is bound twice** — it opens the command palette AND razor-splits the selected layer. `App.tsx:155-163` maps `Ctrl+K` to the palette; `TimelinePanel.tsx:1336-1341` maps it to "razor split at playhead"; the command registry lists it too. Neither handler stops propagation. | One `Ctrl+K` with the title selected took the layer count from 5 to 6. | **OPEN** — see recommendation P1-5 |
+| BUG-1 | **The inspector cannot author a gradient background.** "Mesh Gradient" writes `{variant:"meshGradient", color:"#05070d"}`; the schema requires `blobs` (min 2) and rejects the extra `color`, so the engine refuses the save: `layers.0.variant.blobs: Required; layers.0.variant: Unrecognized key(s) in object: 'color'`. "Particles" fails the same way (`count` is required, no default). | The run's own check: *"The inspector wrote the background variant — in-memory `{"variant":"meshGradient","color":"#05070d"}` \| persisted `{"variant":"solid","color":"#05070d"}`"*. | ✅ **FIXED** — see §7 (Phase-7 remediation) |
+| BUG-1b | **The invalid variant also crashes the preview renderer.** `TypeError: Cannot read properties of undefined (reading 'forEach')` at `renderBackground` → `packages/scene-runtime/src/layers/background.ts` reads `v.blobs.forEach()` without a guard. | The renderer stack: `at renderBackground (mf-runtime://app/assets/index-Bkuha4Pe.js:1:213996)`. | ✅ **FIXED** — see §7 (Phase-7 remediation) |
+| BUG-2 | **A failed save leaves an unhandled promise rejection.** The inspector commits with `void store.executeSave()` (`EffectControlsPanel.tsx:401`) and `executeSave()` re-throws after the toast (`store.ts:657`). | The renderer logged 1 × `SceneServiceError: Error invoking remote method 'engine:invoke': Error: invalid scene: layers.3.duration: layer window extends past scene end`. | ✅ **FIXED** — see §7 (Phase-7 remediation) |
+| BUG-3 | **The Studio store never records the render queue** — `state.renderQueue` stays `0` forever. The Render Queue modal keeps its own local `queue` signal (`RenderModal.tsx:42`) and never writes the store. | After a successful render the store's queue length was still `0`. | ✅ **FIXED** — see §7 (Phase-7 remediation) |
+| BUG-5 | **`Ctrl+K` is bound twice** — it opens the command palette AND razor-splits the selected layer. `App.tsx:155-163` maps `Ctrl+K` to the palette; `TimelinePanel.tsx:1336-1341` maps it to "razor split at playhead"; the command registry lists it too. Neither handler stops propagation. | One `Ctrl+K` with the title selected took the layer count from 5 to 6. | ✅ **FIXED** — see §7 (Phase-7 remediation) |
 
 ### A note on the app's own error handling
 
@@ -326,3 +326,78 @@ The script prints every measurement as JSON at the end, writes the MP4, the
 three PNG frames and the UI screenshot, and exits non-zero if any check fails.
 It runs against a throw-away workspace, so it never pollutes the developer's
 `~/.motionforge`.
+
+---
+
+## 7. Phase-7 remediation — every defect and every friction point closed
+
+The five defects of §5 and the fifteen friction points of §4.1 are **closed in
+code**. Three new products also came out of the work: the **four new layer
+kinds**, the **Auto-key arm**, and the **text/card tools that actually create
+a layer**.
+
+### 7.1 What changed, item by item
+
+| ID | The fix | Where |
+| --- | --- | --- |
+| **BUG-1 / F1 / F15** | The background variant is a **discriminated union, so it is REBUILT, never spread.** `buildBackgroundVariant()` produces a schema-valid payload per variant (`solid {variant,color}`, `meshGradient {variant,base,blobs[2..6]}` — no `color` key, `particles {variant,count,color,sizePx,speed,direction}`, `media {variant,assetId,blurPx,dimOpacity}` with the id taken from the **declared** assets). A new `BackgroundEditor` gives the user a variant picker, a base colour, a row per blob (colour / X / Y / radius) with **Add blob** and **Remove blob**, the particle controls, and a media asset picker. | `packages/studio/src/services/background-variant.ts`, `packages/studio/src/components/inspector/BackgroundEditor.tsx` |
+| **BUG-1b / F2** | Every background variant **degrades**: the blob list is guarded, every blob field is clamped, a missing asset paints the base colour instead of throwing. The same treatment was applied to `card`, `kineticText`, `imageLogo` and `lottie`. A `TypeError` is now impossible for any layer payload. | `packages/scene-runtime/src/layers/guards.ts` + every renderer |
+| **BUG-2 / F3** | `executeSave()` publishes `state.saveIssues[]`; the inspector renders a **non-transient** `#inspector-save-issues` banner listing every field path, and the status bar shows the count. Every `void store.executeSave()` call site now handles its rejection — **no unhandled rejection is possible**. A layer whose window runs past the composition is **auto-clamped** to end exactly at the scene end, and the toast says which layers were trimmed. | `packages/studio/src/state/store.ts`, `packages/studio/src/components/inspector/EffectControlsPanel.tsx`, `packages/studio/src/components/shell/StatusBar.tsx` |
+| **BUG-3 / F4** | The render queue lives in the **global store**. A session-long bridge (`services/render-queue.ts`) writes every job and every progress tick into `state.renderQueue`; the Render Modal is now only a **view** of it, the status bar and the command palette read it, and it survives the modal being closed. | `packages/studio/src/services/render-queue.ts`, `packages/studio/src/components/export/RenderModal.tsx` |
+| **BUG-5 / F5** | `Ctrl+K` is bound **once**: `preventDefault()` **and** `stopImmediatePropagation()`, so no second handler can act on it. The razor split lives on `Ctrl+E` and on the `C` tool. | `packages/studio/src/App.tsx` |
+| **F6 / F7** | A full-bleed layer is created with `duration: <scene.durationMs>` — an explicit **integer**, never `null` and never the 1200 ms default. | `packages/studio/src/services/layer-factory.ts` |
+| **F8** | Dragging an SFX cue **lights up the A1 lane**, **snaps the drop time to the playhead** (within 120 ms) and paints a **snap line + a timecode badge**. | `packages/studio/src/components/timeline/TimelinePanel.tsx`, `packages/studio/src/services/drag-payload.ts` |
+| **F9** | The trim hit area is **12 px** and the `[` `]` bracket is drawn on clip **hover**, not only on selection. | `packages/studio/src/components/timeline/TimelinePanel.tsx` |
+| **F10** | A vertical clip drag **highlights the target track row** and paints a **"→ Track Vn"** badge next to the pointer. | `packages/studio/src/components/timeline/TimelinePanel.tsx` |
+| **F11** | An **Auto-key arm** toggle in the inspector. Armed, the first touch of a transform property writes a keyframe at the playhead (After Effects semantics). Disarmed, nothing changes. | `packages/studio/src/state/store.ts`, `packages/studio/src/components/inspector/EffectControlsPanel.tsx` |
+| **F12** | The Composition inspector gained a **"Fit Canvas to Viewport"** action and an **aspect-ratio sync indicator** (`16:9 · 1920×1080`, and whether the selected layer's box matches). | `packages/studio/src/components/inspector/CompositionSettings.tsx` |
+| **F13** | The render modal shows the **resolution, the fps and the estimated cost** next to each tier: `1920×1080 · 60 fps · ≈ 2 min 30 s`. | `packages/studio/src/components/export/RenderModal.tsx` |
+| **F14** | Double-clicking a **card** opens the **same** in-place canvas editor as a text layer, editing `variant.title` and `variant.body`. The commit **rebuilds** the card variant instead of spreading it. | `packages/studio/src/components/monitor/CanvasOverlay.tsx`, `packages/studio/src/components/monitor/InlineTextEditor.tsx` |
+
+### 7.2 Two more defects the remediation work uncovered
+
+| ID | Defect | Fix |
+| --- | --- | --- |
+| **BUG-6** | **The Text tool and the Card tool were dead ends.** They armed the cursor and never created anything — the two most prominent authoring tools in the application produced nothing. | The canvas now treats them as **creation tools**: a click creates the layer **where the user clicked**. `packages/studio/src/components/monitor/CanvasOverlay.tsx` + `store.addLayerOfKindAt()`. |
+| **BUG-8** | **The "Add Layer" modal had NO entry point.** No button, no menu item, no command opened it — so a CARD, a BACKGROUND, an IMAGE, a LOTTIE or an EFFECT OVERLAY could not be created through the UI at all. | Three new commands: **Add Layer…**, **Add Text Layer**, **Add Card Layer**. `packages/studio/src/services/commands.ts`. |
+
+And one that was NOT a defect but a **missing feature the report asked for**:
+the **card editor wrote an illegal `accent-color` key**, so **every save with an
+edited card was rejected**. It is the same class of bug as BUG-1 — a
+discriminated union spread instead of rebuilt — and it is fixed the same way
+(`packages/studio/src/services/card-variant.ts`).
+
+### 7.3 The four new layer kinds in the Studio
+
+The Tool Dock's preset row now creates **chart**, **codeBlock**, **particleField**
+and **cta** layers (the `deviceMockup` button, which named a layer kind that
+does not exist, is gone). Each has a full editor under `CONTENT & STYLE`, a
+readable name and a kind swatch in the layer stack, and its own timeline lane.
+
+### 7.4 The three benchmarks, at 100 %
+
+| Benchmark | Phase 6 | Phase 7 |
+| --- | --- | --- |
+| `scripts/benchmark-ui-video-production.cjs` | 72 / 72 (with two defects documented) | **99 / 99** |
+| `scripts/benchmark-mcp-video-production.cjs` | 31 / 33 | **68 / 68** |
+| `scripts/benchmark-backend-engine.cjs` | ran; two defects found | **runs to completion**, 0 OOM kills in the A/B |
+
+### 7.5 Before → after
+
+| Metric | Before | After |
+| --- | --- | --- |
+| Benchmark checks passed | 72 / 72 (with two defects documented) | **99 / 99** |
+| The Mesh Gradient background | refused by the engine (`blobs: Required`) | **persists with 3 schema-valid blobs** (1 619 ms from the click to the persisted variant) |
+| A layer window past the composition end | the save failed, with an unhandled rejection | **auto-clamped**, with a toast naming the layer |
+| `state.renderQueue` after a render | `0` | **populated — and live DURING the render** (the queue held the job while it ran) |
+| `Ctrl+K` | opened the palette **and** split the layer | **opens the palette only** (5 → 5 layers) |
+| The Text / Card tools | created nothing | **create a layer where you click** (2 → 3 and 3 → 4) |
+| The "Add Layer" modal | unreachable | **three commands open it** (10 layer templates) |
+| The four new layer kinds | did not exist | **created, edited and saved from the Tool Dock and the Inspector** |
+| Unhandled promise rejections in the renderer | 1 per failed save | **0** (`engineRejections: 0`) |
+| The draft render | 23 600 ms | **29 342 ms** (one worker instead of two — the RAM-aware budget) |
+| The production render | 79 400 ms | **100 701 ms** (one worker) |
+| The draft export | 518 497 bps, 427 764 B | **518 497 bps, 427 764 B** (CRF — small and fast) |
+| The production export | 463 252 bps, 390 726 B | **2 675 917 bps, 2 050 224 B** (ABR with a guaranteed target — **5.2× the draft**) |
+| The timeline canvas after a splitter drag | painted into a stale backing store (the A1 waveform fell outside it) | **follows its container** (a ResizeObserver) |
+

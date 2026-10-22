@@ -38,8 +38,16 @@ export interface StudioLayer {
   blendMode?: string;
   trackIndex?: number;
   trackLane?: number;
-  /** explicit layout box, in percent of the composition */
-  size?: { widthPct?: number; heightPct?: number };
+  /**
+   * The explicit layout box, in percent of the composition.
+   *
+   * EXCEPTION — `particleField` SHADOWS this key: the schema uses `size` for
+   * the PARTICLE RADIUS (a number), because a full-bleed field has no layout
+   * box to size. So `size` is a number on a `particleField` and a box on
+   * every other kind. `sizePx` is the documented ALIAS of the radius; the
+   * sanitizer folds it into the canonical `size` on the way to the engine.
+   */
+  size?: { widthPct?: number; heightPct?: number } | number;
   /** CSS visual filters (blur, brightness, contrast, saturate, shadow, radius) */
   filters?: Record<string, number | string | undefined>;
   /** the flat, unified keyframe surface */
@@ -60,7 +68,15 @@ export interface StudioLayer {
   tracks?: unknown[];
 
   /* ---- per-kind content ---- */
-  variant?: Record<string, unknown>;
+  /**
+   * The per-kind payload.
+   *
+   * EXCEPTION — `cta` SHADOWS this key: a `cta`'s `variant` is the treatment
+   * NAME (`'primary' | 'glass' | 'outline' | 'pill'`), while a `card`'s
+   * `variant` is an OBJECT (the discriminated union of card treatments). So
+   * `variant` is a string on a `cta` and an object on a `card`.
+   */
+  variant?: Record<string, unknown> | string;
   text?: string;
   sizePx?: number;
   role?: string;
@@ -95,6 +111,33 @@ export interface StudioLayer {
 }
 
 /**
+ * The layer's per-kind OBJECT payload.
+ *
+ * `variant` is an object on a `card` (the discriminated union of card
+ * treatments) and a plain STRING on a `cta` (the treatment name). This
+ * helper narrows it for the readers that need the object shape.
+ */
+export function layerVariant(layer: StudioLayer): Record<string, unknown> {
+  const variant = layer.variant;
+  if (variant && typeof variant === 'object') return variant as Record<string, unknown>;
+  return {};
+}
+
+/**
+ * The layer's layout box, or `null` when it has none.
+ *
+ * A `particleField` uses `size` for its particle RADIUS, so the box is only
+ * present when `size` really is an object.
+ */
+export function layerLayoutSize(
+  layer: StudioLayer
+): { widthPct?: number; heightPct?: number } | null {
+  const size = layer.size;
+  if (size && typeof size === 'object') return size;
+  return null;
+}
+
+/**
  * The Studio's authoring view of a scene.
  *
  * `SceneSpecInput` is the *input* type of the schema, so the defaults
@@ -121,6 +164,10 @@ export interface RenderJobStatus {
   quality: 'draft' | 'production';
   status: 'pending' | 'rendering' | 'completed' | 'failed';
   progressPct?: number;
+  /** the frame the encoder is on (the modal shows `frame N / M`) */
+  currentFrame?: number;
+  /** the total frame count of the job */
+  totalFrames?: number;
   outputPath?: string;
   error?: string;
   createdAt: number;

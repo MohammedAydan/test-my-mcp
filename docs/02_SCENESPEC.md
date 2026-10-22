@@ -69,7 +69,7 @@ Every layer has:
 | field | type | default | notes |
 |---|---|---|---|
 | `id` | string | required | unique within scene |
-| `type` | enum | required | `background` \| `imageLogo` \| `kineticText` \| `card` \| `lottie` \| `foregroundFX` |
+| `type` | enum | required | `background` \| `imageLogo` \| `kineticText` \| `card` \| `lottie` \| `foregroundFX` \| `chart` \| `codeBlock` \| `particleField` \| `cta` |
 | `at` | number | `0` | layer start (ms) |
 | `duration` | number | scene end | layer active window (ms) |
 | `z` | int | auto | draw order |
@@ -244,6 +244,48 @@ timeline progress (deterministic; no internal clock).
 - **`vignette`** — `{ strength 0–1, color? }`
 - **`filmGrain`** — `{ opacity 0–1, sizePx? }`
 - **`colorGrade`** — `{ warmth -1…1, contrast -1…1, saturation -1…1, tint?: {color, opacity} }`
+
+## Layer: `chart`
+A DATA VISUALISATION layer. `position: {xPct, yPct}` is required.
+
+`{ chartType: bar|line|donut, title?, data[2..12]: { label, value, color? }, accentColor?, showValues?, gridOpacity?, labelColor?, widthPx?, heightPx?, labelSizePx? }`
+
+- `bar` draws one rounded bar per datum, `line` a polyline through the points,
+  `donut` a ring split into arcs by the data shares.
+- The renderer is pure SVG: crisp at any rasterisation density and fully
+  deterministic (no layout measurement, no wall clock).
+- `value` is unit-free — the renderer scales to the largest value it is given.
+
+## Layer: `codeBlock`
+A SYNTAX-HIGHLIGHTED SOURCE SNIPPET. `position: {xPct, yPct}` is required.
+
+`{ language, code, title?, theme: dark|midnight|matrix, highlightLines?: number[], fontSize?, widthPx?, showChrome?, showLineNumbers? }`
+
+- The highlighter is a dependency-free tokeniser (comments, strings, numbers,
+  keywords, punctuation); an unknown language degrades to plain text.
+- `highlightLines` are 1-indexed.
+- `fontSizePx` is accepted as an alias of `fontSize` and is normalised on save.
+
+## Layer: `particleField`
+A FULL-BLEED FIELD OF MOTION PARTICLES. No `position` — it paints the whole canvas.
+
+`{ count 1–400, pattern: float|grid|constellation|sparkle, color, color2?, speed 0.1–4, size, seed, opacity 0–1 }`
+
+- Every particle's position and opacity is a pure function of
+  `(timeMs, seed, index)` — the same seed produces the same field on every
+  machine, and a headless frame seek is exactly reproducible.
+- `sizePx` is accepted as an alias of `size` and is normalised on save.
+- Unlike `background.particles`, this is a first-class layer: it carries its own
+  timing, motion presets, filters and keyframes, and it can sit mid-stack.
+
+## Layer: `cta`
+A CALL-TO-ACTION BUTTON. `position: {xPct, yPct}` is required.
+
+`{ label, sublabel?, variant: primary|glass|outline|pill, accentColor?, bgColor?, textColor?, icon: arrow|sparkles|play|none, widthPx?, heightPx?, radiusPx?, labelSizePx? }`
+
+- The icons are **inline SVG paths** — never an emoji.
+- `primary` fills with the accent, `glass` is a translucent panel, `outline` is
+  a border, `pill` is fully rounded.
 
 ## Camera (2.5D rig)
 ```jsonc

@@ -183,6 +183,17 @@ function normalizeKeyframes(layer: Record<string, unknown>, path: string, report
  */
 function normalizeSize(layer: Record<string, unknown>, path: string, report: SanitizeReport): void {
   const size = layer.size;
+  if (typeof size === "number") {
+    // `particleField` SHADOWS the layout-size bag with a numeric particle
+    // RADIUS. It is not a layout box, so it is not this function's business —
+    // and deleting it here would silently throw the radius away.
+    if (layer.type === "particleField") return;
+    if (size !== undefined) {
+      delete layer.size;
+      report.clamped.push(`${path}.size`);
+    }
+    return;
+  }
   if (!isPlainObject(size)) {
     if (size !== undefined) {
       delete layer.size;
@@ -206,6 +217,79 @@ function normalizeSize(layer: Record<string, unknown>, path: string, report: San
     delete layer.size;
   } else {
     layer.size = out;
+  }
+}
+
+/**
+ * Normalize the fields of the NEWER layer kinds (`chart`, `codeBlock`,
+ * `particleField`, `cta`).
+ *
+ * Two jobs:
+ *
+ * 1. **Alias healing.** The repository convention is that every size carries
+ *    a `*Px` suffix, but the newer kinds ship a canonical name without it
+ *    (`fontSize`, `size`). A scene written by hand — or by an LLM that read
+ *    the field guide — may use either spelling. Both are accepted by the
+ *    schema, and the sanitizer folds the alias into the canonical field so
+ *    the runtime only ever reads ONE name.
+ *
+ * 2. **Degrading a malformed payload.** A `chart` whose `data` is not an
+ *    array, or whose entries are not objects, must not make the whole scene
+ *    unloadable: the offending entries are dropped and the rest survives.
+ */
+function normalizeNewLayerKinds(layer: Record<string, unknown>, path: string, report: SanitizeReport): void {
+  const type = layer.type;
+
+  // ---- codeBlock: fontSizePx -> fontSize --------------------------------
+  if (type === "codeBlock") {
+    const alias = finiteOr(layer.fontSizePx);
+    if (alias !== undefined) {
+      if (layer.fontSize === undefined) layer.fontSize = alias;
+      delete layer.fontSizePx;
+      report.healed.push(`${path}.fontSizePx`);
+    }
+    const lines = layer.highlightLines;
+    if (lines !== undefined && !Array.isArray(lines)) {
+      delete layer.highlightLines;
+      report.clamped.push(`${path}.highlightLines`);
+    } else if (Array.isArray(lines)) {
+      const kept = lines.filter(
+        (n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1
+      );
+      if (kept.length !== lines.length) report.clamped.push(`${path}.highlightLines`);
+      layer.highlightLines = kept;
+    }
+  }
+
+  // ---- particleField: sizePx -> size ------------------------------------
+  if (type === "particleField") {
+    const alias = finiteOr(layer.sizePx);
+    if (alias !== undefined) {
+      if (layer.size === undefined) layer.size = alias;
+      delete layer.sizePx;
+      report.healed.push(`${path}.sizePx`);
+    }
+    const size = finiteOr(layer.size);
+    if (size !== undefined) layer.size = clamp(size, 0.5, 40);
+    const count = finiteOr(layer.count);
+    if (count !== undefined) layer.count = clamp(Math.round(count), 1, 400);
+  }
+
+  // ---- chart: drop malformed data points --------------------------------
+  if (type === "chart") {
+    const data = layer.data;
+    if (!Array.isArray(data)) {
+      delete layer.data;
+      report.clamped.push(`${path}.data`);
+    } else {
+      const kept = data.filter((d): d is Record<string, unknown> => isPlainObject(d));
+      if (kept.length !== data.length) report.clamped.push(`${path}.data`);
+      layer.data = kept.map((d) => {
+        const value = finiteOr(d.value);
+        const label = typeof d.label === "string" ? d.label : "";
+        return { ...d, label, value: value ?? 0 };
+      });
+    }
   }
 }
 
@@ -279,6 +363,10 @@ function normalizeLayerFields(layer: Record<string, unknown>, path: string, repo
     report.clamped.push(`${path}.position`);
   }
 
+  // The NEWER layer kinds are normalised FIRST: `particleField` shadows the
+  // universal `size` bag with a numeric radius, and the alias healing has to
+  // fold `sizePx` into `size` BEFORE the layout-size normaliser looks at it.
+  normalizeNewLayerKinds(layer, path, report);
   normalizeSize(layer, path, report);
   normalizeFilters(layer, path, report);
   normalizeKeyframes(layer, path, report);

@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { chromium, type Browser, type BrowserContext, type Page, type Route } from "playwright";
@@ -7,6 +8,7 @@ import { resolveCanvasSize, type SceneSpec } from "@motionforge/scene-spec";
 
 import type { EngineConfig, EnginePaths } from "./config.js";
 import { resolveEnginePaths } from "./config.js";
+import { computeWorkerBudget, sceneHasHeavyEffects } from "./cost-analysis.js";
 import type { RenderProfile } from "./encoder.js";
 import { FfmpegError, encoderArgs, StdinWriter } from "./encoder.js";
 import type { SceneStore } from "./scene-store.js";
@@ -78,7 +80,12 @@ export class RendererPool {
       `${opts.baseUrl}/preview?scene=${encodeURIComponent(opts.sceneId)}` +
       `&render=1&fps=${opts.profile.fps}` +
       (opts.fit ? "&fit=1" : "");
-    await page.goto(url, { waitUntil: "networkidle" });
+    // `network-idle` waited ~940 ms for a network silence that never came
+    // (the page holds a channel open), so it was pure dead time. The
+    // explicit readiness probe below is both faster and stricter: it waits
+    // for the scene, the fonts and the timeline — the things a frame
+    // actually depends on.
+    await page.goto(url, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(
       // scene loaded, fonts settled, timeline built
       () => {
@@ -86,7 +93,10 @@ export class RendererPool {
         return typeof g.renderConfig === "object" && typeof g.seekToFrame === "function";
       },
       null,
-      { timeout: 30_000 }
+      // the navigation used to spend its own 30 s waiting for the network, and
+      // this probe then had another 30 s; `domcontentloaded` returns in
+      // milliseconds, so the probe inherits the whole budget
+      { timeout: 60_000 }
     );
     await page.evaluate(() =>
       (globalThis as unknown as { whenSceneReady?: () => Promise<unknown> }).whenSceneReady?.()
@@ -472,10 +482,33 @@ export async function renderFramesParallel(opts: {
   /** the scene store — the zero-port `/api/scenes/:id` route answers from it */
   store?: SceneStore;
   onProgress?: (framesDone: number) => void;
+  /** where the chosen worker budget is reported */
+  log?: (msg: string) => void;
 }): Promise<ParallelRenderResult> {
   const { scene, profile, config } = opts;
   const totalFrames = Math.max(1, Math.round((scene.durationMs / 1000) * profile.fps));
-  const ranges = splitRanges(totalFrames, Math.min(config.maxRenderWorkers, totalFrames));
+
+  // THE RAM-AWARE WORKER BUDGET.
+  //
+  // The configured worker count is an UPPER bound, not a decision: a host
+  // with 4.5 GB of RAM (or less) renders on ONE worker, and so does a scene
+  // with heavy effects — two headless browsers rasterising a blurred
+  // full-frame gradient on the same cores do not make the frame cheaper,
+  // they just thrash the memory.
+  const heavy = sceneHasHeavyEffects(scene);
+  const budget = computeWorkerBudget({
+    cpus: os.cpus().length,
+    totalMemGb: os.totalmem() / 1024 ** 3,
+    heavy,
+  });
+  const workerCount = Math.max(1, Math.min(config.maxRenderWorkers, budget, totalFrames));
+  opts.log?.(
+    `[renderer] worker budget ${workerCount} ` +
+      `(configured max ${config.maxRenderWorkers}, host ${os.cpus().length} cpus / ` +
+      `${Math.round((os.totalmem() / 1024 ** 3) * 100) / 100} GB, ` +
+      `${heavy ? "heavy effects" : "no heavy effects"})`
+  );
+  const ranges = splitRanges(totalFrames, workerCount);
 
   const canvasSize = resolveCanvasSize(scene.canvas);
   // draft mode captures a downscaled fit; production captures the canvas 1:1
@@ -544,7 +577,7 @@ async function renderFrameRange(opts: {
       "-hide_banner", "-loglevel", "error", "-y",
       "-f", "image2pipe", "-framerate", String(profile.fps), "-c:v", "mjpeg", "-i", "pipe:0",
       "-vf", `fps=${profile.fps},format=yuv420p`,
-      ...encoderArgs(opts.encoder, profile.quality),
+      ...encoderArgs(opts.encoder, profile.quality, profile),
       "-pix_fmt", "yuv420p",
       "-f", "mp4",
       opts.partPath,

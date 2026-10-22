@@ -15,7 +15,7 @@ packages/
   scene-runtime/   @motionforge/scene-runtime — Vite + TS + Tailwind + GSAP browser canvas (DOM/SVG/Lottie layers, camera rig, timeline UI)
   studio/          @motionforge/studio      — Solid.js Pro NLE user interface (the desktop shell's renderer)
   desktop/         @motionforge/desktop     — Electron shell hosting EngineCore in the main process
-  mcp-server/      @motionforge/mcp-server   — Thin MCP wrapper exposing exactly 6 tools, talks to core-engine in-process
+  mcp-server/      @motionforge/mcp-server   — Thin MCP wrapper exposing exactly 13 tools, talks to core-engine in-process
 ```
 
 > **v3.0 (2026-10-20).** The Studio was rebuilt as a modular Pro NLE. The
@@ -45,9 +45,12 @@ packages/
    render frames.)
 5. **No placeholders.** No `TODO`, no stubbed return values, no mock data committed as
    if functional. If a feature isn't built yet, it doesn't ship in that commit.
-6. **The LLM surface is exactly 6 tools** (`get_motion_capabilities`,
-   `init_creative_project`, `create_or_update_scene`, `inspect_scene_keyframes`,
-   `open_live_timeline_preview`, `render_video`). Do not add more without updating `docs/`.
+6. **The LLM surface is exactly 13 tools** — the original six
+   (`get_motion_capabilities`, `init_creative_project`, `create_or_update_scene`,
+   `inspect_scene_keyframes`, `open_live_timeline_preview`, `render_video`) plus the
+   seven the production audit added (`render_scene`, `get_layer_bounds`,
+   `get_render_status`, `get_render_result`, `analyze_scene`, `upload_asset`,
+   `project_asset_manifest`). Do not add more without updating `docs/`.
 7. **Every temporary effect has an In/Out envelope.** Anything that runs over a bounded
    window (emphasis presets, camera moves, transitions) must start at exact identity and
    return to exact identity — see `packages/scene-runtime/src/envelope.ts`. A tween that
@@ -166,12 +169,14 @@ npm run sync-template-scenes   # regenerate templates/creative-project/scenes/*.
 is the agent skill, and `scripts/*.mjs` are the CLIs. **The project kit is CLI-only — it
 never adds a sixth MCP tool.**
 
-### MCP tool contract (6 tools)
+### MCP tool contract (13 tools)
 
 ```
 get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
                           →  inspect_scene_keyframes  →  open_live_timeline_preview
-                          →  render_video
+                          →  render_video  (alias: render_scene)
+                          →  get_layer_bounds  →  get_render_status  →  get_render_result
+                          →  analyze_scene  →  upload_asset  →  project_asset_manifest
 ```
 
 | Order | Tool | Purpose |
@@ -181,7 +186,17 @@ get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
 | 3 | `create_or_update_scene` | validate + store a SceneSpec; returns the scene id |
 | 4 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
 | 5 | `open_live_timeline_preview` | interactive scrubber; auto-refreshes on re-post |
-| 6 | `render_video` | `draft` while iterating, `production` once approved |
+| 6 | `render_video` | `draft` while iterating, `production` once approved; `wait: false` returns a `jobId` immediately |
+| 7 | `render_scene` | an alias of `render_video`, for hosts that expect the older name |
+| 8 | `get_layer_bounds` | the layout sidecar **without rasterisation** — sub-second, for layout questions |
+| 9 | `get_render_status` | poll a render started with `wait: false` |
+| 10 | `get_render_result` | the finished export + its ffprobe metadata |
+| 11 | `analyze_scene` | the warnings, the per-frame render-cost estimate, the keyframe precedence |
+| 12 | `upload_asset` | put a file (SVG/PNG/MP4/audio) into the vault from the protocol |
+| 13 | `project_asset_manifest` | what the project already has on disk |
+
+**Every tool result carries `structuredContent`** alongside its prose `content`
+block, so a host consumes the numbers without parsing text.
 
 **Autonomous project disk sync.** When `projectPath` is provided to `create_or_update_scene`,
 `inspect_scene_keyframes`, or `render_video`, the corresponding files are written to
@@ -265,6 +280,24 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 - Validate early and often via `create_or_update_scene`, then eyeball with
   `inspect_scene_keyframes` before spending a production render.
 
+## The inspection path (the invariants)
+
+- **The engine keeps ONE warm browser page for its whole life.** The scene is
+  pushed into it through `window.mountSceneFromHost` — no navigation, no
+  `networkidle` wait, no new context per call. `packages/core-engine/src/warm-page.ts`.
+- **A LAYOUT query must never rasterise.** `getLayerBoundsAt(sceneId, timesMs[])`
+  reads the sidecar out of the live page with a pure `page.evaluate`; the
+  runtime exposes `window.seekToFrameForLayout()` for it (the same geometry,
+  without the media resync and the image decode).
+- **A heavy scene renders on ONE worker** when the host has ≤ 4.5 GB of RAM or
+  the scene has heavy effects: `computeWorkerBudget()` in
+  `packages/core-engine/src/cost-analysis.ts`. Two browsers rasterising a
+  blurred full-frame gradient on a 4 GB host is how a render is OOM-killed.
+- **The cost model's multipliers are MEASURED, in isolation** — one effect on
+  a minimal scene. The A/B on a scene full of 200 px blurs measures the
+  INTERACTION between an alpha overlay and the filters beneath it, not the
+  effect itself.
+
 ## Camera & transitions (the invariants)
 
 - **The camera has exactly ONE writer.** `composeCameraAt(scene, t, ctx)` in
@@ -306,6 +339,10 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 | Visual layer rendering, the runtime canvas | `packages/scene-runtime/src/**` |
 | Zero-port headless serving (preview bundle, scene, vault) | `packages/core-engine/src/renderer.ts` — `setupPlaywrightZeroPortRoutes` |
 | Scene sanitizer / normalizer | `packages/scene-spec/src/sanitize.ts` — `sanitizeSceneInput()` |
+| The shared report contracts (engine → MCP ⇄ Studio) | `packages/scene-spec/src/contracts.ts` |
+| The engine's warm browser page (the inspection path) | `packages/core-engine/src/warm-page.ts` |
+| The render cost model (the multipliers, the worker budget) | `packages/core-engine/src/cost-analysis.ts` |
+| The MCP server's 13 tools | `packages/mcp-server/src/tools.ts` |
 | Pro NLE design tokens (colour, type, metrics) | `packages/studio/src/styles/tokens.css` |
 | A new UI icon | `packages/studio/src/components/icons/NleIcons.tsx` — **never** an emoji |
 | The frameless window chrome / window controls | `packages/studio/src/components/shell/TitleBar.tsx` + `packages/desktop/src/{main,preload}.ts` |

@@ -1,13 +1,18 @@
 import { gsap } from "gsap";
 import type { ImageLogoLayer, LogoMask } from "@motionforge/scene-spec";
 import { applySweepOverlay } from "../presets.js";
+import { clamp, num, safeColor } from "./guards.js";
 import type { LayerContext } from "./context.js";
 
 const CLIP_PATHS: Record<Exclude<LogoMask, "rect" | "circle" | "squircle">, string> = {
   hexagon:
     "polygon(25% 6.7%, 75% 6.7%, 100% 50%, 75% 93.3%, 25% 93.3%, 0% 50%)",
-  blob: "border-radius: 62% 38% 46% 54% / 56% 44% 56% 44%",
+  blob:
+    "border-radius: 62% 38% 46% 54% / 56% 44% 56% 44%",
 };
+
+/** The masks the renderer knows how to draw. */
+const MASKS: ReadonlySet<string> = new Set<LogoMask>(["rect", "circle", "squircle", "hexagon", "blob"]);
 
 interface MaskGeometry {
   borderRadius?: string;
@@ -80,37 +85,46 @@ export const SAFE_IMG_CSS = [
 ].join(";");
 
 export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { content: HTMLElement } {
+  const widthPx = clamp(num(layer.widthPx, 320), 1, 8000);
+  const heightPx = num(layer.heightPx, Number.NaN);
+  const mask: LogoMask = MASKS.has(layer.mask) ? layer.mask : "rect";
+  const cornerRadiusPx = clamp(num(layer.cornerRadiusPx, 0), 0, 8000);
+
   const host = document.createElement("div");
   // A logo with no explicit `heightPx` must still have a box: without one the
   // host collapses to zero height, the absolutely-positioned frame inside it
   // has nothing to fill, and the mark is completely invisible. The height is
   // derived from the image's own aspect ratio, which the runtime measured while
   // preloading — so the result is deterministic, never a "wait for onload" race.
-  const intrinsic = ctx.assetIntrinsicSize(layer.assetId);
+  const intrinsic = safeIntrinsicSize(ctx, layer.assetId);
   const resolvedHeightPx =
-    layer.heightPx ??
-    (intrinsic && intrinsic.width > 0
-      ? Math.round((layer.widthPx * intrinsic.height) / intrinsic.width)
-      : layer.widthPx);
+    Number.isFinite(heightPx) && heightPx > 0
+      ? heightPx
+      : intrinsic && intrinsic.width > 0
+        ? Math.round((widthPx * intrinsic.height) / intrinsic.width)
+        : widthPx;
   host.style.cssText = [
     "position:absolute",
-    `left:${layer.position.xPct}%`,
-    `top:${layer.position.yPct}%`,
-    `width:${layer.widthPx}px`,
+    `left:${clamp(num(layer.position?.xPct, 50), -300, 300)}%`,
+    `top:${clamp(num(layer.position?.yPct, 50), -300, 300)}%`,
+    `width:${widthPx}px`,
     `height:${resolvedHeightPx}px`,
     "max-width:100%",
     "max-height:100%",
   ].join(";");
 
   const filters: string[] = [];
-  if (layer.shadow) {
+  const shadow = layer.shadow;
+  if (shadow && typeof shadow === "object") {
     filters.push(
-      `drop-shadow(0 ${layer.shadow.offsetYpx}px ${layer.shadow.blurPx}px ${hexToRgba(layer.shadow.color, layer.shadow.opacity)})`
+      `drop-shadow(0 ${num(shadow.offsetYpx, 0)}px ${clamp(num(shadow.blurPx, 0), 0, 400)}px ${hexToRgba(safeColor(shadow.color, "#000000"), clamp(num(shadow.opacity, 0.4), 0, 1))})`
     );
   }
-  if (layer.glow) {
-    filters.push(`drop-shadow(0 0 ${12 * layer.glow.strength}px ${layer.glow.color})`);
-    filters.push(`drop-shadow(0 0 ${36 * layer.glow.strength}px ${layer.glow.color})`);
+  const glow = layer.glow;
+  if (glow && typeof glow === "object") {
+    const strength = clamp(num(glow.strength, 1), 0, 10);
+    filters.push(`drop-shadow(0 0 ${12 * strength}px ${safeColor(glow.color, "#ffffff")})`);
+    filters.push(`drop-shadow(0 0 ${36 * strength}px ${safeColor(glow.color, "#ffffff")})`);
   }
   if (filters.length > 0) {
     const authored = filters.join(" ");
@@ -121,19 +135,20 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
   }
 
   // frosted plate behind the logo: same curve as the mask, grown by the inset
-  if (layer.glass) {
+  const glass = layer.glass;
+  if (glass && typeof glass === "object") {
     const plate = document.createElement("div");
     plate.className = "mf-logo-plate";
-    const insetPx = (layer.widthPx * CHIP_INSET_PCT) / 100;
-    const geometry = chipGeometry(layer.mask, layer.cornerRadiusPx, insetPx);
+    const insetPx = (widthPx * CHIP_INSET_PCT) / 100;
+    const geometry = chipGeometry(mask, cornerRadiusPx, insetPx);
     plate.style.cssText = [
       "position:absolute",
       `inset:-${CHIP_INSET_PCT}%`,
       geometry.borderRadius ? `border-radius:${geometry.borderRadius}` : "",
       geometry.clipPath ? `clip-path:${geometry.clipPath}` : "",
-      `backdrop-filter:blur(${layer.glass.blurPx}px)`,
-      `-webkit-backdrop-filter:blur(${layer.glass.blurPx}px)`,
-      `background:${hexToRgba(layer.glass.tintColor, layer.glass.tintOpacity)}`,
+      `backdrop-filter:blur(${clamp(num(glass.blurPx, 20), 0, 400)}px)`,
+      `-webkit-backdrop-filter:blur(${clamp(num(glass.blurPx, 20), 0, 400)}px)`,
+      `background:${hexToRgba(safeColor(glass.tintColor, "#000000"), clamp(num(glass.tintOpacity, 0.35), 0, 1))}`,
       "border:1px solid rgba(255,255,255,0.14)",
       `box-shadow:0 ${Math.round(insetPx * 0.6)}px ${Math.round(insetPx * 1.6)}px rgba(0,0,0,0.35)`,
     ]
@@ -144,30 +159,42 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
 
   const frame = document.createElement("div");
   frame.style.cssText = "position:absolute;inset:0;";
-  Object.assign(frame.style, geometryFor(layer.mask, layer.cornerRadiusPx));
+  Object.assign(frame.style, geometryFor(mask, cornerRadiusPx));
   host.appendChild(frame);
 
-  const img = document.createElement("img");
-  img.src = ctx.resolveAsset(layer.assetId);
-  img.alt = layer.name ?? "logo";
-  img.style.cssText = SAFE_IMG_CSS;
-  frame.appendChild(img);
+  // An UNDECLARED asset throws inside `resolveAsset`. A logo is decoration:
+  // it must degrade to an empty plate, never take the whole preview down.
+  let assetUrl = "";
+  try {
+    assetUrl = ctx.resolveAsset(layer.assetId);
+  } catch {
+    assetUrl = "";
+  }
+  if (assetUrl.length > 0) {
+    const img = document.createElement("img");
+    img.src = assetUrl;
+    img.alt = layer.name ?? "logo";
+    img.style.cssText = SAFE_IMG_CSS;
+    frame.appendChild(img);
+  }
 
-  if (layer.ring) {
-    const ring = document.createElement("div");
-    ring.style.cssText = [
+  const ring = layer.ring;
+  if (ring && typeof ring === "object") {
+    const el = document.createElement("div");
+    el.style.cssText = [
       "position:absolute",
       "inset:0",
-      `border:${layer.ring.widthPx}px solid ${layer.ring.color}`,
+      `border:${clamp(num(ring.widthPx, 2), 0, 200)}px solid ${safeColor(ring.color, "#ffffff")}`,
       `border-radius:inherit`,
-      layer.ring.opacity !== undefined ? `opacity:${layer.ring.opacity}` : "",
+      `opacity:${clamp(num(ring.opacity, 1), 0, 1)}`,
     ].join(";");
-    frame.appendChild(ring);
+    frame.appendChild(el);
   }
 
   ctx.content.appendChild(host);
 
-  if (layer.lightSweep) {
+  const sweep = layer.lightSweep;
+  if (sweep && typeof sweep === "object") {
     const sweepHost = document.createElement("div");
     sweepHost.style.cssText = "position:absolute;inset:0;overflow:hidden;border-radius:inherit;";
     frame.appendChild(sweepHost);
@@ -175,19 +202,42 @@ export function renderImageLogo(layer: ImageLogoLayer, ctx: LayerContext): { con
     const proxy = document.createElement("div");
     proxy.style.cssText = "position:absolute;inset:0;overflow:visible;pointer-events:none;";
     sweepHost.appendChild(proxy);
-    applySweepOverlay(proxy, ctx.tl, layer.lightSweep);
-    const sweep = proxy.querySelector<HTMLElement>(".mf-sweep");
-    if (sweep) {
+    applySweepOverlay(proxy, ctx.tl, {
+      at: num(sweep.at, 0),
+      durationMs: clamp(num(sweep.durationMs, 1200), 1, 600000),
+      angleDeg: num(sweep.angleDeg, 0),
+      color: safeColor(sweep.color, "#ffffff"),
+      widthFactor: clamp(num(sweep.widthFactor, 0.35), 0.05, 1),
+    });
+    const band = proxy.querySelector<HTMLElement>(".mf-sweep");
+    if (band) {
       // confine the band to the logo box
-      gsap.set(sweep, { top: "0%", bottom: "0%", height: "100%" });
+      gsap.set(band, { top: "0%", bottom: "0%", height: "100%" });
     }
   }
 
   return { content: host };
 }
 
+/** The intrinsic size of an image asset, or `undefined` — never a throw. */
+function safeIntrinsicSize(
+  ctx: LayerContext,
+  assetId: string
+): { width: number; height: number } | undefined {
+  try {
+    const size = ctx.assetIntrinsicSize(assetId);
+    if (!size) return undefined;
+    const width = num(size.width, 0);
+    const height = num(size.height, 0);
+    if (width <= 0 || height <= 0) return undefined;
+    return { width, height };
+  } catch {
+    return undefined;
+  }
+}
+
 function hexToRgba(hex: string, opacity: number): string {
-  if (!hex.startsWith("#")) return hex;
+  if (typeof hex !== "string" || !hex.startsWith("#")) return hex;
   let h = hex.slice(1);
   if (h.length === 3 || h.length === 4) {
     h = [...h].map((c) => c + c).join("");
@@ -195,6 +245,7 @@ function hexToRgba(hex: string, opacity: number): string {
   const r = parseInt(h.slice(0, 2), 16);
   const g = parseInt(h.slice(2, 4), 16);
   const b = parseInt(h.slice(4, 6), 16);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return hex;
   const a = h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1;
   return `rgba(${r}, ${g}, ${b}, ${(opacity * a).toFixed(3)})`;
 }

@@ -103,6 +103,28 @@ function makeTestEnv(dirs, extra = {}) {
 }
 
 /**
+ * The Electron launch arguments that keep the app's OWN storage out of the
+ * developer's real profile.
+ *
+ * THE LEAK THIS CLOSES: the engine's storage is isolated through the
+ * MOTIONFORGE_* environment variables, but the Studio's renderer keeps its
+ * state in `localStorage`, and Electron's `localStorage` lives in the app's
+ * `userData` DIRECTORY — which is the developer's real profile. A test run
+ * therefore wrote its render queue, its panel sizes and its workspace layout
+ * into the developer's Electron profile.
+ *
+ * `--user-data-dir` moves that directory into the throw-away tree, so the
+ * whole session is isolated and removed with everything else.
+ *
+ * @param {{root: string}} dirs
+ * @returns {string[]}
+ */
+function makeTestElectronArgs(dirs) {
+  if (!dirs || !dirs.root) return [];
+  return [`--user-data-dir=${path.join(dirs.root, 'electron-profile')}`];
+}
+
+/**
  * Remove the isolated tree. Safe to call twice and safe to call when the
  * directory was never created.
  *
@@ -132,6 +154,7 @@ module.exports = {
   ENV_KEYS,
   makeTestDirs,
   makeTestEnv,
+  makeTestElectronArgs,
   cleanupTestDirs,
   describeTestDirs,
 };

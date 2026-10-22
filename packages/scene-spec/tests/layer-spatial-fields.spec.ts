@@ -43,6 +43,28 @@ const LAYER_FIXTURES: Record<string, Record<string, unknown>> = {
   },
   lottie: { id: "lottie", type: "lottie", assetId: "asset-2" },
   foregroundFX: { id: "fx", type: "foregroundFX", effects: [{ kind: "vignette" }] },
+  chart: {
+    id: "chart",
+    type: "chart",
+    position: { xPct: 50, yPct: 50 },
+    data: [
+      { label: "A", value: 3 },
+      { label: "B", value: 5 },
+    ],
+  },
+  codeBlock: {
+    id: "snippet",
+    type: "codeBlock",
+    position: { xPct: 50, yPct: 50 },
+    code: "const a = 1;",
+  },
+  particleField: { id: "dust", type: "particleField" },
+  cta: {
+    id: "cta",
+    type: "cta",
+    position: { xPct: 50, yPct: 50 },
+    label: "Start",
+  },
 };
 
 const SPATIAL = {

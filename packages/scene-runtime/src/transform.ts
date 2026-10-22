@@ -208,8 +208,13 @@ export function resolveTransform(layer: SceneLayer, timeMs: number): ResolvedTra
   };
 
   const size = layer.size;
-  if (size?.widthPct !== undefined) resolved.widthPct = clamp(size.widthPct, 0, 400);
-  if (size?.heightPct !== undefined) resolved.heightPct = clamp(size.heightPct, 0, 400);
+  // `particleField` SHADOWS the universal layout-size bag with a numeric
+  // particle radius (it is full-bleed, so it has no layout box). Only the
+  // object shape carries a layout size.
+  if (typeof size === "object" && size !== null) {
+    if (size.widthPct !== undefined) resolved.widthPct = clamp(size.widthPct, 0, 400);
+    if (size.heightPct !== undefined) resolved.heightPct = clamp(size.heightPct, 0, 400);
+  }
 
   return resolved;
 }
@@ -256,7 +261,11 @@ export function radiusCss(layer: SceneLayer): string {
  * covering the frame.
  */
 export function isFullBleedLayer(layer: SceneLayer): boolean {
-  return layer.type === "background" || layer.type === "foregroundFX";
+  return (
+    layer.type === "background" ||
+    layer.type === "foregroundFX" ||
+    layer.type === "particleField"
+  );
 }
 
 /**

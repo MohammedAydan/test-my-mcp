@@ -1,7 +1,10 @@
 import { Component, For, Show, createMemo, createSignal, onCleanup, onMount } from 'solid-js';
 import { store } from '../../state/store.js';
 import type { StudioLayer } from '../../types.js';
+import { layerLayoutSize, layerVariant } from '../../types.js';
+import { updateCardVariant } from '../../services/card-variant.js';
 import { capturePointer } from '../../services/pointer-capture.js';
+import type { NewLayerKind } from '../../services/layer-factory.js';
 import { resolveCompositionSize } from './geometry.js';
 import { InlineTextEditor, type EditableField } from './InlineTextEditor.js';
 import { IconPencil } from '../icons/NleIcons.js';
@@ -94,8 +97,19 @@ export interface StageBox {
 type DragMode = 'none' | 'move' | 'resize' | 'rotate' | 'marquee' | 'pan';
 
 /** The captured state of one manipulation gesture. */
-interface Gesture {
-  layerId: string;
+/**
+ * The tool → layer-kind map for the CREATION tools.
+ *
+ * The Text tool and the Card tool create a layer when the user clicks the
+ * canvas. Every other tool (select, hand, razor) manipulates what is already
+ * there.
+ */
+const CREATION_TOOL_KINDS: Partial<Record<string, NewLayerKind>> = {
+  text: 'kineticText',
+  shape: 'card',
+};
+
+interface Gesture {  layerId: string;
   mode: 'move' | 'resize' | 'rotate';
   handle: string;
   box: LayerBox;
@@ -126,6 +140,18 @@ const ROTATE_STEM = 24;
 const ANCHOR_SIZE = 6;
 const SNAP_THRESHOLD_PX = 6;
 
+/**
+ * The layer kinds that paint the WHOLE canvas.
+ *
+ * They have no centre anchor and no meaningful box, so the gizmo never grabs
+ * them and the marquee never selects them — a background is SUPPOSED to
+ * cover everything.
+ */
+const FULL_BLEED_TYPES = new Set(['background', 'foregroundFX', 'particleField']);
+
+/** True when the layer paints the whole canvas. */
+const isFullBleed = (layer: StudioLayer): boolean => FULL_BLEED_TYPES.has(layer.type);
+
 /** The eight resize handles, in the gizmo's local frame (fractions of the box). */
 const HANDLE_LAYOUT: Array<{ k: string; fx: number; fy: number; cursor: string }> = [
   { k: 'nw', fx: -0.5, fy: -0.5, cursor: 'cursor-nwse-resize' },
@@ -153,6 +179,7 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
   const state = store.state;
 
   const [dragMode, setDragMode] = createSignal<DragMode>('none');
+  const [toolClick, setToolClick] = createSignal<Point | null>(null);
   const [activeGuides, setActiveGuides] = createSignal<SnapGuide[]>([]);
   const [marqueeRect, setMarqueeRect] = createSignal<Rect | null>(null);
   const [hoveredLayerId, setHoveredLayerId] = createSignal<string | null>(null);
@@ -253,7 +280,8 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
 
     let layoutWidth = 300;
     let layoutHeight = 100;
-    if (layer.type === 'background' || layer.type === 'foregroundFX') {
+    if (isFullBleed(layer)) {
+      // a full-bleed layer paints the WHOLE canvas — it has no layout box
       layoutWidth = comp.width;
       layoutHeight = comp.height;
     } else if (layer.type === 'kineticText') {
@@ -261,17 +289,27 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
       layoutWidth = Math.min(comp.width * 0.7, (layer.text?.length ?? 10) * size * 0.55);
       layoutHeight = size * 1.3;
     } else if (layer.type === 'card') {
-      const variantWidth = layer.variant?.widthPx;
+      const variantWidth = layerVariant(layer).widthPx;
       layoutWidth = typeof variantWidth === 'number' ? variantWidth : 360;
       layoutHeight = 120;
+    } else if (layer.type === 'chart') {
+      layoutWidth = Number(layer.widthPx ?? 760);
+      layoutHeight = Number(layer.heightPx ?? 420);
+    } else if (layer.type === 'codeBlock') {
+      layoutWidth = Number(layer.widthPx ?? 880);
+      layoutHeight = Math.max(80, layoutWidth * 0.42);
+    } else if (layer.type === 'cta') {
+      layoutWidth = Number(layer.widthPx ?? 320);
+      layoutHeight = Number(layer.heightPx ?? 76);
     } else if (layer.type === 'imageLogo' || layer.type === 'lottie') {
       layoutWidth = layer.widthPx ?? 200;
       layoutHeight = layer.heightPx ?? layoutWidth;
     }
 
     // an explicit layout size wins over the kind's default
-    if (layer.size?.widthPct !== undefined) layoutWidth = (layer.size.widthPct / 100) * comp.width;
-    if (layer.size?.heightPct !== undefined) layoutHeight = (layer.size.heightPct / 100) * comp.height;
+    const layout = layerLayoutSize(layer);
+    if (layout?.widthPct !== undefined) layoutWidth = (layout.widthPct / 100) * comp.width;
+    if (layout?.heightPct !== undefined) layoutHeight = (layout.heightPct / 100) * comp.height;
 
     return {
       cx,
@@ -336,7 +374,7 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
     const layerY: Array<{ val: number; label: string; kind: 'layer' }> = [];
     for (const layer of state.scene?.layers ?? []) {
       if (layer.id === ignoreLayerId) continue;
-      if (layer.type === 'background' || layer.type === 'foregroundFX') continue;
+      if (isFullBleed(layer)) continue;
       if (layer.visible === false) continue;
       const box = getLayerBox(layer);
       const label = layer.name ?? layer.id;
@@ -462,7 +500,7 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
     for (let i = layers.length - 1; i >= 0; i--) {
       const layer = layers[i];
       if (!layer) continue;
-      if (layer.type === 'background' || layer.type === 'foregroundFX') continue;
+      if (isFullBleed(layer)) continue;
       if (layer.visible === false) continue;
       const box = getLayerBox(layer);
       const dx = comp.x - box.cx;
@@ -686,12 +724,13 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
     const patch: Partial<StudioLayer> = {};
     const live: Record<string, number> = {};
 
+    const layout = layerLayoutSize(layer);
     const hasExplicitSize =
-      (layer.size?.widthPct !== undefined || layer.size?.heightPct !== undefined) &&
+      (layout?.widthPct !== undefined || layout?.heightPct !== undefined) &&
       layer.type !== 'card';
 
     if (hasExplicitSize) {
-      const size = { ...(layer.size ?? {}) };
+      const size = { ...(layout ?? {}) };
       if (horizontal) {
         const widthPct = Math.max(1, (targetLayoutW / m.compW) * 100);
         size.widthPct = widthPct;
@@ -718,7 +757,7 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
       }
     } else if (layer.type === 'card') {
       // a card's width lives in its variant; the live preview scales it
-      const variant = { ...(layer.variant ?? {}) };
+      const variant = { ...layerVariant(layer) };
       if (horizontal) variant.widthPx = Math.max(40, Math.round(targetLayoutW));
       if (vertical && typeof variant.heightPx === 'number') {
         variant.heightPx = Math.max(24, Math.round(targetLayoutH));
@@ -854,6 +893,22 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
       return;
     }
 
+    // THE CREATION TOOLS.
+    //
+    // The Text tool and the Card tool used to only ARM themselves: clicking
+    // the canvas with either one selected nothing and created nothing, which
+    // made them look broken. A creation tool now records the click and the
+    // layer appears WHERE THE USER CLICKED.
+    const creationKind = CREATION_TOOL_KINDS[state.activeTool];
+    if (creationKind) {
+      setToolClick(local);
+      setDragMode('marquee');
+      marqueeStart = local;
+      setMarqueeRect({ x: local.x, y: local.y, width: 0, height: 0 });
+      capturePointer(event.currentTarget as HTMLElement, event.pointerId);
+      return;
+    }
+
     const target = event.target as Element | null;
     const handle = target?.getAttribute?.('data-handle');
     if (handle) {
@@ -956,13 +1011,33 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
     setActiveGuides([]);
     setHud(null);
 
+    // THE CREATION TOOLS — a click (not a drag) creates the layer.
+    const click = toolClick();
+    setToolClick(null);
+    if (click) {
+      const kind = CREATION_TOOL_KINDS[state.activeTool];
+      if (kind) {
+        const comp = localToComp(click);
+        const metrics = getMetrics();
+        const xPct = metrics.stageW ? (comp.x / metrics.stageW) * 100 : 50;
+        const yPct = metrics.stageH ? (comp.y / metrics.stageH) * 100 : 50;
+        const id = store.addLayerOfKindAt(kind, xPct, yPct);
+        if (id) {
+          // the new layer becomes the selection, and the inspector shows it
+          store.selectLayer(id);
+          void store.executeSave().catch(() => undefined);
+        }
+        return;
+      }
+    }
+
     if (mode === 'marquee') {
       const m = marqueeRect();
       setMarqueeRect(null);
       if (m && m.width > 5 && m.height > 5 && state.scene?.layers) {
         const intersected: string[] = [];
         for (const layer of state.scene.layers) {
-          if (layer.type === 'background' || layer.type === 'foregroundFX') continue;
+          if (isFullBleed(layer)) continue;
           const box = getLayerBox(layer);
           if (
             box.cx - box.width / 2 < m.x + m.width &&
@@ -1000,15 +1075,25 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
 
   /* ── inline text editing ─────────────────────────────────────────────── */
 
+  /**
+   * Open the inline editor on a layer.
+   *
+   * A CARD opens the SAME editor as a text layer — the editor is not a
+   * second implementation, it is the same contenteditable, styled like the
+   * layer. The card's `variant.title` and `variant.body` are the two fields
+   * it edits, and the editor's field switcher offers exactly the ones the
+   * card's CURRENT treatment declares.
+   */
   const openEditor = (layer: StudioLayer) => {
     if (layer.type === 'kineticText') {
       setEditing({ layerId: layer.id, field: 'text' });
       return;
     }
     if (layer.type === 'card') {
-      const variant = layer.variant ?? {};
-      const field: EditableField =
-        typeof variant.title === 'string' && variant.title.length > 0 ? 'title' : 'body';
+      const variant = layerVariant(layer);
+      const hasTitle = typeof variant.title === 'string';
+      const hasBody = typeof variant.body === 'string';
+      const field: EditableField = hasTitle ? 'title' : hasBody ? 'body' : 'title';
       setEditing({ layerId: layer.id, field });
     }
   };
@@ -1043,12 +1128,14 @@ export const CanvasOverlay: Component<CanvasOverlayProps> = (props) => {
       if ((layer.text ?? '') === value) return;
       store.updateLayer(layer.id, { text: value }, `Edit text: ${layer.name ?? layer.id}`);
     } else {
-      const variant = { ...(layer.variant ?? {}) };
+      const variant = layerVariant(layer);
       if ((variant[field] ?? '') === value) return;
-      variant[field] = value;
+      // the card's variant is a DISCRIMINATED union — it is REBUILT, never
+      // spread, so the edit can never carry a key the treatment rejects
+      const next = updateCardVariant(variant, { [field]: value });
       store.updateLayer(
         layer.id,
-        { variant },
+        { variant: next },
         field === 'title' ? `Edit card title: ${layer.name ?? layer.id}` : `Edit card body: ${layer.name ?? layer.id}`
       );
     }

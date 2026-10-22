@@ -8,19 +8,20 @@
  *
  * WHAT IS MEASURED
  *   - the latency and the RESPONSE SIZE of every MCP tool call (bytes),
- *   - the `framesMeta[]` layout sidecar (per-layer bbox at 4 timestamps),
- *     the overlap / off-screen / text-overflow analysis,
+ *   - the LAYOUT sidecar (`get_layer_bounds`, zero rasterisation) CROSS-CHECKED
+ *     against the rasterised inspection (`inspect_scene_keyframes`, whose
+ *     `framesMeta` sidecar is written to the project as JSON),
+ *   - the STRICTNESS of the write path: what a hallucinated key costs,
  *   - the CROSS-PROCESS sync latency: the MCP server runs in its own process
  *     and writes the scene to the shared scene store; the Electron Studio
  *     (another process) has to notice it on its own,
  *   - the render latency and the `ffprobe` verdict on the exported MP4.
  *
- * THE REAL TOOL SURFACE (six tools, no more)
- *   get_motion_capabilities | init_creative_project | create_or_update_scene |
- *   inspect_scene_keyframes | open_live_timeline_preview | render_video
- *   There is NO bounds tool, NO render-scene tool and NO render-status tool:
- *   `inspect_scene_keyframes` is the only layout oracle and it costs a full
- *   frame render.
+ * THE TOOL SURFACE IS READ AT RUNTIME, NOT ASSUMED
+ *   The benchmark lists the tools the server advertises and measures every one
+ *   it can. It does not hard-code a count: the surface changed during the
+ *   benchmark's own lifetime, and a benchmark that asserts a stale count
+ *   would be lying.
  *
  * ISOLATION
  *   The engine is pointed at a throw-away tree through the environment
@@ -105,10 +106,8 @@ function run(bin, args) {
 /* ── the composition the agent authors ─────────────────────────────────── */
 
 /**
- * A small brand mark, written into the project workspace so the scene can
- * reference it as `vault:mf-mark.svg` (the engine copies it into the vault on
- * first use). An agent WITHOUT filesystem access could only reach this through
- * a `data:` URI — there is no MCP upload tool. That gap is recorded.
+ * A small brand mark. It is uploaded through `upload_asset` — the tool that
+ * exists so an agent can put bytes in the vault without a human.
  */
 const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <defs>
@@ -122,14 +121,28 @@ const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="25
 </svg>
 `;
 
-function buildScene() {
+const CODE_SNIPPET = [
+  "const scene = await mcp.callTool('create_or_update_scene', {",
+  "  name: 'MCP AI Production Showcase',",
+  "  durationMs: 8000,",
+  "});",
+  "const frames = await mcp.callTool('inspect_scene_keyframes', {",
+  "  at: [500, 2000, 4000, 6500],",
+  "});",
+].join('\n');
+
+/**
+ * The authored composition. `subheadY` is the one number the agent may have to
+ * change after it has SEEN the layout (see the iteration loop in main()).
+ */
+function buildScene(logoSrc, subheadY = 45) {
   return {
     schemaVersion: 1,
     id: SCENE_ID,
     name: SCENE_NAME,
     canvas: { shape: '16:9', scale: 1080 },
     durationMs: 8000,
-    assets: [{ id: 'mf-mark', kind: 'image', src: 'vault:mf-mark.svg', name: 'mf-mark.svg' }],
+    assets: [{ id: 'mf-mark', kind: 'image', src: logoSrc, name: 'mf-mark.svg' }],
     fonts: [
       { role: 'hero', family: 'Inter', provider: 'google', weights: [400, 800] },
       { role: 'headline', family: 'Inter', provider: 'google', weights: [400, 600] },
@@ -147,21 +160,37 @@ function buildScene() {
           variant: 'meshGradient',
           base: '#050914',
           blobs: [
-            { color: '#1d4ed8', xPct: 20, yPct: 24, radiusPct: 58, drift: 0.35 },
-            { color: '#7c3aed', xPct: 80, yPct: 32, radiusPct: 52, drift: 0.28 },
-            { color: '#0ea5e9', xPct: 52, yPct: 84, radiusPct: 44, drift: 0.22 },
+            { color: '#1d4ed8', xPct: 18, yPct: 22, radiusPct: 60, drift: 0.4 },
+            { color: '#7c3aed', xPct: 82, yPct: 30, radiusPct: 55, drift: 0.3 },
+            { color: '#0ea5e9', xPct: 55, yPct: 86, radiusPct: 48, drift: 0.25 },
           ],
         },
+      },
+      {
+        id: 'particles',
+        type: 'particleField',
+        at: 0,
+        duration: 8000,
+        trackIndex: 1,
+        count: 90,
+        pattern: 'float',
+        color: '#7dd3fc',
+        color2: '#a78bfa',
+        speed: 0.8,
+        size: 3,
+        opacity: 0.45,
+        seed: 42,
       },
       {
         id: 'logo',
         type: 'imageLogo',
         at: 200,
         duration: 7800,
-        trackIndex: 1,
+        trackIndex: 2,
         assetId: 'mf-mark',
         widthPx: 108,
-        position: { xPct: 50, yPct: 15 },
+        heightPx: 108,
+        position: { xPct: 50, yPct: 12 },
         mask: 'squircle',
         ring: { widthPx: 3, color: '#7dd3fc' },
         glow: { color: '#38bdf8', strength: 0.8 },
@@ -173,14 +202,14 @@ function buildScene() {
         type: 'kineticText',
         at: 500,
         duration: 7500,
-        trackIndex: 2,
+        trackIndex: 3,
         text: 'Ship motion graphics from a prompt',
         role: 'hero',
         sizePx: 92,
         lineHeight: 1.1,
         letterSpacingPx: -1,
         align: 'center',
-        position: { xPct: 50, yPct: 33 },
+        position: { xPct: 50, yPct: 31 },
         fill: {
           type: 'linear',
           angleDeg: 120,
@@ -206,13 +235,13 @@ function buildScene() {
         type: 'kineticText',
         at: 1500,
         duration: 6500,
-        trackIndex: 3,
-        text: 'MCP-authored  ·  deterministic frames  ·  eight seconds',
+        trackIndex: 4,
+        text: 'Six tools, one contract, zero renders by hand',
         role: 'headline',
-        sizePx: 38,
-        letterSpacingPx: 2,
+        sizePx: 34,
+        letterSpacingPx: 1,
         align: 'center',
-        position: { xPct: 50, yPct: 45 },
+        position: { xPct: 50, yPct: subheadY },
         fill: '#93c5fd',
         box: { maxWidthPct: 80 },
         animateBy: 'word',
@@ -220,17 +249,55 @@ function buildScene() {
         exit: { name: 'collapseMask', durationMs: 400 },
       },
       {
+        id: 'code',
+        type: 'codeBlock',
+        at: 2600,
+        duration: 2000,
+        trackIndex: 5,
+        position: { xPct: 28, yPct: 71 },
+        widthPx: 760,
+        language: 'typescript',
+        theme: 'midnight',
+        title: 'authoring.ts',
+        fontSize: 20,
+        showLineNumbers: true,
+        showChrome: true,
+        code: CODE_SNIPPET,
+        entrance: { name: 'smoothSlideUp', durationMs: 700 },
+        exit: { name: 'scaleDownFade', durationMs: 400 },
+      },
+      {
+        id: 'chart',
+        type: 'chart',
+        at: 2600,
+        duration: 2000,
+        trackIndex: 6,
+        position: { xPct: 72, yPct: 71 },
+        chartType: 'bar',
+        title: 'Frames per second',
+        widthPx: 640,
+        heightPx: 340,
+        accentColor: '#38bdf8',
+        showValues: true,
+        data: [
+          { label: 'MCP', value: 87 },
+          { label: 'Manual', value: 12 },
+        ],
+        entrance: { name: 'elasticScale', durationMs: 700 },
+        exit: { name: 'scaleDownFade', durationMs: 400 },
+      },
+      {
         id: 'card-a',
         type: 'card',
-        at: 2600,
-        duration: 2200,
-        trackIndex: 4,
-        position: { xPct: 28, yPct: 68 },
+        at: 4900,
+        duration: 1300,
+        trackIndex: 7,
+        position: { xPct: 28, yPct: 71 },
         variant: {
           variant: 'glassCard',
           title: 'Deterministic pipeline',
           body: 'Every frame is seeked, captured and piped to the encoder.',
-          widthPx: 540,
+          widthPx: 620,
           paddingPx: 34,
           radiusPx: 28,
           borderOpacity: 0.3,
@@ -247,51 +314,19 @@ function buildScene() {
         entrance: { name: 'smoothSlideUp', durationMs: 700 },
         exit: { name: 'scaleDownFade', durationMs: 420 },
         keyframes: [
-          { id: 'a-kf-1', timeMs: 2600, property: 'xPct', value: 21, easing: 'easeOut' },
-          { id: 'a-kf-2', timeMs: 3300, property: 'xPct', value: 28, easing: 'easeOut' },
-          { id: 'a-kf-3', timeMs: 2600, property: 'opacity', value: 0, easing: 'easeOut' },
-          { id: 'a-kf-4', timeMs: 3200, property: 'opacity', value: 1, easing: 'easeOut' },
-        ],
-      },
-      {
-        id: 'card-b',
-        type: 'card',
-        at: 4900,
-        duration: 2200,
-        trackIndex: 5,
-        position: { xPct: 72, yPct: 68 },
-        variant: {
-          variant: 'callout',
-          accentSide: 'right',
-          accentColor: '#38bdf8',
-          title: 'Six tools, one contract',
-          body: 'Capabilities, scenes, inspection, preview and render — over stdio.',
-          widthPx: 540,
-          paddingPx: 34,
-          radiusPx: 28,
-        },
-        filters: {
-          shadowBlur: 30,
-          shadowColor: '#020617',
-          cornerRadius: 28,
-          saturate: 110,
-        },
-        entrance: { name: '3dFlipIn', durationMs: 800 },
-        exit: { name: 'whipOutLeft', durationMs: 400 },
-        keyframes: [
-          { id: 'b-kf-1', timeMs: 4900, property: 'xPct', value: 79, easing: 'easeOut' },
-          { id: 'b-kf-2', timeMs: 5600, property: 'xPct', value: 72, easing: 'easeOut' },
-          { id: 'b-kf-3', timeMs: 4900, property: 'rotation', value: 4, easing: 'easeOut' },
-          { id: 'b-kf-4', timeMs: 5600, property: 'rotation', value: 0, easing: 'easeOut' },
+          { id: 'a-kf-1', timeMs: 4900, property: 'xPct', value: 21, easing: 'easeOut' },
+          { id: 'a-kf-2', timeMs: 5600, property: 'xPct', value: 28, easing: 'easeOut' },
+          { id: 'a-kf-3', timeMs: 4900, property: 'opacity', value: 0, easing: 'easeOut' },
+          { id: 'a-kf-4', timeMs: 5500, property: 'opacity', value: 1, easing: 'easeOut' },
         ],
       },
       {
         id: 'metric',
         type: 'card',
-        at: 6200,
-        duration: 1400,
-        trackIndex: 6,
-        position: { xPct: 50, yPct: 68 },
+        at: 4900,
+        duration: 1300,
+        trackIndex: 8,
+        position: { xPct: 72, yPct: 71 },
         variant: {
           variant: 'counter',
           from: 0,
@@ -303,17 +338,68 @@ function buildScene() {
           sizePx: 132,
         },
         entrance: { name: 'springPop', durationMs: 700 },
+        exit: { name: 'scaleDownFade', durationMs: 400 },
         keyframes: [
-          { id: 'm-kf-1', timeMs: 6200, property: 'scale', value: 0.62, easing: 'easeOut' },
-          { id: 'm-kf-2', timeMs: 6900, property: 'scale', value: 1, easing: 'easeOut' },
+          { id: 'm-kf-1', timeMs: 4900, property: 'scale', value: 0.62, easing: 'easeOut' },
+          { id: 'm-kf-2', timeMs: 5600, property: 'scale', value: 1, easing: 'easeOut' },
         ],
+      },
+      {
+        id: 'card-b',
+        type: 'card',
+        at: 6300,
+        duration: 900,
+        trackIndex: 9,
+        position: { xPct: 50, yPct: 71 },
+        variant: {
+          variant: 'callout',
+          accentSide: 'right',
+          accentColor: '#38bdf8',
+          title: 'One contract, six tools',
+          body: 'Capabilities, scenes, inspection, preview and render — over stdio.',
+          widthPx: 760,
+          paddingPx: 30,
+          radiusPx: 28,
+        },
+        filters: {
+          shadowBlur: 30,
+          shadowColor: '#020617',
+          cornerRadius: 28,
+          saturate: 110,
+        },
+        entrance: { name: '3dFlipIn', durationMs: 800 },
+        exit: { name: 'scaleDownFade', durationMs: 350 },
+        keyframes: [
+          { id: 'b-kf-1', timeMs: 6300, property: 'xPct', value: 57, easing: 'easeOut' },
+          { id: 'b-kf-2', timeMs: 7000, property: 'xPct', value: 50, easing: 'easeOut' },
+          { id: 'b-kf-3', timeMs: 6300, property: 'rotation', value: 4, easing: 'easeOut' },
+          { id: 'b-kf-4', timeMs: 7000, property: 'rotation', value: 0, easing: 'easeOut' },
+        ],
+      },
+      {
+        id: 'cta',
+        type: 'cta',
+        at: 7300,
+        duration: 700,
+        trackIndex: 10,
+        position: { xPct: 50, yPct: 71 },
+        label: 'Start shipping',
+        sublabel: 'motionforge.dev',
+        variant: 'primary',
+        accentColor: '#38bdf8',
+        icon: 'arrow',
+        widthPx: 380,
+        heightPx: 78,
+        labelSizePx: 30,
+        entrance: { name: 'springPop', durationMs: 600 },
+        sfx: [{ sfx: 'shimmer', offsetMs: 0, gain: 0.7 }],
       },
       {
         id: 'fgx',
         type: 'foregroundFX',
         at: 0,
         duration: 8000,
-        trackIndex: 7,
+        trackIndex: 11,
         effects: [
           { kind: 'vignette', strength: 0.42 },
           { kind: 'filmGrain', opacity: 0.05, sizePx: 2 },
@@ -353,12 +439,16 @@ async function callTool(client, name, args, timeoutMs = 180_000) {
   const imageParts = (result.content || []).filter((c) => c.type === 'image');
   const text = textParts.map((c) => c.text).join('\n');
   const imageBytes = imageParts.reduce((s, c) => s + Buffer.byteLength(c.data || '', 'utf8'), 0);
+  const structuredBytes = result.structuredContent
+    ? Buffer.byteLength(JSON.stringify(result.structuredContent), 'utf8')
+    : 0;
   const record = {
     tool: name,
     args: args,
     latencyMs: Math.round(ms),
     responseBytes: Buffer.byteLength(json, 'utf8'),
     textBytes: Buffer.byteLength(text, 'utf8'),
+    structuredBytes,
     imageBytes,
     imageCount: imageParts.length,
     isError: Boolean(result.isError),
@@ -367,10 +457,10 @@ async function callTool(client, name, args, timeoutMs = 180_000) {
   metrics.toolCalls.push(record);
   console.log(
     `  → ${name}  ${record.latencyMs} ms  ${record.responseBytes} B ` +
-      `(text ${record.textBytes} B, images ${record.imageBytes} B / ${record.imageCount})` +
+      `(text ${record.textBytes} B, structured ${record.structuredBytes} B, images ${record.imageBytes} B / ${record.imageCount})` +
       (record.isError ? '  [isError]' : '')
   );
-  return { record, text, result };
+  return { record, text, result, structured: result.structuredContent || null };
 }
 
 /* ── the layout analysis over the REAL framesMeta JSON ─────────────────── */
@@ -382,7 +472,7 @@ function overlapArea(a, b) {
 }
 
 /** Layers that legitimately cover the whole canvas are not "overlaps". */
-const FULL_BLEED_TYPES = new Set(['background', 'foregroundFX']);
+const FULL_BLEED_TYPES = new Set(['background', 'foregroundFX', 'particleField']);
 
 function analyseFrames(framesMeta) {
   const perFrame = [];
@@ -406,13 +496,7 @@ function analyseFrames(framesMeta) {
         if (FULL_BLEED_TYPES.has(a.type) || FULL_BLEED_TYPES.has(b.type)) continue;
         const area = overlapArea(a.bbox, b.bbox);
         if (area > 0) {
-          pairs.push({
-            a: a.id,
-            b: b.id,
-            areaPx2: Math.round(area),
-            aBox: a.bbox,
-            bBox: b.bbox,
-          });
+          pairs.push({ a: a.id, b: b.id, areaPx2: Math.round(area), aBox: a.bbox, bBox: b.bbox });
         }
       }
     }
@@ -436,6 +520,59 @@ function analyseFrames(framesMeta) {
     });
   }
   return perFrame;
+}
+
+/** Compare the cheap layout oracle against the rasterised sidecar. */
+function crossCheckBounds(boundsFrames, inspectedFrames) {
+  const diffs = [];
+  for (const bf of boundsFrames) {
+    const inf = inspectedFrames.find((f) => f.atMs === bf.atMs);
+    if (!inf) continue;
+    for (const bl of bf.layers || []) {
+      const il = (inf.layers || []).find((l) => l.id === bl.id);
+      if (!il) {
+        diffs.push({ atMs: bf.atMs, id: bl.id, max: null, note: 'missing in the inspection sidecar' });
+        continue;
+      }
+      const d = {
+        atMs: bf.atMs,
+        id: bl.id,
+        dx: Math.abs(bl.bbox.x - il.bbox.x),
+        dy: Math.abs(bl.bbox.y - il.bbox.y),
+        dw: Math.abs(bl.bbox.width - il.bbox.width),
+        dh: Math.abs(bl.bbox.height - il.bbox.height),
+      };
+      d.max = Math.max(d.dx, d.dy, d.dw, d.dh);
+      diffs.push(d);
+    }
+  }
+  return diffs;
+}
+
+/**
+ * The fix an agent applies after it has SEEN an overlap: push the LOWER of the
+ * two layers down by the overlap height plus a 24 px gutter.
+ *
+ * The bbox is in the camera-scaled space, so the shift is divided by the
+ * camera scale before it is turned back into a canvas percentage.
+ */
+function planLayoutFix(frames, scene) {
+  for (const frame of frames) {
+    for (const o of frame.overlaps || []) {
+      const upper = o.aBox.y <= o.bBox.y ? o.aBox : o.bBox;
+      const lowerId = o.aBox.y <= o.bBox.y ? o.b : o.a;
+      const lowerBox = o.aBox.y <= o.bBox.y ? o.bBox : o.aBox;
+      const layer = scene.layers.find((l) => l.id === lowerId);
+      if (!layer || !layer.position) continue;
+      const scale = frame.camera?.scale || 1;
+      const overlapPx = upper.y + upper.height - lowerBox.y;
+      const shiftDesign = (overlapPx + 24) / scale;
+      const newYPct = Math.round((layer.position.yPct + (shiftDesign / CANVAS_H) * 100) * 10) / 10;
+      if (newYPct > 88) continue;
+      return { layerId: lowerId, fromYPct: layer.position.yPct, toYPct: newYPct, overlapPx, atMs: frame.atMs };
+    }
+  }
+  return null;
 }
 
 /* ── the Studio side ───────────────────────────────────────────────────── */
@@ -504,19 +641,44 @@ async function main() {
     metrics.listToolsMs = now() - tTools;
     const toolNames = listed.tools.map((t) => t.name);
     metrics.advertisedTools = toolNames;
+    metrics.advertisedToolDescriptions = listed.tools.map((t) => ({
+      name: t.name,
+      title: t.title,
+      description: t.description,
+    }));
+    metrics.listToolsBytes = Buffer.byteLength(JSON.stringify(listed), 'utf8');
     console.log(`  advertised tools (${toolNames.length}): ${toolNames.join(', ')}`);
-    check(
-      'The server advertises exactly the six documented tools',
-      toolNames.length === 6,
-      toolNames.join(', ')
-    );
-    for (const missing of ['get_layer_bounds', 'render_scene', 'get_render_status']) {
-      check(`The tool "${missing}" does NOT exist (documented gap)`, !toolNames.includes(missing));
+    console.log(`  listTools() took ${metrics.listToolsMs} ms and ${metrics.listToolsBytes} B`);
+    for (const required of [
+      'get_motion_capabilities',
+      'init_creative_project',
+      'create_or_update_scene',
+      'inspect_scene_keyframes',
+      'open_live_timeline_preview',
+      'render_video',
+    ]) {
+      check(`The tool "${required}" is advertised`, toolNames.includes(required));
     }
+    const beyondSix = toolNames.filter(
+      (n) =>
+        ![
+          'get_motion_capabilities',
+          'init_creative_project',
+          'create_or_update_scene',
+          'inspect_scene_keyframes',
+          'open_live_timeline_preview',
+          'render_video',
+        ].includes(n)
+    );
+    note(
+      'The surface is bigger than the six the original brief names',
+      `${beyondSix.length} extra tool(s): ${beyondSix.join(', ')}`
+    );
 
     const caps = await callTool(client, 'get_motion_capabilities', {});
     metrics.getMotionCapabilitiesMs = caps.record.latencyMs;
-    const payloadText = caps.text.slice(caps.text.indexOf('=== FULL PAYLOAD ===') + '=== FULL PAYLOAD ==='.length);
+    const marker = '=== FULL PAYLOAD ===';
+    const payloadText = caps.text.slice(caps.text.indexOf(marker) + marker.length);
     let digest = null;
     try {
       digest = JSON.parse(payloadText);
@@ -526,21 +688,23 @@ async function main() {
     if (digest) {
       metrics.layerFieldGuideKeys = Object.keys(digest.layerFieldGuide || {});
       metrics.registries = digest.registries;
+      const layerTypes = digest.registries?.layerTypes || [];
       console.log(`  layerFieldGuide keys: ${metrics.layerFieldGuideKeys.join(', ')}`);
-      console.log(
-        `  layer types: ${(digest.registries?.layerTypes || []).join(', ')}`
-      );
+      console.log(`  layer types: ${layerTypes.join(', ')}`);
       check(
-        'The contract documents one entry per real layer kind',
-        metrics.layerFieldGuideKeys.length === 6,
-        metrics.layerFieldGuideKeys.join(', ')
+        'The contract documents exactly the layer kinds the schema declares',
+        metrics.layerFieldGuideKeys.length === layerTypes.length &&
+          layerTypes.every((t) => metrics.layerFieldGuideKeys.includes(t)),
+        `${layerTypes.length} kinds: ${layerTypes.join(', ')}`
       );
-      check(
-        'The contract has NO chart / codeBlock / particleField / cta layer kind',
-        !['chart', 'codeBlock', 'particleField', 'cta'].some((k) =>
-          (digest.registries?.layerTypes || []).includes(k)
-        ),
-        `layerTypes = ${(digest.registries?.layerTypes || []).join(', ')}`
+      metrics.missingKinds = ['chart', 'codeBlock', 'particleField', 'cta'].filter(
+        (k) => !layerTypes.includes(k)
+      );
+      note(
+        'The layer kinds the original brief called missing',
+        metrics.missingKinds.length === 0
+          ? 'chart, codeBlock, particleField and cta are all present now'
+          : `still missing: ${metrics.missingKinds.join(', ')}`
       );
       note(
         'minimalValidScene is shipped by the contract',
@@ -567,19 +731,62 @@ async function main() {
       projectPath
     );
 
-    // the brand mark: the ONLY way an agent can get a file into the vault
-    // without an upload tool is to write it into the project workspace.
-    const logoDir = path.join(projectPath, 'assets', 'images');
-    fs.mkdirSync(logoDir, { recursive: true });
-    fs.writeFileSync(path.join(logoDir, 'mf-mark.svg'), LOGO_SVG, 'utf8');
-    note(
-      'Brand mark written into the project workspace by hand',
-      'assets/images/mf-mark.svg — there is NO MCP tool that uploads a file into the vault'
+    /* ── 3. upload the brand mark ───────────────────────────────────── */
+    section('3. upload_asset — put the brand mark in the vault');
+    const upload = await callTool(client, 'upload_asset', {
+      name: 'mf-mark.svg',
+      kind: 'image',
+      projectPath,
+      contentText: LOGO_SVG,
+    });
+    metrics.uploadAssetMs = upload.record.latencyMs;
+    const logoSrc = (upload.structured && upload.structured.src) || '';
+    check(
+      'The asset landed in the vault with a usable src',
+      logoSrc.startsWith('vault:'),
+      `${logoSrc} (${upload.structured ? upload.structured.size : '?'} bytes)`
     );
 
-    /* ── 3. author the scene ────────────────────────────────────────── */
-    section('3. create_or_update_scene — author the 8-second composition');
-    const scene = buildScene();
+    const manifest = await callTool(client, 'project_asset_manifest', { projectPath });
+    metrics.projectAssetManifestMs = manifest.record.latencyMs;
+    check(
+      'The project manifest lists the uploaded asset',
+      /mf-mark\.svg/.test(manifest.text),
+      `${(manifest.structured?.assets || []).length} asset(s) known`
+    );
+
+    /* ── 4. the strictness probe ────────────────────────────────────── */
+    section('4. The strictness probe — what a hallucinated key costs');
+    const brokenScene = buildScene(logoSrc);
+    // the classic LLM mistake: `preset` instead of `entrance: { name }`,
+    // plus an invented key that no schema version has ever had
+    delete brokenScene.layers[3].entrance;
+    brokenScene.layers[3].preset = 'blurFadeIn';
+    brokenScene.layers[3].opacity2 = 3;
+    const broken = await callTool(
+      client,
+      'create_or_update_scene',
+      { ...brokenScene, projectPath },
+      120_000
+    );
+    metrics.strictnessProbeMs = broken.record.latencyMs;
+    metrics.strictnessProbeText = broken.text;
+    metrics.strictnessProbeIsError = broken.record.isError;
+    console.log(broken.text.split('\n').map((l) => `    ${l}`).join('\n'));
+    check(
+      'A hallucinated key is rejected with field-level issues',
+      broken.record.isError && /issue/i.test(broken.text),
+      `${broken.record.latencyMs} ms, ${broken.text.length} B of error text`
+    );
+    check(
+      'The error names the EXACT field paths to fix',
+      /layers\.3\.(preset|opacity2)/.test(broken.text),
+      (broken.text.match(/layers\.3\.[a-zA-Z0-9]+/g) || []).join(', ')
+    );
+
+    /* ── 5. author the scene ────────────────────────────────────────── */
+    section('5. create_or_update_scene — author the 8-second composition');
+    let scene = buildScene(logoSrc);
     metrics.scene = scene;
     const created = await callTool(
       client,
@@ -590,34 +797,136 @@ async function main() {
     metrics.createSceneMs = created.record.latencyMs;
     metrics.createSceneText = created.text;
     const createdOk = !created.record.isError && /scene (created|updated)/.test(created.text);
-    check(
-      'The scene was accepted and stored',
-      createdOk,
-      created.text.split('\n')[0]
-    );
-    // the warnings are the interesting part — keep them VERBATIM
+    check('The scene was accepted and stored', createdOk, created.text.split('\n')[0]);
     const warnBlock = created.text.includes('warning(s)')
       ? created.text.slice(created.text.indexOf('warning(s)'))
       : '';
     metrics.createSceneWarnings = warnBlock.trim() || '(no warnings returned)';
     console.log('  warnings[] verbatim:');
     console.log(
-      (warnBlock.trim() || '(none)')
-        .split('\n')
-        .map((l) => `    ${l}`)
-        .join('\n')
+      (warnBlock.trim() || '(none)').split('\n').map((l) => `    ${l}`).join('\n')
     );
     const sceneId = (created.text.match(/id "([^"]+)"/) || [])[1] || SCENE_ID;
     metrics.sceneId = sceneId;
     check('The stored scene id is the one the agent asked for', sceneId === SCENE_ID, sceneId);
+    check(
+      'The scene uses at least 6 layers and 5 distinct kinds',
+      scene.layers.length >= 6 && new Set(scene.layers.map((l) => l.type)).size >= 5,
+      `${scene.layers.length} layers, ${new Set(scene.layers.map((l) => l.type)).size} kinds`
+    );
 
-    /* ── 4. inspect the layout ──────────────────────────────────────── */
-    section('4. inspect_scene_keyframes — verify the layout');
+    /* ── 6. the static analysis ─────────────────────────────────────── */
+    section('6. analyze_scene — warnings, render cost, keyframe precedence');
+    const analysis = await callTool(client, 'analyze_scene', { sceneId });
+    metrics.analyzeSceneMs = analysis.record.latencyMs;
+    metrics.analyzeSceneText = analysis.text;
+    metrics.analyzeSceneStructured = analysis.structured;
+    console.log(analysis.text.split('\n').map((l) => `    ${l}`).join('\n'));
+    const warnings = (analysis.structured && analysis.structured.warnings) || [];
+    metrics.analyzeWarnings = warnings;
+    check(
+      'analyze_scene reports the warnings of the stored scene',
+      Array.isArray(warnings),
+      `${warnings.length} warning(s)`
+    );
+
+    /* ── 7. the layout oracle (iteration 1) ─────────────────────────── */
+    section('7. get_layer_bounds — the layout sidecar without rasterisation');
+    const bounds1 = await callTool(client, 'get_layer_bounds', { sceneId, at: INSPECT_AT }, 600_000);
+    metrics.getLayerBoundsMs = bounds1.record.latencyMs;
+    metrics.getLayerBoundsText = bounds1.text;
+    let boundsFrames = (bounds1.structured && bounds1.structured.frames) || [];
+    metrics.boundsFrames = boundsFrames;
+    console.log(
+      `  the tool measured ${boundsFrames.length} frame(s) in ${bounds1.structured?.elapsedMs ?? '?'} ms ` +
+        `(warm page: ${bounds1.structured?.warm ?? '?'})`
+    );
+    for (const f of boundsFrames) {
+      console.log(
+        `  @${String(f.atMs).padStart(4)} ms  camera scale ${f.camera?.scale?.toFixed?.(3)} ` +
+          `xPct ${f.camera?.xPct?.toFixed?.(2)} yPct ${f.camera?.yPct?.toFixed?.(2)}  ` +
+          `foreground [${(f.foreground || []).join(', ')}]  ` +
+          `offscreen ${(f.offscreen || []).length}  overlaps ${(f.overlaps || []).length}`
+      );
+      for (const l of f.layers || []) {
+        console.log(
+          `        ${l.id.padEnd(9)} (${l.type.padEnd(12)}) opacity ${l.opacity}  ` +
+            `bbox ${l.bbox.width}x${l.bbox.height}@${l.bbox.x},${l.bbox.y}` +
+            (l.textOverflow ? '  TEXT OVERFLOW' : '') +
+            (l.lifecyclePhase !== 'settled' ? `  mid-${l.lifecyclePhase} ${l.phaseProgressPct}%` : '')
+        );
+      }
+      for (const o of f.overlaps || []) {
+        console.log(`        OVERLAP ${o.a} x ${o.b} — ${Math.round(o.areaPx2)} px2`);
+      }
+    }
+    check(
+      'get_layer_bounds answered every requested timestamp',
+      boundsFrames.length === INSPECT_AT.length,
+      `${boundsFrames.length}/${INSPECT_AT.length}`
+    );
+
+    // the agent ITERATES: a measured overlap is fixed and the scene re-posted
+    const firstOverlaps = boundsFrames.flatMap((f) =>
+      (f.overlaps || []).map((o) => ({ atMs: f.atMs, ...o }))
+    );
+    metrics.firstPassOverlaps = firstOverlaps;
+    if (firstOverlaps.length > 0) {
+      const fix = planLayoutFix(boundsFrames, scene);
+      metrics.layoutFix = fix;
+      if (fix) {
+        console.log(
+          `  the agent sees ${firstOverlaps.length} overlap(s) and moves "${fix.layerId}" ` +
+            `from yPct ${fix.fromYPct} to ${fix.toYPct}`
+        );
+        const layer = scene.layers.find((l) => l.id === fix.layerId);
+        layer.position = { ...layer.position, yPct: fix.toYPct };
+        const reposted = await callTool(
+          client,
+          'create_or_update_scene',
+          { ...scene, projectPath },
+          180_000
+        );
+        metrics.repostMs = reposted.record.latencyMs;
+        check(
+          'The fixed scene was accepted on the second attempt',
+          !reposted.record.isError,
+          `${reposted.record.latencyMs} ms — ${reposted.text.split('\n')[0]}`
+        );
+        const bounds2 = await callTool(
+          client,
+          'get_layer_bounds',
+          { sceneId, at: INSPECT_AT },
+          600_000
+        );
+        metrics.getLayerBoundsSecondMs = bounds2.record.latencyMs;
+        boundsFrames = (bounds2.structured && bounds2.structured.frames) || [];
+        metrics.boundsFrames = boundsFrames;
+        const secondOverlaps = boundsFrames.flatMap((f) =>
+          (f.overlaps || []).map((o) => ({ atMs: f.atMs, ...o }))
+        );
+        metrics.secondPassOverlaps = secondOverlaps;
+        check(
+          'The re-measured layout has no overlap left',
+          secondOverlaps.length === 0,
+          secondOverlaps.length
+            ? secondOverlaps.map((o) => `@${o.atMs} ${o.a}x${o.b}`).join(', ')
+            : 'clean'
+        );
+      }
+    } else {
+      metrics.layoutFix = null;
+      note('The first authored layout already had no overlap', 'no iteration was needed');
+    }
+    metrics.finalScene = scene;
+
+    /* ── 8. the rasterised inspection ───────────────────────────────── */
+    section('8. inspect_scene_keyframes — the visual gate');
     const inspected = await callTool(
       client,
       'inspect_scene_keyframes',
       { sceneId, at: INSPECT_AT, projectPath },
-      300_000
+      900_000
     );
     metrics.inspectMs = inspected.record.latencyMs;
     metrics.inspectText = inspected.text;
@@ -631,7 +940,7 @@ async function main() {
       client,
       'inspect_scene_keyframes',
       { sceneId, at: INSPECT_AT, includeInlineImages: false },
-      300_000
+      900_000
     );
     metrics.inspectTextOnlyMs = textOnly.record.latencyMs;
     note(
@@ -640,49 +949,90 @@ async function main() {
         `(the inline JPEGs are ${inspected.record.imageBytes} B of that)`
     );
 
-    // the REAL framesMeta JSON — written to the project as a sidecar
+    // a WARM get_layer_bounds, for a fair comparison against the warm inspection
+    const boundsWarm = await callTool(
+      client,
+      'get_layer_bounds',
+      { sceneId, at: INSPECT_AT },
+      600_000
+    );
+    metrics.getLayerBoundsWarmMs = boundsWarm.record.latencyMs;
+
     const metaPath = path.join(projectPath, 'renders', 'stills', `${sceneId}-frames-meta.json`);
     let framesMeta = null;
     if (fs.existsSync(metaPath)) {
-      const sidecar = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      // the sidecar is `{ sceneId, generatedAt, frames: [...] }`
-      framesMeta = Array.isArray(sidecar) ? sidecar : (sidecar.frames ?? []);
+      const parsed = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      framesMeta = Array.isArray(parsed) ? parsed : parsed.frames;
       metrics.framesMetaPath = metaPath;
-      metrics.framesMetaSidecarKeys = Array.isArray(sidecar)
-        ? '(array)'
-        : Object.keys(sidecar).join(', ');
+      metrics.framesMetaEnvelope = { sceneId: parsed.sceneId, generatedAt: parsed.generatedAt };
     } else {
       check('The frames-meta.json sidecar was written to the project', false, metaPath);
     }
     if (framesMeta) {
-      const analysis = analyseFrames(framesMeta);
-      metrics.frameAnalysis = analysis;
+      const analysisFrames = analyseFrames(framesMeta);
+      metrics.frameAnalysis = analysisFrames;
       metrics.framesMetaRaw = framesMeta;
-      for (const f of analysis) {
+      for (const f of analysisFrames) {
         console.log(
-          `  @${String(f.atMs).padStart(4)} ms  camera scale ${f.camera?.scale} xPct ${f.camera?.xPct} ` +
-            `yPct ${f.camera?.yPct}  layers [${f.visibleLayerIds.join(', ')}]  ` +
-            `offscreen ${f.offscreen.length}  overflow ${f.textOverflow.length}  overlaps ${f.overlaps.length}`
+          `  @${String(f.atMs).padStart(4)} ms  camera scale ${f.camera?.scale?.toFixed?.(3)} ` +
+            `xPct ${f.camera?.xPct?.toFixed?.(2)} yPct ${f.camera?.yPct?.toFixed?.(2)}  ` +
+            `layers [${f.visibleLayerIds.join(', ')}]  offscreen ${f.offscreen.length}  ` +
+            `overflow ${f.textOverflow.length}  overlaps ${f.overlaps.length}`
         );
       }
-      const anyOffscreen = analysis.some((f) => f.offscreen.length > 0);
-      const anyOverflow = analysis.some((f) => f.textOverflow.length > 0);
-      const anyOverlap = analysis.some((f) => f.overlaps.length > 0);
-      check('No layer is off-canvas at any inspected frame', !anyOffscreen);
-      check('No text overflow at any inspected frame', !anyOverflow);
-      check('No unexpected layer overlap at any inspected frame', !anyOverlap);
-      const emptyForeground = analysis.filter((f) => !f.foreground || f.foreground.length === 0);
+      check(
+        'No layer is off-canvas at any inspected frame',
+        !analysisFrames.some((f) => f.offscreen.length > 0),
+        analysisFrames
+          .flatMap((f) => f.offscreen.map((o) => `@${f.atMs} ${o.id}`))
+          .join(', ') || 'none'
+      );
+      check(
+        'No text overflow at any inspected frame',
+        !analysisFrames.some((f) => f.textOverflow.length > 0)
+      );
+      check(
+        'No unexpected layer overlap at any inspected frame',
+        !analysisFrames.some((f) => f.overlaps.length > 0),
+        analysisFrames
+          .flatMap((f) => f.overlaps.map((o) => `@${f.atMs} ${o.a}x${o.b}`))
+          .join(', ') || 'no pair intersects'
+      );
+      const emptyForeground = analysisFrames.filter((f) => !f.foreground || f.foreground.length === 0);
       check(
         'Every inspected frame carries foreground content (no dead frame)',
         emptyForeground.length === 0,
-        emptyForeground.length ? `empty at ${emptyForeground.map((f) => f.atMs).join(', ')}` : 'all frames have content'
+        emptyForeground.length
+          ? `empty at ${emptyForeground.map((f) => f.atMs).join(', ')}`
+          : 'all frames have content'
       );
-      const clamped = analysis.filter((f) => f.camera?.clampedVoid);
-      check('The camera never had to clamp a void-exposing pose', clamped.length === 0);
+      check(
+        'The camera never had to clamp a void-exposing pose',
+        !analysisFrames.some((f) => f.camera?.clampedVoid)
+      );
+
+      const diffs = crossCheckBounds(boundsFrames, framesMeta);
+      metrics.boundsCrossCheck = diffs;
+      const worst = diffs.reduce((m, d) => Math.max(m, d.max || 0), 0);
+      metrics.boundsCrossCheckMaxDeltaPx = worst;
+      console.log(
+        `  bounds-vs-inspection max bbox delta: ${worst} px over ${diffs.length} layer/frame pairs`
+      );
+      check(
+        'The cheap layout oracle agrees with the rasterised inspection',
+        worst <= 1,
+        `max delta ${worst} px`
+      );
+      note(
+        'get_layer_bounds vs inspect_scene_keyframes (same four timestamps)',
+        `${metrics.getLayerBoundsWarmMs} ms vs ${metrics.inspectMs} ms ` +
+          `(${(metrics.inspectMs / Math.max(1, metrics.getLayerBoundsWarmMs)).toFixed(1)}x slower, ` +
+          `${inspected.record.imageBytes} B of JPEG avoided)`
+      );
     }
 
-    /* ── 5. the live cross-process sync ─────────────────────────────── */
-    section('5. Cross-process sync — the Electron Studio sees the MCP scene');
+    /* ── 9. the live cross-process sync ─────────────────────────────── */
+    section('9. Cross-process sync — the Electron Studio sees the MCP scene');
     const mainPath = path.join(ROOT, 'packages', 'desktop', 'out', 'main', 'index.js');
     if (!fs.existsSync(mainPath)) {
       throw new Error(`Desktop bundle missing at ${mainPath}. Run: npm run build -w @motionforge/desktop`);
@@ -715,8 +1065,8 @@ async function main() {
 
     // (a) the Project Bin must notice the scene the MCP process wrote to disk
     const tBin = now();
-    let binItem = null;
-    const binDeadline = now() + 20_000;
+    let binItem = 0;
+    const binDeadline = now() + 30_000;
     while (now() < binDeadline) {
       binItem = await page
         .locator(`.mf-bin-item[data-scene-id="${sceneId}"]`)
@@ -740,7 +1090,7 @@ async function main() {
     }
     let studioSceneId = null;
     let studioSceneName = null;
-    const openDeadline = now() + 20_000;
+    const openDeadline = now() + 30_000;
     while (now() < openDeadline) {
       const s = await page.evaluate(() => ({
         id: window.store?.state?.sceneId ?? null,
@@ -784,7 +1134,7 @@ async function main() {
       `${updated.record.latencyMs} ms`
     );
     let liveName = null;
-    const liveDeadline = now() + 20_000;
+    const liveDeadline = now() + 30_000;
     while (now() < liveDeadline) {
       liveName = await page.evaluate(() => window.store?.state?.scene?.name ?? null);
       if (liveName === `${SCENE_NAME} v2`) break;
@@ -797,14 +1147,16 @@ async function main() {
       liveName === `${SCENE_NAME} v2`,
       `"${liveName}" after ${metrics.liveUpdateMs} ms`
     );
+    // put the name back so the exported composition and the screenshot agree
+    await callTool(client, 'create_or_update_scene', { ...scene, projectPath }, 180_000);
+    await page.waitForTimeout(1500);
 
     // (d) the screenshot
     fs.mkdirSync(REPO_SCREENSHOTS, { recursive: true });
     await page.evaluate(() => {
-      const s = window.store?.state;
-      if (s?.playhead !== undefined) window.store.setPlayhead?.(2200);
+      if (typeof window.store?.setPlayhead === 'function') window.store.setPlayhead(3400);
     });
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(1800);
     await page.screenshot({ path: SCREENSHOT_PATH });
     const shotStat = fs.statSync(SCREENSHOT_PATH);
     metrics.screenshotPath = SCREENSHOT_PATH;
@@ -816,23 +1168,48 @@ async function main() {
     );
     metrics.pageErrors = pageErrors;
 
-    /* ── 6. the render ──────────────────────────────────────────────── */
-    section('6. render_video — export the MP4');
+    /* ── 10. the render ─────────────────────────────────────────────── */
+    section('10. render_video — export the MP4');
     const tRender = now();
-    const rendered = await callTool(
+    const queued = await callTool(
       client,
       'render_video',
-      { sceneId, quality: 'production', waitMaxSec: 900 },
-      1_500_000
+      { sceneId, quality: 'production', wait: false },
+      120_000
     );
-    metrics.renderMs = now() - tRender;
-    metrics.renderText = rendered.text;
-    const mp4Path = (rendered.text.match(/file: (.+)/) || [])[1];
-    check(
-      'The production render succeeded',
-      rendered.text.includes('render SUCCEEDED'),
-      rendered.text.split('\n').slice(0, 6).join(' | ')
+    metrics.renderEnqueueMs = queued.record.latencyMs;
+    const jobId =
+      (queued.structured && queued.structured.jobId) ||
+      (queued.text.match(/render (\S+) queued/) || [])[1];
+    check('The render was queued and a jobId came back', Boolean(jobId), String(jobId));
+
+    let status = null;
+    let polls = 0;
+    const renderDeadline = now() + 1_500_000;
+    while (now() < renderDeadline) {
+      const poll = await callTool(client, 'get_render_status', { jobId }, 120_000);
+      polls++;
+      status = poll.structured || {};
+      if (status.status === 'succeeded' || status.status === 'failed') break;
+      await sleep(5000);
+    }
+    metrics.renderPolls = polls;
+    metrics.renderStatus = status;
+    metrics.renderWallMs = now() - tRender;
+    console.log(
+      `  render finished: ${status.status} after ${Math.round(metrics.renderWallMs / 1000)} s ` +
+        `(${polls} status polls)`
     );
+    check('The production render succeeded', status.status === 'succeeded', String(status.status));
+
+    const result = await callTool(client, 'get_render_result', { jobId }, 120_000);
+    metrics.getRenderResultMs = result.record.latencyMs;
+    metrics.getRenderResultText = result.text;
+    metrics.getRenderResultStructured = result.structured;
+    console.log(result.text.split('\n').map((l) => `    ${l}`).join('\n'));
+    const mp4Path =
+      (result.structured && result.structured.outputPath) ||
+      (result.text.match(/file: (.+)/) || [])[1];
     if (mp4Path && fs.existsSync(mp4Path)) {
       fs.mkdirSync(REPO_RENDERS, { recursive: true });
       fs.copyFileSync(mp4Path, VIDEO_PATH);
@@ -844,8 +1221,8 @@ async function main() {
       check('The MP4 was exported to renders/', false, `render file not found: ${mp4Path}`);
     }
 
-    /* ── 7. ffprobe ──────────────────────────────────────────────────── */
-    section('7. ffprobe — the verdict on the exported file');
+    /* ── 11. ffprobe ────────────────────────────────────────────────── */
+    section('11. ffprobe — the verdict on the exported file');
     if (fs.existsSync(VIDEO_PATH)) {
       const probe = run('ffprobe', [
         '-v', 'error',
@@ -857,21 +1234,20 @@ async function main() {
       metrics.ffprobe = probe;
       console.log(probe);
       const hasVideo = /codec_name=h264/.test(probe);
-      const hasAudio = /codec_name=aac/.test(probe);
-      const audioStream = /codec_type=audio/.test(probe);
+      const hasAudio = /codec_type=audio/.test(probe) && /codec_name=aac/.test(probe);
       check('The MP4 carries an H.264 video stream', hasVideo);
-      check('The MP4 carries an AAC AUDIO stream (the SFX cues were mixed)', hasAudio && audioStream);
+      check('The MP4 carries an AAC AUDIO stream (the SFX cues were mixed)', hasAudio);
       const dims = probe.match(/width=(\d+)/);
       const height = probe.match(/height=(\d+)/);
       check(
         'The MP4 is 1920x1080',
-        dims && dims[1] === '1920' && height && height[1] === '1080',
+        Boolean(dims && dims[1] === '1920' && height && height[1] === '1080'),
         `${dims ? dims[1] : '?'}x${height ? height[1] : '?'}`
       );
     }
 
-    /* ── 8. the preview tool (the sixth one) ────────────────────────── */
-    section('8. open_live_timeline_preview — the sixth tool');
+    /* ── 12. the live preview ───────────────────────────────────────── */
+    section('12. open_live_timeline_preview — the interactive scrubber');
     const preview = await callTool(client, 'open_live_timeline_preview', { sceneId });
     metrics.previewText = preview.text;
     check(
@@ -897,30 +1273,28 @@ async function main() {
     cleanupTestDirs(testDirs);
     console.log(`  removed ${testDirs.root}`);
     fs.mkdirSync(path.dirname(METRICS_PATH), { recursive: true });
-    fs.writeFileSync(
-      METRICS_PATH,
-      JSON.stringify({ metrics, results, failures }, null, 2),
-      'utf8'
-    );
+    fs.writeFileSync(METRICS_PATH, JSON.stringify({ metrics, results, failures }, null, 2), 'utf8');
     console.log(`  metrics written to ${METRICS_PATH}`);
   }
 
   console.log('\n================================================================');
   console.log(`=== ${results.filter((r) => r.ok).length}/${results.length} checks passed ===`);
   console.log('================================================================');
-  const table = metrics.toolCalls
-    .map(
-      (t) =>
-        `| ${t.tool} | ${t.latencyMs} ms | ${t.responseBytes} B | ${t.textBytes} B | ${t.imageBytes} B |`
-    )
-    .join('\n');
-  console.log('\n| tool | latency | response bytes | text bytes | image bytes |');
-  console.log('| --- | --- | --- | --- | --- |');
-  console.log(table);
+  console.log('\n| tool | latency | response bytes | text bytes | structured bytes | image bytes |');
+  console.log('| --- | --- | --- | --- | --- | --- |');
+  for (const t of metrics.toolCalls) {
+    console.log(
+      `| ${t.tool} | ${t.latencyMs} ms | ${t.responseBytes} B | ${t.textBytes} B | ${t.structuredBytes} B | ${t.imageBytes} B |`
+    );
+  }
   process.exit(failures > 0 ? 1 : 0);
 }
 
-main().catch((error) => {
-  console.error('FATAL', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('FATAL', error);
+    process.exit(1);
+  });
+}
+
+module.exports = { buildScene, LOGO_SVG, SCENE_ID, SCENE_NAME };

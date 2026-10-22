@@ -92,11 +92,34 @@ async function connect(): Promise<Client> {
 }
 
 describe("MCP contract over a live client session", () => {
-  it("exposes EXACTLY the 6 protocol tools — no more, no fewer", async () => {
+  it("exposes the full protocol tool surface — the original six plus the seven the audit added", async () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(13);
+    // the original six are all still there, unchanged in name
+    for (const name of [
+      "get_motion_capabilities",
+      "init_creative_project",
+      "create_or_update_scene",
+      "inspect_scene_keyframes",
+      "open_live_timeline_preview",
+      "render_video",
+    ]) {
+      expect(tools.map((t) => t.name)).toContain(name);
+    }
+    // …and the seven new ones
+    for (const name of [
+      "render_scene",
+      "get_layer_bounds",
+      "get_render_status",
+      "get_render_result",
+      "analyze_scene",
+      "upload_asset",
+      "project_asset_manifest",
+    ]) {
+      expect(tools.map((t) => t.name)).toContain(name);
+    }
   });
 
   it("advertises the REAL SceneSpec schema, not an opaque bag", async () => {
@@ -165,9 +188,9 @@ describe("MCP contract over a live client session", () => {
     expect(parsed.minimalValidScene).toBeDefined();
     expect(parsed.nestedShapeNotes).toBeDefined();
 
-    // …and the tool count is still exactly 6
+    // …and the tool count is still exactly 13
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(13);
   });
 });
 
@@ -490,6 +513,223 @@ describe("render_video", () => {
     expect(result.isError).toBeUndefined();
     expect(text).toContain("render SUCCEEDED");
     expect(text).toContain("[auto-sync] FAILED to file");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seven tools the production audit added
+// ---------------------------------------------------------------------------
+
+describe("get_layer_bounds", () => {
+  it("returns the layout sidecar WITHOUT any rasterisation", async () => {
+    const spy = vi.spyOn(engineClient, "layerBoundsAt").mockResolvedValue({
+      sceneId: "scene-01",
+      canvas: { width: 1920, height: 1080 },
+      elapsedMs: 42,
+      warm: true,
+      frames: [
+        {
+          atMs: 1000,
+          camera: { scale: 1.1, xPct: 50, yPct: 50, roll: 0, yaw: 0, pitch: 0, clampedVoid: false },
+          layers: [
+            {
+              id: "headline",
+              type: "kineticText",
+              lifecyclePhase: "settled",
+              phaseProgressPct: 0,
+              opacity: 1,
+              bbox: { x: 10, y: 20, width: 300, height: 80 },
+              textOverflow: false,
+            },
+          ],
+          foreground: ["headline"],
+          overlaps: [{ a: "headline", b: "subhead", areaPx2: 120 }],
+          offscreen: [],
+        },
+      ],
+    });
+
+    const { handleGetLayerBounds } = await import("../src/index.js");
+    const result = await handleGetLayerBounds({ sceneId: "scene-01", at: [1000] });
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+
+    expect(spy).toHaveBeenCalledWith("scene-01", [1000]);
+    expect(text).toContain("no rasterisation");
+    expect(text).toContain("42 ms");
+    expect(text).toContain("headline");
+    expect(text).toContain("OVERLAPS");
+    // the machine-readable payload rides along
+    expect(result.structuredContent?.frames).toBeDefined();
+    expect((result.structuredContent?.frames as unknown[]).length).toBe(1);
+  });
+
+  it("accepts `timesMs` as an alias of `at`", async () => {
+    const spy = vi.spyOn(engineClient, "layerBoundsAt").mockResolvedValue({
+      sceneId: "scene-01",
+      canvas: { width: 1920, height: 1080 },
+      elapsedMs: 10,
+      warm: true,
+      frames: [],
+    });
+    const { handleGetLayerBounds } = await import("../src/index.js");
+    await handleGetLayerBounds({ sceneId: "scene-01", timesMs: [0, 500] });
+    expect(spy).toHaveBeenCalledWith("scene-01", [0, 500]);
+  });
+});
+
+describe("render_video with wait:false", () => {
+  it("returns a job id IMMEDIATELY so a long render cannot outlast the client timeout", async () => {
+    vi.spyOn(engineClient, "enqueueRender").mockResolvedValue({ jobId: "job9", status: "queued" });
+    vi.spyOn(engineClient, "renderJob").mockResolvedValue({
+      id: "job9",
+      sceneId: "scene-01",
+      quality: "production",
+      status: "queued",
+      progress: 0,
+    });
+
+    const { handleRenderVideo } = await import("../src/index.js");
+    const result = await handleRenderVideo({ sceneId: "scene-01", quality: "production", wait: false });
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+
+    expect(text).toContain("job9");
+    expect(text).toContain("get_render_status");
+    expect(result.structuredContent?.jobId).toBe("job9");
+    expect(result.structuredContent?.status).toBe("queued");
+  });
+});
+
+describe("get_render_status / get_render_result", () => {
+  it("reports the job status and progress", async () => {
+    vi.spyOn(engineClient, "renderJob").mockResolvedValue({
+      id: "job1",
+      sceneId: "scene-01",
+      quality: "draft",
+      status: "running",
+      progress: 0.42,
+    });
+    const { handleGetRenderStatus } = await import("../src/index.js");
+    const result = await handleGetRenderStatus({ jobId: "job1" });
+    expect(result.structuredContent?.status).toBe("running");
+    expect(result.structuredContent?.progress).toBe(0.42);
+  });
+
+  it("returns the ffprobe metadata of a finished export", async () => {
+    vi.spyOn(engineClient, "renderResult").mockResolvedValue({
+      jobId: "job1",
+      sceneId: "scene-01",
+      quality: "production",
+      status: "succeeded",
+      progress: 1,
+      outputPath: "/data/renders/production-scene-01.mp4",
+      probe: {
+        path: "/data/renders/production-scene-01.mp4",
+        sizeBytes: 2_425_692,
+        durationSec: 8,
+        format: "mov,mp4,m4a",
+        bitRate: 2_338_553,
+        streams: [
+          { index: 0, type: "video", codec: "h264", width: 1920, height: 1080, fps: 60 },
+          { index: 1, type: "audio", codec: "aac", sampleRate: 48000, channels: 1 },
+        ],
+      },
+    });
+    const { handleGetRenderResult } = await import("../src/index.js");
+    const result = await handleGetRenderResult({ jobId: "job1" });
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(text).toContain("video h264 1920x1080 @60fps");
+    expect(text).toContain("audio aac 48000Hz 1ch");
+    expect(result.structuredContent?.probe).toBeDefined();
+  });
+});
+
+describe("analyze_scene", () => {
+  it("reports the cost estimate, the warnings and the keyframe precedence", async () => {
+    vi.spyOn(engineClient, "analyzeScene").mockResolvedValue({
+      sceneId: "scene-01",
+      layerCount: 6,
+      durationMs: 8000,
+      warnings: [{ code: "CAMERA_VIEWPORT_EXCEEDS_CANVAS", path: "camera.keyframes.0", message: "too far out" }],
+      cost: {
+        perFrameMultiplier: 2.61,
+        estimatedFrameMs: 652,
+        estimatedTotalMs: 313_000,
+        frames: 480,
+        workerBudget: 1,
+        heavyEffects: [
+          {
+            layerId: "bg",
+            layerType: "background",
+            effect: "meshGradient",
+            multiplier: 1.95,
+            reason: "a blurred full-frame gradient is re-rasterised on every frame",
+          },
+        ],
+        host: { cpus: 2, totalMemGb: 3.8, softwareRasterised: true },
+        notes: [],
+      },
+      keyframePrecedence: {
+        canonical: "keyframes",
+        legacy: "tracks",
+        rule: "the flat `keyframes` array is canonical and wins",
+        conflicts: [
+          { layerId: "title", canonicalProperties: ["xPct"], legacyProperties: ["position.xPct"] },
+        ],
+      },
+    });
+
+    const { handleAnalyzeScene } = await import("../src/index.js");
+    const result = await handleAnalyzeScene({ sceneId: "scene-01" });
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+
+    expect(text).toContain("2.61x per frame");
+    expect(text).toContain("meshGradient");
+    expect(text).toContain("CAMERA_VIEWPORT_EXCEEDS_CANVAS");
+    expect(text).toContain("the flat `keyframes` array is canonical and wins");
+    expect(text).toContain("carries BOTH arrays");
+  });
+});
+
+describe("upload_asset", () => {
+  it("puts a text asset into the vault and tells the agent how to reference it", async () => {
+    const ingest = vi.spyOn(engineClient, "ingestAsset").mockResolvedValue({
+      id: "logo.svg",
+      name: "logo.svg",
+      src: "vault:logo.svg",
+      kind: "image",
+      size: 128,
+      mimeType: "image/svg+xml",
+    });
+    const { handleUploadAsset } = await import("../src/index.js");
+    const result = await handleUploadAsset({ name: "logo.svg", contentText: "<svg/>" });
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+
+    expect(ingest).toHaveBeenCalled();
+    expect(text).toContain("vault:logo.svg");
+    expect(text).toContain("scene.assets");
+  });
+
+  it("refuses a call with no content at all", async () => {
+    const { handleUploadAsset } = await import("../src/index.js");
+    const result = await handleUploadAsset({ name: "logo.svg" });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("contentBase64");
+  });
+});
+
+describe("project_asset_manifest", () => {
+  it("lists the project's assets and the manifest state", async () => {
+    vi.spyOn(engineClient, "projectManifest").mockResolvedValue({
+      ok: true,
+      manifest: { name: "job" },
+      issues: [],
+      assets: [{ id: "logo.svg", name: "logo.svg", kind: "image", src: "vault:logo.svg", size: 128 }],
+    });
+    const { handleProjectAssetManifest } = await import("../src/index.js");
+    const result = await handleProjectAssetManifest({ projectPath: "/tmp/job" });
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(text).toContain("manifest: valid");
+    expect(text).toContain("logo.svg");
   });
 });
 

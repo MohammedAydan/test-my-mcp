@@ -7,11 +7,17 @@ import { readFile } from "node:fs/promises";
 import {
   createEngineCore,
   initCreativeProject,
+  readProjectManifest,
   saveFramesMetaToDisk,
   saveRenderToDisk,
   saveStillsToDisk,
   type EngineCore,
 } from "@motionforge/core-engine";
+import type {
+  RenderResultReport,
+  SceneAnalysisReport,
+  SceneBoundsReport,
+} from "@motionforge/scene-spec";
 
 export const ENGINE_URL = "in-process";
 
@@ -232,6 +238,83 @@ export const engineClient = {
       mp4Base64: bytes.toString("base64"),
       sceneId: job.sceneId,
       quality: job.quality,
+    };
+  },
+
+  /**
+   * The ZERO-RASTERISATION layout report.
+   *
+   * The point of this call: the numbers a layout check needs, WITHOUT paying
+   * for a screenshot per timestamp. `inspect_scene_keyframes` rasterises every
+   * frame it measures; this only measures.
+   */
+  layerBoundsAt: async (sceneId: string, timesMs: number[]): Promise<SceneBoundsReport> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.getLayerBoundsAt(sceneId, timesMs);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? 404, error.message, error.issues);
+    }
+  },
+
+  /** Static + dynamic analysis: warnings, the render-cost estimate, keyframe precedence. */
+  analyzeScene: async (sceneId: string): Promise<SceneAnalysisReport> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.analyzeScene(sceneId);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? 404, error.message, error.issues);
+    }
+  },
+
+  /** The finished render plus its ffprobe metadata. */
+  renderResult: async (jobId: string): Promise<RenderResultReport> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.getRenderResult(jobId);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? 404, error.message, error.issues);
+    }
+  },
+
+  /** Put a file into the engine's asset vault (and into the project's asset tree). */
+  ingestAsset: async (
+    bytes: Buffer,
+    name: string,
+    kind?: string,
+    projectPath?: string
+  ): Promise<{ id: string; name: string; src: string; kind: string; size: number; mimeType: string }> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.ingestAsset(bytes, name, kind, projectPath);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? 400, error.message, error.issues);
+    }
+  },
+
+  /** The project's manifest + the assets it knows about. */
+  projectManifest: async (
+    projectPath: string
+  ): Promise<{
+    ok: boolean;
+    manifest: unknown;
+    issues: string[];
+    assets: Array<{ id: string; name: string; kind: string; src: string; size: number }>;
+  }> => {
+    const core = await getInProcessCore();
+    const read = await readProjectManifest(projectPath);
+    const assets = await core.listAssets(projectPath);
+    return {
+      ok: read.ok,
+      manifest: read.ok ? read.manifest : null,
+      issues: read.ok ? [] : read.issues,
+      assets: assets.map((a) => ({
+        id: a.id,
+        name: a.name,
+        kind: a.kind,
+        src: a.src,
+        size: a.size,
+      })),
     };
   },
 };

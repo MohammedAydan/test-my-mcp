@@ -119,6 +119,10 @@
   --mf-kind-imageLogo: #f59e0b;
   --mf-kind-lottie: #22c55e;
   --mf-kind-foregroundFX: #3b82f6;
+  --mf-kind-chart: #a78bfa;
+  --mf-kind-codeBlock: #22d3ee;
+  --mf-kind-particleField: #e879f9;
+  --mf-kind-cta: #a3e635;
 
   /* ---------------------------------------------------------------------
      Legacy aliases.

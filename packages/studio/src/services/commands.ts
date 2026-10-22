@@ -1,6 +1,7 @@
 import { store } from '../state/store.js';
 import type { StudioScene } from '../types.js';
 import { api } from '../api.js';
+import { startRenderJob } from './render-queue.js';
 import { applyTimelineFit } from '../components/timeline/TimelinePanel.js';
 
 /**
@@ -32,12 +33,13 @@ export interface Command {
 
 /** A brand-new composition: a dark background and a title. */
 export function createDefaultScene(): StudioScene {
+  const durationMs = 8000;
   return {
     schemaVersion: 1,
     id: `scene-${Date.now().toString(36)}`,
     name: 'Untitled Composition',
     canvas: { shape: '16:9', scale: 1080 },
-    durationMs: 8000,
+    durationMs,
     assets: [],
     fonts: [],
     layers: [
@@ -46,6 +48,11 @@ export function createDefaultScene(): StudioScene {
         type: 'background',
         variant: { variant: 'solid', color: '#05070d' },
         at: 0,
+        // FULL-BLEED: the background spans the WHOLE composition, so it gets
+        // an explicit INTEGER duration equal to the composition length — never
+        // `null` and never the schema's 1200 ms default (which would leave the
+        // rest of the composition on the void).
+        duration: durationMs,
       },
       {
         id: 'title',
@@ -90,8 +97,10 @@ async function renderScene(quality: 'draft' | 'production'): Promise<void> {
     return;
   }
   try {
-    const res = await api.startRender(store.state.sceneId, quality);
-    store.addToast(`Render queued (job ${res.jobId})`, 'success');
+    // The job is published into the GLOBAL queue, so the status bar and the
+    // command palette see it even after the modal is closed.
+    const jobId = await startRenderJob(store.state.sceneId, quality);
+    store.addToast(`Render queued (job ${jobId})`, 'success');
     store.setActiveModal('render');
   } catch (err) {
     store.addToast(`Render failed to start: ${(err as Error).message}`, 'error');
@@ -211,6 +220,38 @@ export const commands: Command[] = [
   },
 
   /* ── Layer ────────────────────────────────────────────────────────────── */
+  {
+    id: 'layer.add',
+    title: 'Add Layer…',
+    category: 'Layer',
+    run: () => {
+      if (!store.state.scene) {
+        store.addToast('Load a composition before adding layers', 'warning');
+        return;
+      }
+      // the modal that owns the layer templates (Text / Card / Background /
+      // Image / Lottie / Effect Overlay) — it had NO entry point at all
+      store.setActiveModal('add-layer');
+    },
+  },
+  {
+    id: 'layer.add-text',
+    title: 'Add Text Layer',
+    category: 'Layer',
+    run: () => {
+      const id = store.addLayerOfKind('kineticText');
+      if (id) store.setActiveTool('text');
+    },
+  },
+  {
+    id: 'layer.add-card',
+    title: 'Add Card Layer',
+    category: 'Layer',
+    run: () => {
+      const id = store.addLayerOfKind('card');
+      if (id) store.setActiveTool('shape');
+    },
+  },
   {
     id: 'layer.visibility',
     title: 'Toggle Layer Visibility',

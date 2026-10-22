@@ -6,6 +6,10 @@ import { renderKineticText } from "./kinetic-text.js";
 import { renderCard } from "./card.js";
 import { renderLottie } from "./lottie.js";
 import { renderForegroundFx } from "./foreground-fx.js";
+import { renderChart } from "./chart.js";
+import { renderCodeBlock } from "./code-block.js";
+import { renderParticleField } from "./particle-field.js";
+import { renderCta } from "./cta.js";
 
 export interface BuiltLayer {
   /** element that entrance/emphasis/exit presets animate */
@@ -36,5 +40,13 @@ export function renderLayer(layer: Layer, ctx: LayerContext): BuiltLayer {
       return renderLottie(layer, ctx);
     case "foregroundFX":
       return renderForegroundFx(layer, ctx);
+    case "chart":
+      return renderChart(layer, ctx);
+    case "codeBlock":
+      return renderCodeBlock(layer, ctx);
+    case "particleField":
+      return renderParticleField(layer, ctx);
+    case "cta":
+      return renderCta(layer, ctx);
   }
 }

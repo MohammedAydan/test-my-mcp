@@ -1233,3 +1233,22 @@
   color: var(--mf-text-1);
   margin-top: 2px;
 }
+
+/* --------------------------------------------------------------------------
+   The render cost rows (the Render Queue modal)
+   --------------------------------------------------------------------------
+   Every quality tier carries its own resolution, frame rate and the measured
+   cost of rendering the composition at that tier.
+   -------------------------------------------------------------------------- */
+.mf-render-costs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+.mf-render-cost {
+  cursor: pointer;
+}
+.mf-render-cost:hover {
+  border-color: var(--mf-border-strong);
+}

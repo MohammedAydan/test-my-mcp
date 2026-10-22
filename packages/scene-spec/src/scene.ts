@@ -10,6 +10,10 @@ import { kineticTextLayerSchema } from "./layers/kinetic-text.js";
 import { cardLayerSchema } from "./layers/card.js";
 import { lottieLayerSchema } from "./layers/lottie.js";
 import { foregroundFxLayerSchema } from "./layers/foreground-fx.js";
+import { chartLayerSchema } from "./layers/chart.js";
+import { codeBlockLayerSchema } from "./layers/code-block.js";
+import { particleFieldLayerSchema } from "./layers/particle-field.js";
+import { ctaLayerSchema } from "./layers/cta.js";
 
 // ---------------------------------------------------------------------------
 // Canvas
@@ -117,8 +121,26 @@ export const LAYER_TYPES = [
   "card",
   "lottie",
   "foregroundFX",
+  "chart",
+  "codeBlock",
+  "particleField",
+  "cta",
 ] as const;
 export type LayerType = (typeof LAYER_TYPES)[number];
+
+/**
+ * The layer kinds that paint the WHOLE canvas.
+ *
+ * A full-bleed layer has no meaningful centre anchor and is excluded from the
+ * off-canvas / overlap checks — a background is *supposed* to extend past the
+ * frame edge, and calling that an overlap is a false positive.
+ */
+export const FULL_BLEED_LAYER_TYPES = ["background", "foregroundFX", "particleField"] as const;
+export type FullBleedLayerType = (typeof FULL_BLEED_LAYER_TYPES)[number];
+
+export function isFullBleedLayerType(type: string): boolean {
+  return (FULL_BLEED_LAYER_TYPES as readonly string[]).includes(type);
+}
 
 export const layerSchema = z.discriminatedUnion("type", [
   backgroundLayerSchema,
@@ -127,6 +149,10 @@ export const layerSchema = z.discriminatedUnion("type", [
   cardLayerSchema,
   lottieLayerSchema,
   foregroundFxLayerSchema,
+  chartLayerSchema,
+  codeBlockLayerSchema,
+  particleFieldLayerSchema,
+  ctaLayerSchema,
 ]);
 export type Layer = z.infer<typeof layerSchema>;
 

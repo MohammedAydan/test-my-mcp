@@ -133,8 +133,8 @@
       "kind": "wipe",
       "at": 6900,
       "direction": "left",
-      "durationMs": 550,
-      "color": "#22d3ee"
+      "durationMs": 700,
+      "color": "#05070d"
     }
   ],
   "audio": {

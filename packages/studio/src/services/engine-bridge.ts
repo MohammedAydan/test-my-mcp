@@ -20,8 +20,11 @@ export const ENGINE_METHODS = [
   'ingestAsset',
   'inspectKeyframes',
   'getLayerBounds',
+  'getLayerBoundsAt',
+  'analyzeScene',
   'startRender',
   'getRenderStatus',
+  'getRenderResult',
 ] as const;
 
 export type EngineMethod = (typeof ENGINE_METHODS)[number];

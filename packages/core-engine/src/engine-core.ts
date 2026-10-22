@@ -3,8 +3,15 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
-import type { SceneSpec } from "@motionforge/scene-spec";
-import { sanitizeSceneInput } from "@motionforge/scene-spec";
+import type {
+  BoundsFrameReport,
+  RenderResultReport,
+  SceneAnalysisReport,
+  SceneBoundsReport,
+  SceneSpec,
+} from "@motionforge/scene-spec";
+import { resolveCanvasSize, sanitizeSceneInput } from "@motionforge/scene-spec";
+import { buildBoundsFrameReport } from "./bounds-report.js";
 import { capabilities } from "./capabilities.js";
 import {
   engineConfig,
@@ -13,12 +20,22 @@ import {
   type EnginePathOptions,
   type EnginePaths,
 } from "./config.js";
+import {
+  computeWorkerBudget,
+  detectHeavyEffects,
+  estimatedFrameMs,
+  hostFacts,
+  perFrameMultiplier,
+} from "./cost-analysis.js";
 import { getFrameBounds, inspectKeyframes, type InspectedFrame } from "./keyframes.js";
+import { probeMedia } from "./media-probe.js";
 import { resolveProjectAssets } from "./project-assets.js";
 import { RenderRunner, type RenderJob, type RenderQuality } from "./render-runner.js";
+import { analyzeScene as analyzeSceneWarnings } from "./scene-analysis.js";
 import { SceneStore, sceneHash, type StoredScene } from "./scene-store.js";
 import { storeScene, type SceneStoreResponse } from "./scene-operations.js";
 import { ensureSfxBank } from "./sfx-bank.js";
+import { WarmPage, WARM_FPS } from "./warm-page.js";
 import {
   ensureDirs,
   listVaultAssets,
@@ -76,6 +93,13 @@ export class EngineCore extends EventEmitter {
   private watchers: fs.FSWatcher[] = [];
   private debounceTimers = new Map<string, NodeJS.Timeout>();
   private disposed = false;
+  /**
+   * The long-lived browser page the measurement paths push scenes into.
+   *
+   * It is created LAZILY: a process that only stores scenes never opens a
+   * browser at all.
+   */
+  private warm: WarmPage | null = null;
 
   constructor(
     readonly config: EngineConfig,
@@ -333,6 +357,149 @@ export class EngineCore extends EventEmitter {
     });
   }
 
+  // -------------------------------------------------------------------------
+  // The warm measurement path — numbers, not pixels
+  // -------------------------------------------------------------------------
+
+  /**
+   * The LAYOUT of a scene at a list of timestamps — with NO rasterisation.
+   *
+   * The scene is mounted on the warm page (one long-lived browser page, no
+   * navigation) and every timestamp is answered with NUMBERS: the camera
+   * pose, the per-layer lifecycle, the painted box, the composition box, the
+   * overlapping pairs and the layers that hang off the canvas edge.
+   *
+   * This is the fast sibling of `inspectKeyframes` (which rasterises, because
+   * a picture is the only way to answer "does it LOOK right") and the fast
+   * replacement for `getLayerBounds` (which opens a browser per call).
+   */
+  async getLayerBoundsAt(sceneId: string, timesMs: number[]): Promise<SceneBoundsReport> {
+    const started = Date.now();
+    const found = this.store.require(sceneId);
+    const scene = found.scene;
+    const canvas = resolveCanvasSize(scene.canvas);
+    const stamps = (timesMs ?? [])
+      .filter((ms) => Number.isFinite(ms) && ms >= 0)
+      .map((ms) => Math.round(ms));
+
+    const warm = this.warmPage();
+    await warm.mount(scene, sceneId, WARM_FPS);
+
+    const frames: BoundsFrameReport[] = [];
+    for (const atMs of stamps) {
+      const report = await warm.frameReport(atMs);
+      frames.push(
+        buildBoundsFrameReport({
+          atMs,
+          describe: report.describe,
+          bounds: report.bounds,
+          canvas,
+        })
+      );
+    }
+
+    return {
+      sceneId,
+      canvas: { width: canvas.width, height: canvas.height },
+      frames,
+      elapsedMs: Date.now() - started,
+      warm: true,
+    };
+  }
+
+  /**
+   * The static + dynamic analysis of a scene: what is wrong with it, what it
+   * will cost to render on THIS host, and which keyframe array wins.
+   */
+  async analyzeScene(sceneId: string): Promise<SceneAnalysisReport> {
+    const found = this.store.require(sceneId);
+    const scene = found.scene;
+
+    // the engine's own non-blocking diagnostics (camera void, dead frames, …)
+    const warnings = analyzeSceneWarnings(scene);
+
+    const heavyEffects = detectHeavyEffects(scene);
+    const multiplier = perFrameMultiplier(heavyEffects);
+    const host = hostFacts();
+    const frames = Math.round((scene.durationMs / 1000) * 60);
+    const frameMs = estimatedFrameMs(multiplier, host.cpus);
+    const workerBudget = computeWorkerBudget({
+      cpus: host.cpus,
+      totalMemGb: host.totalMemGb,
+      heavy: heavyEffects.length > 0,
+    });
+
+    return {
+      sceneId,
+      layerCount: scene.layers.length,
+      durationMs: scene.durationMs,
+      warnings,
+      cost: {
+        perFrameMultiplier: multiplier,
+        estimatedFrameMs: frameMs,
+        estimatedTotalMs: frameMs * frames,
+        frames,
+        workerBudget,
+        heavyEffects,
+        host,
+        notes: buildCostNotes(heavyEffects, multiplier, host, frameMs),
+      },
+      keyframePrecedence: buildKeyframePrecedence(scene),
+    };
+  }
+
+  /**
+   * The finished result of a render job — with the ffprobe view of the file.
+   *
+   * A job that is still running returns its status and progress and NO
+   * probe: there is no file to probe yet.
+   */
+  async getRenderResult(jobId: string): Promise<RenderResultReport> {
+    const job = this.getRenderStatus(jobId);
+    if (!job) {
+      const err = new Error(`unknown render job "${jobId}"`) as Error & {
+        status?: number;
+        statusCode?: number;
+      };
+      err.status = 404;
+      err.statusCode = 404;
+      throw err;
+    }
+
+    const report: RenderResultReport = {
+      jobId: job.id,
+      sceneId: job.sceneId,
+      quality: job.quality,
+      status: job.status,
+      progress: job.progress,
+      ...(job.error ? { error: job.error } : {}),
+      ...(job.result
+        ? {
+            outputPath: job.result.mp4Path,
+            telemetry: {
+              frames: job.result.frames,
+              wallMs: job.result.wallMs,
+              effectiveFps: job.result.effectiveFps,
+              encoder: job.result.encoder,
+              workerCount: job.result.workerCount,
+              profile: {
+                quality: job.result.profile.quality,
+                fps: job.result.profile.fps,
+                outWidth: job.result.profile.outWidth,
+                outHeight: job.result.profile.outHeight,
+                jpegQuality: job.result.profile.jpegQuality,
+              },
+            },
+          }
+        : {}),
+    };
+
+    if (job.status === "succeeded" && job.result?.mp4Path) {
+      report.probe = await probeMedia(job.result.mp4Path);
+    }
+    return report;
+  }
+
   async startRender(
     sceneId: string,
     quality: RenderQuality,
@@ -349,6 +516,22 @@ export class EngineCore extends EventEmitter {
 
   getPreviewUrl(sceneId: string): string {
     return `http://127.0.0.1:${this.config.port}/preview/?scene=${encodeURIComponent(sceneId)}`;
+  }
+
+  /**
+   * The warm page — created on FIRST USE, kept until `dispose()`.
+   *
+   * A process that only stores scenes never opens a browser: the page is
+   * built the first time a measurement asks for one.
+   */
+  private warmPage(): WarmPage {
+    this.warm ??= new WarmPage({
+      baseUrl: `http://127.0.0.1:${this.config.port}`,
+      paths: this.paths,
+      store: this.store,
+      log: this.log,
+    });
+    return this.warm;
   }
 
   private startWatchers(): void {
@@ -460,8 +643,85 @@ export class EngineCore extends EventEmitter {
       } catch {}
     }
     this.watchers.length = 0;
+    // the warm page holds a whole Chromium process, and the render pool holds
+    // one per worker — both must not outlive the engine
+    const warm = this.warm;
+    this.warm = null;
+    await warm?.dispose();
+    await this.runner.dispose();
     this.removeAllListeners();
   }
+}
+
+/**
+ * The human-readable reasons behind a cost estimate.
+ *
+ * Every note names the effect it is about — a caller who wants the render to
+ * be cheaper needs to know WHICH layer to change.
+ */
+function buildCostNotes(
+  effects: readonly { layerId: string; effect: string; multiplier: number }[],
+  multiplier: number,
+  host: { cpus: number; totalMemGb: number },
+  frameMs: number
+): string[] {
+  const notes: string[] = [];
+  if (effects.length === 0) {
+    notes.push("no heavy effects detected — a plain scene, one frame per worker tick");
+  } else {
+    const names = effects.map((effect) => effect.effect);
+    if (names.length > 1) {
+      notes.push(
+        `${names.join(" + ")} together make a frame ${multiplier}x more expensive ` +
+          `(layer(s) ${effects.map((effect) => effect.layerId).join(", ")})`
+      );
+    } else {
+      const effect = effects[0]!;
+      notes.push(
+        `${effect.effect} on layer "${effect.layerId}" makes a frame ${multiplier}x more expensive`
+      );
+    }
+  }
+  notes.push(
+    `estimated ${frameMs}ms per frame on this host (${host.cpus} cpus, ${host.totalMemGb} GB, software rasterised)`
+  );
+  if (host.totalMemGb <= 4.5) {
+    notes.push(
+      `this host has ${host.totalMemGb} GB of RAM — the engine renders on ONE worker so a render cannot OOM`
+    );
+  }
+  return notes;
+}
+
+/**
+ * Which keyframe array wins when a layer carries BOTH.
+ *
+ * The flat `keyframes` array is canonical: for every property it drives it
+ * WINS over the legacy `tracks` array. The legacy array still drives the
+ * properties the canonical one does not mention, so a scene that carries
+ * both is not broken — it is just ambiguous, and the ambiguity is reported
+ * here instead of being resolved silently.
+ */
+function buildKeyframePrecedence(scene: SceneSpec): SceneAnalysisReport["keyframePrecedence"] {
+  const conflicts: SceneAnalysisReport["keyframePrecedence"]["conflicts"] = [];
+  for (const layer of scene.layers) {
+    const canonical = layer.keyframes ?? [];
+    const legacy = layer.tracks ?? [];
+    if (canonical.length === 0 || legacy.length === 0) continue;
+    conflicts.push({
+      layerId: layer.id,
+      canonicalProperties: [...new Set(canonical.map((keyframe) => keyframe.property))].sort(),
+      legacyProperties: [...new Set(legacy.map((track) => track.property))].sort(),
+    });
+  }
+  return {
+    canonical: "keyframes",
+    legacy: "tracks",
+    rule:
+      "The flat `keyframes` array is canonical: for every property it drives it WINS over the legacy " +
+      "`tracks` array; `tracks` only drives the properties `keyframes` does not mention.",
+    conflicts,
+  };
 }
 
 export async function createEngineCore(

@@ -313,7 +313,21 @@ export async function initCreativeProject(
 
   // --- starter scene: validated with the exact schema the engine uses -------
   const scenePath = path.join(target, "scenes", "scene-01.json");
-  const sceneCheck = validateScene(JSON.parse(await readFile(scenePath, "utf8")));
+  const starterRaw = JSON.parse(await readFile(scenePath, "utf8")) as Record<string, unknown>;
+
+  // THE FILE NAME IS THE SCENE ID.
+  //
+  // The project convention is `scenes/<id>.json`: the manifest, `sync-scene`
+  // and the engine all read the id FROM the file name. A template that ships
+  // without an `id` must therefore still land in the engine as `scene-01` —
+  // so the engine writes the id into the file it just copied, rather than
+  // letting the scene land under a slug of its title.
+  if (starterRaw && typeof starterRaw === "object" && typeof starterRaw.id !== "string") {
+    starterRaw.id = path.basename(scenePath, ".json");
+    await writeFile(scenePath, `${JSON.stringify(starterRaw, null, 2)}\n`, "utf8");
+  }
+
+  const sceneCheck = validateScene(starterRaw);
   if (!sceneCheck.ok) {
     throw new ProjectWorkspaceError(
       `generated scenes/scene-01.json is invalid:\n  ${sceneCheck.issues.join("\n  ")}`

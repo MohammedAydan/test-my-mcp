@@ -1,5 +1,6 @@
 import { Component, Show, createEffect, onMount } from 'solid-js';
 import type { StudioLayer } from '../../types.js';
+import { layerVariant } from '../../types.js';
 import { IconPencil } from '../icons/NleIcons.js';
 
 /**
@@ -40,7 +41,7 @@ export interface InlineTextEditorProps {
 /** The current text of one editable field. */
 export function fieldValue(layer: StudioLayer, field: EditableField): string {
   if (field === 'text') return typeof layer.text === 'string' ? layer.text : '';
-  const variant = layer.variant ?? {};
+  const variant = layerVariant(layer);
   const raw = field === 'title' ? variant.title : variant.body;
   return typeof raw === 'string' ? raw : '';
 }
@@ -67,8 +68,10 @@ export const InlineTextEditor: Component<InlineTextEditorProps> = (props) => {
   let settled = false;
 
   const isCard = () => props.layer.type === 'card';
-  const hasTitle = () => isCard() && typeof (props.layer.variant?.title ?? '') === 'string';
-  const hasBody = () => isCard() && typeof (props.layer.variant?.body ?? '') === 'string';
+  /** the card's variant carries a `title` */
+  const hasTitle = () => isCard() && typeof layerVariant(props.layer).title === 'string';
+  /** the card's variant carries a `body` */
+  const hasBody = () => isCard() && typeof layerVariant(props.layer).body === 'string';
 
   const fontSize = () => Math.max(8, fieldFontSize(props.layer, props.field) * props.scale);
   const fontWeight = () => {
@@ -183,7 +186,7 @@ export const InlineTextEditor: Component<InlineTextEditorProps> = (props) => {
         onPointerDown={swallow}
       >
         <IconPencil size={12} />
-        <Show when={isCard() && hasTitle() && hasBody()}>
+        <Show when={isCard() && hasTitle()}>
           <button
             type="button"
             class="mf-inline-editor-field"
@@ -200,6 +203,8 @@ export const InlineTextEditor: Component<InlineTextEditorProps> = (props) => {
           >
             Title
           </button>
+        </Show>
+        <Show when={isCard() && hasBody()}>
           <button
             type="button"
             class="mf-inline-editor-field"

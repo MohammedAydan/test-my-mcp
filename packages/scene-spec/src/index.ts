@@ -13,6 +13,10 @@ export * from "./layers/kinetic-text.js";
 export * from "./layers/card.js";
 export * from "./layers/lottie.js";
 export * from "./layers/foreground-fx.js";
+export * from "./layers/chart.js";
+export * from "./layers/code-block.js";
+export * from "./layers/particle-field.js";
+export * from "./layers/cta.js";
 // --- keyframe evaluation (shared by the runtime AND the studio) --------------
 export * from "./keyframes.js";
 // --- scene + validation -----------------------------------------------------
@@ -22,6 +26,8 @@ export * from "./validate.js";
 export * from "./sanitize.js";
 // --- act seams / foreground coverage (shared runtime ⇄ engine contract) -----
 export * from "./coverage.js";
+// --- shared report contracts (engine → MCP ⇄ Studio) -----------------------
+export * from "./contracts.js";
 // --- authoring guidance (LLM-facing, derived from the schemas above) -------
 export * from "./field-guide.js";
 // --- creative project manifest (client/job workspaces) ---------------------

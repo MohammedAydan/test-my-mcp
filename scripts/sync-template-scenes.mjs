@@ -25,6 +25,11 @@ const SCENES_DIR = path.join(ROOT, "templates/creative-project/scenes");
  */
 const STARTER_SCENE = {
   schemaVersion: 1,
+  // The project convention is `scenes/<id>.json`: the manifest, `sync-scene`
+  // and the engine all read the scene's id FROM THE FILE NAME, so the
+  // template has to carry the same id or the starter scene lands in the
+  // engine under a slug of its title.
+  id: "scene-01",
   name: "{{PROJECT_NAME}} — scene 01",
   canvas: { shape: "16:9", scale: 1080 },
   durationMs: 8000,

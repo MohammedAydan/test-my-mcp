@@ -31,7 +31,7 @@ const { _electron: electron } = require('playwright');
 const path = require('node:path');
 const fs = require('node:fs');
 const net = require('node:net');
-const { makeTestEnv, makeTestDirs, cleanupTestDirs, describeTestDirs } = require('./lib/test-env.cjs');
+const { makeTestEnv, makeTestDirs, cleanupTestDirs, describeTestDirs, makeTestElectronArgs } = require('./lib/test-env.cjs');
 
 const ROOT = path.resolve(__dirname, '..');
 const SCREENSHOT_DIR = path.join(ROOT, 'screenshots');
@@ -118,7 +118,7 @@ async function main() {
     }
 
     app = await electron.launch({
-      args: ['--no-sandbox', mainPath],
+      args: ['--no-sandbox', mainPath, ...makeTestElectronArgs(testDirs)],
       env: testEnv,
     });
 
@@ -452,13 +452,22 @@ async function main() {
 
     const layerStack = await window.evaluate(() => ({
       rows: document.querySelectorAll('.mf-stack-row').length,
-      kinds: Array.from(document.querySelectorAll('.mf-stack-row .mf-row-kind')).map((n) => n.textContent),
+      // the RAW type travels in the title attribute; the visible text is the
+      // human-readable label ("Background", "Text", "Chart" …)
+      kinds: Array.from(document.querySelectorAll('.mf-stack-row .mf-row-kind')).map(
+        (n) => n.getAttribute('title') || n.textContent
+      ),
+      labels: Array.from(document.querySelectorAll('.mf-stack-row .mf-row-kind')).map((n) =>
+        (n.textContent || '').trim()
+      ),
     }));
     check('The layer stack lists the composition layers', layerStack.rows >= 2, `${layerStack.rows} rows`);
     check(
       'Every layer kind is labelled',
-      layerStack.kinds.includes('background') && layerStack.kinds.includes('kineticText'),
-      layerStack.kinds.join(', ')
+      layerStack.kinds.includes('background') &&
+        layerStack.kinds.includes('kineticText') &&
+        layerStack.labels.every((l) => l.length > 0),
+      `${layerStack.kinds.join(', ')} — labelled "${layerStack.labels.join(', ')}"`
     );
 
     /* visibility + lock toggles persist into the scene */

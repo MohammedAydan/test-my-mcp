@@ -2,6 +2,7 @@ import { Component, Show, createEffect, createSignal, onCleanup, onMount } from 
 import { store } from './state/store.js';
 import { api } from './api.js';
 import { onEngineEvent } from './services/engine-bridge.js';
+import { ensureRenderQueueBridge } from './services/render-queue.js';
 import { capturePointer, releasePointer } from './services/pointer-capture.js';
 import { TitleBar } from './components/shell/TitleBar.js';
 import { ToolDock } from './components/shell/ToolDock.js';
@@ -95,6 +96,11 @@ export const App: Component = () => {
   /* ── startup ─────────────────────────────────────────────────────────── */
 
   onMount(() => {
+    // The render queue lives in the GLOBAL store, so the bridge that feeds it
+    // has to be alive for the whole session — a render that finishes while
+    // the modal is closed still updates the status bar.
+    ensureRenderQueueBridge();
+
     void (async () => {
       const ping = await api.ping();
       store.setState('engine', { online: ping.ok, url: api.url, latencyMs: ping.latencyMs });
@@ -156,6 +162,16 @@ export const App: Component = () => {
         // Ctrl+K is the command palette, unless a text field wants the key
         if (!isTextField) {
           event.preventDefault();
+          // `stopImmediatePropagation` — not just `stopPropagation`.
+          //
+          // `stopPropagation` only stops the event from WALKING further up the
+          // tree; every OTHER listener on the SAME element still runs. The
+          // timeline registers its own window-level keydown handler, so a
+          // second listener on `window` would still see the chord and could
+          // act on it — which is exactly how ONE keypress once opened the
+          // palette AND split the layer. `stopImmediatePropagation` prevents
+          // every remaining listener on this element from running.
+          event.stopImmediatePropagation();
           store.setActiveModal(store.state.activeModal === 'palette' ? null : 'palette');
           return;
         }
@@ -229,24 +245,12 @@ export const App: Component = () => {
     // the tool dock asks for a layer through a custom event
     const onAddLayer = (event: Event) => {
       const kind = (event as CustomEvent<string>).detail ?? 'kineticText';
-      if (!state.scene) {
-        store.addToast('Load a composition before adding layers', 'warning');
-        return;
-      }
-      const id = `${kind}-${Math.random().toString(36).slice(2, 7)}`;
-      store.mutateScene((scene) => {
-        scene.layers.push({
-          id,
-          type: 'kineticText' as never,
-          text: 'New Text',
-          sizePx: 80,
-          position: { xPct: 50, yPct: 50 },
-          fill: '#ffffff',
-          at: state.playhead,
-          duration: 3000,
-        } as never);
-      }, `Added ${kind} layer`);
-      store.selectLayer(id);
+      // The STORE owns the layer factory: every kind gets its OWN
+      // schema-valid payload (a chart gets `data`, a cta gets a `label`), and
+      // a full-bleed layer gets an explicit integer `duration` equal to the
+      // composition length.
+      const id = store.addLayerOfKind(kind);
+      if (!id) return;
       void store.executeSave().catch(() => undefined);
     };
     window.addEventListener('motionforge:add-layer', onAddLayer);

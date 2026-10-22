@@ -4,16 +4,22 @@ import { interpolateKeyframeValue } from '@motionforge/scene-spec';
 import type { KeyframeProperty, LayerFilterKey } from '@motionforge/scene-spec';
 import { store } from '../../state/store.js';
 import type { StudioLayer } from '../../types.js';
+import { layerVariant } from '../../types.js';
 import { ScrubInput } from './ScrubInput.js';
+import { BackgroundEditor } from './BackgroundEditor.js';
+import { CompositionSettings } from './CompositionSettings.js';
+import { ChartEditor, CardEditor, CodeBlockEditor, CtaEditor, ParticleFieldEditor } from './ContentEditors.js';
 import { PanelContainer } from '../workspace/PanelContainer.js';
 import { layerKindColor } from '../hierarchy/LayerStackPanel.js';
 import {
   IconChevronDown,
   IconChevronRight,
+  IconClose,
   IconDiamond,
   IconLock,
   IconReset,
   IconStopwatch,
+  IconWarning,
 } from '../icons/NleIcons.js';
 
 /**
@@ -61,7 +67,7 @@ interface AccordionProps {
 }
 
 /**
- * Build a VALID background variant payload.
+ * A NOTE ON THE BACKGROUND VARIANT.
  *
  * The background's `variant` is a DISCRIMINATED union of STRICT objects:
  * each variant carries its own required keys and rejects every other
@@ -71,48 +77,11 @@ interface AccordionProps {
  * rejected with `layers.0.variant.blobs: Required; layers.0.variant:
  * Unrecognized key(s) in object: 'color'`.
  *
- * The payload is therefore rebuilt from scratch, carrying over only the
- * values that are MEANINGFUL in the new variant.
+ * The payload is therefore REBUILT, never spread — and the rebuilder lives in
+ * the service layer (`services/background-variant.ts`), so the inspector, a
+ * command and a future automation can never disagree about what a valid
+ * variant is. See `BackgroundEditor`.
  */
-function buildBackgroundVariant(
-  variant: string,
-  previous: Record<string, unknown> | undefined
-): Record<string, unknown> {
-  switch (variant) {
-    case 'meshGradient':
-      return {
-        variant: 'meshGradient',
-        base: (previous?.base as string) ?? '#05070d',
-        blobs: [
-          { color: '#12224a', xPct: 22, yPct: 30, radiusPct: 58, drift: 0.5 },
-          { color: '#0d6b63', xPct: 78, yPct: 68, radiusPct: 52, drift: 0.35 },
-          { color: '#3b1f7a', xPct: 50, yPct: 18, radiusPct: 44, drift: 0.8 },
-        ],
-      };
-    case 'particles':
-      return {
-        variant: 'particles',
-        count: 180,
-        color: (previous?.color as string) ?? '#8ab4ff',
-        sizePx: 2.5,
-        speed: 1,
-        direction: 'up',
-      };
-    case 'media':
-      return {
-        variant: 'media',
-        assetId: (previous?.assetId as string) ?? 'logo',
-        blurPx: 0,
-        dimOpacity: 0,
-      };
-    case 'solid':
-    default:
-      return {
-        variant: 'solid',
-        color: (previous?.color as string) ?? '#05070d',
-      };
-  }
-}
 
 const Accordion: Component<AccordionProps> = (props) => {
   const headId = () => `mf-accordion-head-${props.section}`;
@@ -333,7 +302,7 @@ export const EffectControlsPanel: Component = () => {
   /** The sections the current inspector mode owns. */
   const activeSections = (): SectionKey[] =>
     selectedLayer()
-      ? ['content', 'transform', 'effects', 'timing', 'track']
+      ? ['content', 'transform', 'effects', 'timing', 'track', 'composition']
       : ['composition', 'transitions'];
 
   /** True when EVERY active section is folded away. */
@@ -408,6 +377,23 @@ export const EffectControlsPanel: Component = () => {
     store.layerKeyframes(state.selectedLayerId ?? '', property).length > 0;
 
   /**
+   * Read the AUTHORED value at a dotted path of the selected layer.
+   *
+   * The auto-key needs it to seed the keyframe it writes at the playhead.
+   */
+  const readPath = (path: string): number | undefined => {
+    const layer = selectedLayer();
+    if (!layer) return undefined;
+    const parts = path.split('.');
+    let cursor: unknown = layer;
+    for (const part of parts) {
+      if (!cursor || typeof cursor !== 'object') return undefined;
+      cursor = (cursor as Record<string, unknown>)[part];
+    }
+    return typeof cursor === 'number' ? cursor : undefined;
+  };
+
+  /**
    * Bind a scrub field to a dotted path on the selected layer.
    *
    * `valueScale` converts the DISPLAYED value into the AUTHORED one: the
@@ -417,12 +403,25 @@ export const EffectControlsPanel: Component = () => {
    * When the property is KEYFRAMED, an edit auto-keys: the new value is
    * written into the keyframe at the playhead (After Effects semantics) — the
    * preview follows the scrub, and the keyframe curve follows the value.
+   *
+   * When the AUTO-KEY ARM is on, the same happens for a property that is NOT
+   * keyframed yet: the FIRST touch of the gesture writes a keyframe at the
+   * playhead, so the property becomes animated without the stopwatch click.
+   * With the arm OFF, nothing changes — a property only becomes animated
+   * through its own stopwatch button.
    */
   const bindScrub = (path: string, label: string, property?: KeyframeProperty, valueScale = 1) => ({
     onScrubStart: () => {
       const id = state.selectedLayerId;
       if (!id) return;
       store.pushHistory(`Scrub ${label}`);
+      if (!property || !state.autoKeyArmed) return;
+      if (isKeyframed(property)) return;
+      const authored = readPath(path);
+      if (authored === undefined) return;
+      // the gesture already pushed ONE history entry — the keyframe belongs
+      // to it, so it must not create a second undo step
+      store.setLayerKeyframe(id, property, state.playhead, authored, 'easeInOut', false);
     },
     onChange: (val: number) => {
       const id = state.selectedLayerId;
@@ -446,7 +445,7 @@ export const EffectControlsPanel: Component = () => {
     },
     onCommit: (val: number) => {
       const id = state.selectedLayerId;
-      if (id && property && isKeyframed(property)) {
+      if (id && property && (isKeyframed(property) || state.autoKeyArmed)) {
         // auto-key: a keyframed property writes its value into the keyframe
         // at the playhead instead of only changing the authored value
         const authored = valueScale === 1 ? val : val / valueScale;
@@ -567,15 +566,26 @@ export const EffectControlsPanel: Component = () => {
       case 'kineticText':
         return `Size ${compact(layer.sizePx ?? 80)}px`;
       case 'card': {
-        const title = String(layer.variant?.title ?? '').trim();
-        if (!title) return `${compact((layer.variant?.widthPx as number) ?? 800)}px wide`;
+        const variant = layerVariant(layer);
+        const title = String(variant.title ?? '').trim();
+        if (!title) return `${compact((variant.widthPx as number) ?? 800)}px wide`;
         return title.length > 22 ? `${title.slice(0, 21)}…` : title;
       }
       case 'imageLogo':
       case 'lottie':
         return `${compact(layer.widthPx ?? 240)}×${compact(layer.heightPx ?? layer.widthPx ?? 240)}`;
       case 'background':
-        return String(layer.variant?.variant ?? 'solid');
+        return String(layerVariant(layer).variant ?? 'solid');
+      case 'chart': {
+        const points = Array.isArray(layer.data) ? layer.data.length : 0;
+        return `${String(layer.chartType ?? 'bar')} · ${points} pts`;
+      }
+      case 'codeBlock':
+        return `${String(layer.language ?? 'text')} · ${compact(Number(layer.fontSize ?? 22))}px`;
+      case 'particleField':
+        return `${String(layer.pattern ?? 'float')} · ${compact(Number(layer.count ?? 80))}`;
+      case 'cta':
+        return String(layer.label ?? 'CTA');
       case 'foregroundFX':
         return String((layer.effects?.[0] as { kind?: string })?.kind ?? 'vignette');
       default:
@@ -626,12 +636,6 @@ export const EffectControlsPanel: Component = () => {
 
   /* ── composition settings ────────────────────────────────────────────── */
 
-  const compositionPatch = (field: Record<string, unknown>, description: string) => {
-    store.mutateScene((scene) => {
-      Object.assign(scene, field);
-    }, description);
-  };
-
   return (
     <PanelContainer
       id="effect-controls"
@@ -640,6 +644,33 @@ export const EffectControlsPanel: Component = () => {
       activeTab="Effect Controls"
       label="Effect controls"
     >
+      {/* ── the rejected-save banner ──
+          NON-TRANSIENT: it stays until the next successful save or until the
+          author dismisses it. A toast disappears after four seconds, which is
+          not long enough to fix a scene the engine refused to store. */}
+      <Show when={state.saveIssues.length > 0}>
+        <div class="mf-save-issues" id="inspector-save-issues" role="alert">
+          <div class="mf-save-issues-head">
+            <IconWarning size={12} />
+            <span>
+              The composition was rejected — {state.saveIssues.length} issue(s) to fix:
+            </span>
+            <button
+              type="button"
+              class="mf-icon-btn"
+              title="Dismiss"
+              aria-label="Dismiss the save issues"
+              onClick={() => store.clearSaveIssues()}
+            >
+              <IconClose size={11} />
+            </button>
+          </div>
+          <ul class="mf-save-issues-list">
+            <For each={state.saveIssues}>{(issue) => <li>{issue}</li>}</For>
+          </ul>
+        </div>
+      </Show>
+
       <Show
         when={selectedLayer()}
         fallback={
@@ -657,120 +688,7 @@ export const EffectControlsPanel: Component = () => {
               open={openSections().composition}
               onToggle={() => toggle('composition')}
             >
-              <div class="mf-field">
-                <label class="mf-label">Name</label>
-                <input
-                  class="mf-input"
-                  value={state.scene?.name ?? ''}
-                  onChange={(e) =>
-                    compositionPatch({ name: e.currentTarget.value }, 'Rename composition')
-                  }
-                />
-              </div>
-
-              <div class="mf-grid-2">
-                <div class="mf-field">
-                  <label class="mf-label">Shape</label>
-                  <select
-                    class="mf-select"
-                    value={state.scene?.canvas?.shape ?? '16:9'}
-                    onChange={(e) =>
-                      compositionPatch(
-                        { canvas: { ...(state.scene?.canvas ?? { shape: '16:9', scale: 1080 }), shape: e.currentTarget.value } },
-                        'Change canvas shape'
-                      )
-                    }
-                  >
-                    <option value="16:9">16:9 Landscape</option>
-                    <option value="9:16">9:16 Vertical</option>
-                    <option value="1:1">1:1 Square</option>
-                    <option value="4:5">4:5 Portrait</option>
-                  </select>
-                </div>
-                <div class="mf-field">
-                  <label class="mf-label">Scale</label>
-                  <select
-                    class="mf-select"
-                    value={String(state.scene?.canvas?.scale ?? 1080)}
-                    onChange={(e) =>
-                      compositionPatch(
-                        { canvas: { ...(state.scene?.canvas ?? { shape: '16:9', scale: 1080 }), scale: Number(e.currentTarget.value) } },
-                        'Change canvas scale'
-                      )
-                    }
-                  >
-                    <option value="720">720p</option>
-                    <option value="1080">1080p</option>
-                    <option value="1440">1440p</option>
-                    <option value="2160">2160p</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="mf-grid-2">
-                <div class="mf-field">
-                  <label class="mf-label">Duration</label>
-                  <ScrubInput
-                    label="Dur"
-                    unit="ms"
-                    value={state.scene?.durationMs ?? 8000}
-                    min={300}
-                    max={600000}
-                    step={100}
-                    onScrubStart={() => store.pushHistory('Scrub composition duration')}
-                    onChange={(val) =>
-                      store.mutateScene((scene) => {
-                        scene.durationMs = Math.round(val);
-                      }, 'Scrub composition duration')
-                    }
-                    onCommit={() => void store.executeSave().catch(() => undefined)}
-                  />
-                </div>
-                <div class="mf-field">
-                  <label class="mf-label">Frame Rate</label>
-                  <select class="mf-select" value="30" disabled>
-                    <option value="24">24 fps</option>
-                    <option value="30">30 fps</option>
-                    <option value="60">60 fps</option>
-                  </select>
-                </div>
-              </div>
-
-              <div class="mf-field">
-                <label class="mf-label">Camera Motion</label>
-                <select
-                  class="mf-select"
-                  value={state.scene?.camera?.moves?.[0]?.move ?? 'static'}
-                  onChange={(e) =>
-                    compositionPatch(
-                      {
-                        camera: {
-                          perspective: state.scene?.camera?.perspective ?? 1200,
-                          keyframes: state.scene?.camera?.keyframes ?? [],
-                          moves:
-                            e.currentTarget.value === 'static'
-                              ? []
-                              : [
-                                  {
-                                    move: e.currentTarget.value as never,
-                                    at: 0,
-                                    durationMs: state.scene?.durationMs ?? 8000,
-                                  },
-                                ],
-                        },
-                      },
-                      'Change camera motion'
-                    )
-                  }
-                >
-                  <option value="static">Static</option>
-                  <option value="slowPushIn">Slow Push In</option>
-                  <option value="whipPanRight">Whip Pan Right</option>
-                  <option value="whipPanLeft">Whip Pan Left</option>
-                  <option value="shakeImpact">Shake Impact</option>
-                  <option value="focusTarget">Focus Target</option>
-                </select>
-              </div>
+              <CompositionSettings />
             </Accordion>
 
             <Accordion
@@ -805,6 +723,30 @@ export const EffectControlsPanel: Component = () => {
                   <IconLock size={10} />
                 </span>
               </Show>
+              {/* the AUTO-KEY arm — a red/blue dot plus the label, so the
+                  armed state is obvious at a glance */}
+              <button
+                type="button"
+                class={`mf-autokey ${state.autoKeyArmed ? 'is-armed' : ''}`}
+                id="inspector-auto-key"
+                data-armed={state.autoKeyArmed ? 'true' : 'false'}
+                aria-pressed={state.autoKeyArmed}
+                title={
+                  state.autoKeyArmed
+                    ? 'Auto-key is ON — every transform edit writes a keyframe at the playhead'
+                    : 'Auto-key is OFF — arm it to write a keyframe on the first touch of a transform property'
+                }
+                onClick={() => {
+                  store.setAutoKeyArmed(!state.autoKeyArmed);
+                  store.addToast(
+                    state.autoKeyArmed ? 'Auto-key disarmed' : 'Auto-key armed',
+                    'info'
+                  );
+                }}
+              >
+                <span class="mf-autokey-dot" aria-hidden="true" />
+                <span>Auto-key</span>
+              </button>
               <CollapseAllButton mode={collapseMode()} onToggle={toggleAllSections} />
             </div>
 
@@ -884,78 +826,7 @@ export const EffectControlsPanel: Component = () => {
               </Show>
 
               <Show when={layer().type === 'card'}>
-                <div class="mf-field">
-                  <label class="mf-label">Title</label>
-                  <input
-                    class="mf-input"
-                    value={String(layer().variant?.title ?? '')}
-                    disabled={layer().locked}
-                    onChange={(e) =>
-                      patch(
-                        { variant: { ...(layer().variant ?? {}), title: e.currentTarget.value } },
-                        `Set card title of ${layer().id}`
-                      )
-                    }
-                  />
-                </div>
-                <div class="mf-field">
-                  <label class="mf-label">Body</label>
-                  <textarea
-                    class="mf-textarea"
-                    rows={2}
-                    value={String(layer().variant?.body ?? '')}
-                    disabled={layer().locked}
-                    onChange={(e) =>
-                      patch(
-                        { variant: { ...(layer().variant ?? {}), body: e.currentTarget.value } },
-                        `Set card body of ${layer().id}`
-                      )
-                    }
-                  />
-                </div>
-                <div class="mf-grid-2">
-                  <div class="mf-field">
-                    <label class="mf-label">Width</label>
-                    <ScrubInput
-                      label="W"
-                      unit="px"
-                      value={(layer().variant?.widthPx as number) ?? 800}
-                      min={80}
-                      max={2000}
-                      step={10}
-                      disabled={layer().locked}
-                      {...bindScrub('variant.widthPx', `width of ${layer().id}`)}
-                    />
-                  </div>
-                  <div class="mf-field">
-                    <label class="mf-label">Padding</label>
-                    <ScrubInput
-                      label="P"
-                      unit="px"
-                      value={(layer().variant?.paddingPx as number) ?? 32}
-                      min={8}
-                      max={200}
-                      step={1}
-                      disabled={layer().locked}
-                      {...bindScrub('variant.paddingPx', `padding of ${layer().id}`)}
-                    />
-                  </div>
-                </div>
-                <div class="mf-field">
-                  <label class="mf-label">Accent</label>
-                  <input
-                    type="color"
-                    class="mf-color-input"
-                    value={String(layer().variant?.accentColor ?? '#2d8ceb')}
-                    disabled={layer().locked}
-                    onChange={(e) =>
-                      patch(
-                        { variant: { ...(layer().variant ?? {}), 'accent-color': e.currentTarget.value } },
-                        `Set card accent of ${layer().id}`
-                      )
-                    }
-                  />
-                </div>
+                <CardEditor />
               </Show>
 
               <Show when={layer().type === 'imageLogo' || layer().type === 'lottie'}>
@@ -990,108 +861,23 @@ export const EffectControlsPanel: Component = () => {
               </Show>
 
               <Show when={layer().type === 'background'}>
-                <div class="mf-field">
-                  <label class="mf-label">Background Style</label>
-                  <select
-                    class="mf-select"
-                    value={String(layer().variant?.variant ?? 'solid')}
-                    disabled={layer().locked}
-                    onChange={(e) =>
-                      patch(
-                        {
-                          // The variant union is DISCRIMINATED: each variant has
-                          // its own required keys, and the object is STRICT —
-                          // a key from another variant is a validation error.
-                          // Spreading the previous variant therefore produced
-                          // scenes the engine refused to save (e.g. `color`
-                          // on a `meshGradient`, which needs `blobs`).
-                          // The payload is rebuilt from scratch instead.
-                          variant: buildBackgroundVariant(
-                            e.currentTarget.value,
-                            layer().variant as Record<string, unknown> | undefined
-                          ),
-                        },
-                        `Set background style of ${layer().id}`
-                      )
-                    }
-                  >
-                    <option value="solid">Solid</option>
-                    <option value="meshGradient">Mesh Gradient</option>
-                    <option value="particles">Particles</option>
-                  </select>
-                </div>
-                <div class="mf-field">
-                  <label class="mf-label">
-                    {layer().variant?.variant === 'meshGradient' ? 'Base Color' : 'Color'}
-                  </label>
-                  <input
-                    type="color"
-                    class="mf-color-input"
-                    value={String(
-                      layer().variant?.variant === 'meshGradient'
-                        ? ((layer().variant?.base as string) ?? '#05070d')
-                        : ((layer().variant?.color as string) ?? '#05070d')
-                    )}
-                    disabled={layer().locked}
-                    onChange={(e) =>
-                      patch(
-                        {
-                          variant:
-                            layer().variant?.variant === 'meshGradient'
-                              ? // `meshGradient` has NO `color` key — it has `base`
-                                // and a `blobs` array. Writing `color` here would
-                                // make the scene invalid.
-                                {
-                                  ...(layer().variant as Record<string, unknown>),
-                                  base: e.currentTarget.value,
-                                }
-                              : {
-                                  ...(layer().variant as Record<string, unknown>),
-                                  color: e.currentTarget.value,
-                                },
-                        },
-                        `Set background color of ${layer().id}`
-                      )
-                    }
-                  />
-                </div>
-                <Show when={layer().variant?.variant === 'meshGradient'}>
-                  <div class="mf-field">
-                    <label class="mf-label">Blob Colors</label>
-                    <div class="mf-blob-colors">
-                      {(
-                        (layer().variant?.blobs as Array<{ color?: string }> | undefined) ?? []
-                      ).map((blob, index) => (
-                        <input
-                          type="color"
-                          class="mf-color-input"
-                          title={`Blob ${index + 1}`}
-                          value={String(blob?.color ?? '#12224a')}
-                          disabled={layer().locked}
-                          onChange={(e) => {
-                            const blobs = [
-                              ...((layer().variant?.blobs as
-                                | Array<Record<string, unknown>>
-                                | undefined) ?? []),
-                            ];
-                            const current = blobs[index];
-                            if (!current) return;
-                            blobs[index] = { ...current, color: e.currentTarget.value };
-                            patch(
-                              {
-                                variant: {
-                                  ...(layer().variant as Record<string, unknown>),
-                                  blobs,
-                                },
-                              },
-                              `Set blob ${index + 1} of ${layer().id}`
-                            );
-                          }}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                </Show>
+                <BackgroundEditor />
+              </Show>
+
+              <Show when={layer().type === 'chart'}>
+                <ChartEditor />
+              </Show>
+
+              <Show when={layer().type === 'codeBlock'}>
+                <CodeBlockEditor />
+              </Show>
+
+              <Show when={layer().type === 'particleField'}>
+                <ParticleFieldEditor />
+              </Show>
+
+              <Show when={layer().type === 'cta'}>
+                <CtaEditor />
               </Show>
 
               <Show when={layer().type === 'foregroundFX'}>
@@ -1543,6 +1329,17 @@ export const EffectControlsPanel: Component = () => {
                   </For>
                 </select>
               </div>
+            </Accordion>
+
+            {/* the composition — the aspect-ratio sync indicator compares the
+                SELECTED layer's box with the canvas, so it needs the layer */}
+            <Accordion
+              section="composition"
+              title="Composition"
+              open={openSections().composition}
+              onToggle={() => toggle('composition')}
+            >
+              <CompositionSettings />
             </Accordion>
           </div>
         )}

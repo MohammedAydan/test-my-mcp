@@ -13,6 +13,14 @@ export interface AssetDragPayload {
   kind: string;
   src?: string;
   name?: string;
+  /**
+   * The built-in SFX cue.
+   *
+   * A cue drops on the AUDIO lane (A1), never on a video track — and the
+   * timeline highlights that lane while the cue is dragged over it. The flag
+   * is explicit so the drop target never has to guess from the asset id.
+   */
+  sfx?: boolean;
 }
 
 /** Build the payload for an asset (or a built-in SFX cue). */
@@ -21,8 +29,33 @@ export function buildAssetPayload(asset: {
   kind: string;
   src?: string;
   name?: string;
+  sfx?: boolean;
 }): AssetDragPayload {
-  return { assetId: asset.id, kind: asset.kind, src: asset.src, name: asset.name ?? asset.id };
+  // a built-in cue has NO source file — that is what tells it apart from a
+  // vault audio asset
+  const isSfx = asset.sfx === true || (asset.kind === 'audio' && !asset.src);
+  const payload: AssetDragPayload = {
+    assetId: asset.id,
+    kind: asset.kind,
+    src: asset.src,
+    name: asset.name ?? asset.id,
+  };
+  // the flag is only present when it is TRUE, so an ordinary asset payload
+  // keeps exactly the shape it always had
+  if (isSfx) payload.sfx = true;
+  return payload;
+}
+
+/**
+ * True when the payload is a built-in SFX cue.
+ *
+ * The drop target uses it to highlight the AUDIO lane and to snap the cue to
+ * the playhead.
+ */
+export function isSfxPayload(payload: AssetDragPayload | null | undefined): boolean {
+  if (!payload) return false;
+  if (payload.sfx === true) return true;
+  return payload.kind === 'audio' && !payload.src;
 }
 
 /**
@@ -48,7 +81,7 @@ export function readAssetPayload(event: DragEvent): AssetDragPayload | null {
 /** Write the payload onto a drag event. */
 export function writeAssetPayload(
   event: DragEvent,
-  asset: { id: string; kind: string; src?: string; name?: string }
+  asset: { id: string; kind: string; src?: string; name?: string; sfx?: boolean }
 ): void {
   if (!event.dataTransfer) return;
   event.dataTransfer.setData(ASSET_DRAG_TYPE, JSON.stringify(buildAssetPayload(asset)));

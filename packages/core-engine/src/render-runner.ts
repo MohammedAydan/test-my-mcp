@@ -5,7 +5,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { EngineConfig, EnginePaths } from "./config.js";
-import type { SceneSpec } from "@motionforge/scene-spec";
+import type { SceneCostReport, SceneSpec } from "@motionforge/scene-spec";
 import {
   buildAudioGraph,
   FfmpegError,
@@ -14,6 +14,13 @@ import {
   runFfmpeg,
   type RenderProfile,
 } from "./encoder.js";
+import {
+  computeWorkerBudget,
+  detectHeavyEffects,
+  estimatedFrameMs,
+  hostFacts,
+  perFrameMultiplier,
+} from "./cost-analysis.js";
 import { renderFramesParallel, RendererPool } from "./renderer.js";
 import type { SceneStore } from "./scene-store.js";
 
@@ -28,6 +35,11 @@ export interface RenderJob {
   /** 0..1 */
   progress: number;
   error?: string;
+  /**
+   * The pre-flight cost analysis of the scene, computed BEFORE the workers
+   * were spawned. Present on every job that ran.
+   */
+  preflight?: SceneCostReport;
   result?: {
     mp4Path: string;
     mp4Url: string;
@@ -127,6 +139,16 @@ export class RenderRunner extends EventEmitter {
     return this.jobs.get(id);
   }
 
+  /**
+   * Close every headless browser the pool opened.
+   *
+   * The engine calls this on shutdown: a render page holds a whole Chromium
+   * process, and a process that outlives the engine is a leaked process.
+   */
+  async dispose(): Promise<void> {
+    await this.pool.close();
+  }
+
   enqueue(sceneId: string, quality: RenderQuality): RenderJob {
     const job: RenderJob = {
       id: randomUUID().slice(0, 8),
@@ -166,6 +188,34 @@ export class RenderRunner extends EventEmitter {
     }
   }
 
+  /**
+   * The pre-flight cost analysis of a scene.
+   *
+   * ONE function, so the estimate the render reports and the estimate the
+   * `analyze_scene` tool reports can never disagree.
+   */
+  private preflight(scene: SceneSpec): SceneCostReport {
+    const heavyEffects = detectHeavyEffects(scene);
+    const multiplier = perFrameMultiplier(heavyEffects);
+    const host = hostFacts();
+    const frames = Math.max(1, Math.round((scene.durationMs / 1000) * 60));
+    const frameMs = estimatedFrameMs(multiplier, host.cpus);
+    return {
+      perFrameMultiplier: multiplier,
+      estimatedFrameMs: frameMs,
+      estimatedTotalMs: frameMs * frames,
+      frames,
+      workerBudget: computeWorkerBudget({
+        cpus: host.cpus,
+        totalMemGb: host.totalMemGb,
+        heavy: heavyEffects.length > 0,
+      }),
+      heavyEffects,
+      host,
+      notes: [],
+    };
+  }
+
   private async execute(job: RenderJob): Promise<void> {
     const started = Date.now();
     const { scene } = this.store.require(job.sceneId);
@@ -173,12 +223,61 @@ export class RenderRunner extends EventEmitter {
     const encoder = await pickEncoder(job.quality);
     this.log(`render ${job.id}: ${scene.name} @ ${profile.outWidth}x${profile.outHeight}/${profile.fps}fps via ${encoder}`);
 
+    // ---------------------------------------------------------------------
+    // THE PRE-FLIGHT.
+    //
+    // Before a single worker is spawned, the engine prices the scene: which
+    // features are expensive, what they cost per frame, and how many workers
+    // this host can afford for them.
+    //
+    // The estimate is emitted as a STRUCTURED warning, not as a log line: an
+    // operator (or an agent polling the job) has to be able to read "this
+    // scene costs 2.98x a plain scene, and it will be rendered on ONE worker
+    // because a blurred full-frame gradient is re-rasterised every frame"
+    // without scraping prose.
+    // ---------------------------------------------------------------------
+    const preflight = this.preflight(scene);
+    job.preflight = preflight;
+    if (preflight.heavyEffects.length > 0) {
+      this.log(
+        `render ${job.id}: pre-flight — ${preflight.perFrameMultiplier.toFixed(2)}x per frame ` +
+          `(≈${preflight.estimatedFrameMs}ms/frame, ≈${Math.round(preflight.estimatedTotalMs / 1000)}s total), ` +
+          `worker budget ${preflight.workerBudget}; expensive: ` +
+          preflight.heavyEffects.map((e) => `${e.effect}@${e.layerId} x${e.multiplier}`).join(", ")
+      );
+      this.emit("preflight", {
+        jobId: job.id,
+        sceneId: job.sceneId,
+        perFrameMultiplier: preflight.perFrameMultiplier,
+        estimatedFrameMs: preflight.estimatedFrameMs,
+        estimatedTotalMs: preflight.estimatedTotalMs,
+        workerBudget: preflight.workerBudget,
+        heavyEffects: preflight.heavyEffects,
+      });
+    }
+
     const jobDir = path.join(this.paths.rendersDir, job.id);
     await mkdir(jobDir, { recursive: true });
 
     let framesDone = 0;
     const totalFrames = Math.max(1, Math.round((scene.durationMs / 1000) * profile.fps));
     try {
+      // THE AUDIO GRAPH IS BUILT WHILE THE FRAMES RENDER.
+      //
+      // The graph is a pure function of the scene, so building it earlier
+      // cannot change a single byte of the output — it only moves the work
+      // OFF the critical path. The promise is created BEFORE the render
+      // starts and awaited after the frames land, so the mix is ready the
+      // moment the video is.
+      const graphPromise = Promise.resolve().then(() =>
+        buildAudioGraph(scene, this.paths, scene.durationMs / 1000)
+      );
+      // A rejection must never go unhandled while the frames are still
+      // rendering — Node kills the process on an unhandled rejection. The
+      // original promise is still awaited below, so the error is reported
+      // exactly as before.
+      graphPromise.catch(() => undefined);
+
       const { partPaths, frames, workerCount } = await renderFramesParallel({
         pool: this.pool,
         scene,
@@ -192,6 +291,7 @@ export class RenderRunner extends EventEmitter {
         // from memory/disk — the render needs no listening engine
         paths: this.paths,
         store: this.store,
+        log: this.log,
         onProgress: (n) => {
           framesDone += n;
           job.progress = Math.min(0.9, framesDone / totalFrames);
@@ -225,7 +325,7 @@ export class RenderRunner extends EventEmitter {
         )
       );
       const concatPath = await concatParts(partPaths, jobDir);
-      const graph = buildAudioGraph(scene, this.paths, scene.durationMs / 1000);
+      const graph = await graphPromise;
       const slug =
         scene.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "scene";
       const mp4Path = path.join(this.paths.rendersDir, `${job.quality}-${slug}-${job.id}.mp4`);

@@ -55,12 +55,14 @@ Created: `{{CREATED_AT}}`.
 8. **Do not edit the engine monorepo** from a creative-project session unless
    you were explicitly asked to. Report engine problems instead.
 
-## 3. Tool map — the six tools
+## 3. Tool map — the thirteen tools
 
 ```
 get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
                           →  inspect_scene_keyframes  →  open_live_timeline_preview
-                          →  render_video
+                          →  render_video  (alias: render_scene)
+                          →  get_layer_bounds  →  get_render_status  →  get_render_result
+                          →  analyze_scene  →  upload_asset  →  project_asset_manifest
 ```
 
 | Step | Tool | Notes |
@@ -70,7 +72,14 @@ get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
 | 3 | `create_or_update_scene` | validate + store; returns the engine's scene id |
 | 4 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
 | 5 | `open_live_timeline_preview` | scrub in a browser; auto-refreshes when you re-post |
-| 6 | `render_video` | `quality: "draft"` while iterating, `"production"` once approved |
+| 6 | `render_video` | `quality: "draft"` while iterating, `"production"` once approved; `wait: false` returns a `jobId` immediately |
+| 7 | `render_scene` | an alias of `render_video` |
+| 8 | `get_layer_bounds` | the layout sidecar WITHOUT rasterisation — use it for layout questions |
+| 9 | `get_render_status` | poll a render started with `wait: false` |
+| 10 | `get_render_result` | the finished export + its ffprobe metadata |
+| 11 | `analyze_scene` | the warnings, the per-frame render-cost estimate, the keyframe precedence |
+| 12 | `upload_asset` | put a file into the vault from the protocol |
+| 13 | `project_asset_manifest` | what the project already has on disk |
 
 **Disk synchronization.** `scenes/scene-XX.json` is the version-controlled copy.
 When `projectPath` is provided to `create_or_update_scene`, `inspect_scene_keyframes`,

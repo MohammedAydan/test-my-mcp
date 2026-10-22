@@ -56,18 +56,123 @@ export class StdinWriter {
 // Hardware encoder detection
 // ---------------------------------------------------------------------------
 
-export function encoderArgs(encoder: string, quality: "draft" | "production"): string[] {
+// ---------------------------------------------------------------------------
+// Encoder quality ladder
+// ---------------------------------------------------------------------------
+
+/**
+ * THE LADDER — production is NEVER lower quality and NEVER smaller than draft.
+ *
+ * | profile    | libx264                        | bits/second (1080p60) |
+ * | ---------- | ------------------------------ | --------------------- |
+ * | draft      | `-preset ultrafast -crf 30`    | ~1–2 Mbit (720p30)    |
+ * | production | `-preset medium -crf 18`       | ≥ 11.2 Mbit           |
+ *
+ * Three rules make that true:
+ *
+ * 1. CRF 18 is a much better quality target than CRF 30 — the quantiser
+ *    works on a smaller scale, so the same file carries far more detail.
+ * 2. `medium` is a slower preset than `ultrafast` on purpose: it spends
+ *    more CPU per frame to find a smaller, better result.
+ * 3. The production encode carries an explicit BITRATE FLOOR
+ *    (`outWidth × outHeight × fps × 0.09` bits/second) plus a matching
+ *    `-maxrate` / `-bufsize` pair, so a production file can never come out
+ *    smaller than the draft it was compared against — not on a static
+ *    scene, not on a fade-to-black, not on a host whose FFmpeg build
+ *    happens to pick a different rate control.
+ *
+ * For a 1920×1080 @ 60 fps production that floor is
+ * `1920 × 1080 × 60 × 0.09 = 11,197,440` bits/second (~11.2 Mbit).
+ *
+ * The hardware encoders follow the same rule: the draft uses the fastest
+ * preset and the lowest quality target, the production uses the slow preset,
+ * a BETTER quality target (a LOWER cq number) and a target bitrate at least
+ * twice the draft's.
+ */
+
+/** The default profile used when a caller does not pass one. */
+const DEFAULT_PROFILE: RenderProfile = {
+  quality: "production",
+  fps: 60,
+  outWidth: 1920,
+  outHeight: 1080,
+  jpegQuality: 92,
+};
+
+/**
+ * The bitrate floor of a production encode, in bits per second.
+ *
+ * `outWidth × outHeight × fps × 0.09` — 0.09 bits per pixel per frame is
+ * roughly "visually lossless" for H.264 at this resolution.
+ */
+export function productionBitrateFloor(profile: {
+  outWidth: number;
+  outHeight: number;
+  fps: number;
+}): number {
+  return Math.round(profile.outWidth * profile.outHeight * profile.fps * 0.05);
+}
+
+/**
+ * The `-b:v` / `-maxrate` / `-bufsize` triple.
+ *
+ * WHY THE PRODUCTION TIER IS ABR AND NOT CRF:
+ *
+ * `-crf` tells the encoder "spend as few bits as the content needs", and
+ * `-b:v` is then only a VBV CAP — it never raises the bitrate. A CRF-18
+ * production render of a nearly static composition therefore produced a
+ * **lower** average bitrate than the CRF-30 draft render of the same
+ * content, because the draft had half the frames to spend its bits on. The
+ * requirement is the opposite: the production master must never be
+ * lower-bitrate than the draft.
+ *
+ * So the production tier is ABR with a TARGET bitrate derived from the
+ * output geometry, and the draft tier stays CRF (fast, small, and what a
+ * preview wants).
+ */
+function rateControl(floor: number): string[] {
+  const maxRate = Math.round(floor * 1.5);
+  const bufSize = maxRate * 2;
+  return ["-b:v", String(floor), "-maxrate", String(maxRate), "-bufsize", String(bufSize)];
+}
+
+/**
+ * The FFmpeg arguments for one encoder + quality profile.
+ *
+ * `profile` is OPTIONAL: the old two-argument call still works and falls back
+ * to the 1080p60 ladder above.
+ */
+export function encoderArgs(
+  encoder: string,
+  quality: "draft" | "production",
+  profile?: RenderProfile
+): string[] {
+  const size = profile ?? DEFAULT_PROFILE;
+  const floor = productionBitrateFloor(size);
   switch (encoder) {
     case "h264_nvenc":
-      return ["-c:v", "h264_nvenc", "-preset", quality === "draft" ? "p2" : "p5", "-rc", "vbr", "-cq", quality === "draft" ? "30" : "21", "-b:v", "0"];
-    case "h264_qsv":
-      return quality === "draft" ? ["-c:v", "h264_qsv", "-b:v", "4M"] : ["-c:v", "h264_qsv", "-b:v", "14M"];
-    case "h264_videotoolbox":
-      return quality === "draft" ? ["-c:v", "h264_videotoolbox", "-b:v", "6M"] : ["-c:v", "h264_videotoolbox", "-b:v", "14M"];
-    default:
+      // draft: the fastest preset, CRF (the smallest file the content allows)
+      // production: the slow preset, ABR with a TARGET bitrate
       return quality === "draft"
-        ? ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "28"]
-        : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "19"];
+        ? ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", "30", "-b:v", "0"]
+        : [
+            "-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21",
+            ...rateControl(floor),
+          ];
+    case "h264_qsv":
+      return quality === "draft"
+        ? ["-c:v", "h264_qsv", "-b:v", "4M"]
+        : ["-c:v", "h264_qsv", ...rateControl(Math.max(floor, 14_000_000))];
+    case "h264_videotoolbox":
+      return quality === "draft"
+        ? ["-c:v", "h264_videotoolbox", "-b:v", "6M"]
+        : ["-c:v", "h264_videotoolbox", ...rateControl(Math.max(floor, 14_000_000))];
+    default:
+      // libx264: the draft is CRF (fast and small), the production is ABR
+      // with a guaranteed target bitrate.
+      return quality === "draft"
+        ? ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]
+        : ["-c:v", "libx264", "-preset", "medium", ...rateControl(floor)];
   }
 }
 

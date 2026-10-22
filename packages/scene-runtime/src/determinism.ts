@@ -120,6 +120,36 @@ export function createFrameSettler(deps: SettleDeps): FrameSettler {
   };
 }
 
+/**
+ * THE LAYOUT SETTLER — the same geometry, without the pixels.
+ *
+ * WHY IT EXISTS: a LAYOUT question ("where is layer X at t=2000?") needs the
+ * boxes, not the picture. The full settle above does two things a box does
+ * not need:
+ *
+ * - `runSeekables` re-seeks the media (a video's currentTime, a Lottie's
+ *   frame) — the media's POSITION changes, its BOX does not;
+ * - `decodeImages` waits for every bitmap to decode — a bitmap's PIXELS
+ *   change, its BOX does not (the layout was already reserved by the CSS,
+ *   and `preloadAssets` resolved the intrinsic sizes before the mount).
+ *
+ * The two things a box DOES need are kept: the font wait (a web font changes
+ * the size of the text it renders) and the layout flush (the transform has to
+ * be committed before it can be measured).
+ *
+ * The result is the SAME numbers, measured in a fraction of the time.
+ */
+export function createLayoutSettler(deps: SettleDeps): FrameSettler {
+  return async (timeSec: number): Promise<void> => {
+    deps.seekTimeline();
+    deps.applyLifecycle(timeSec);
+    await deps.fontsReady();
+    deps.flushLayout();
+    await deps.nextFrame();
+    await deps.nextFrame();
+  };
+}
+
 /** Resolves after the browser has run one animation-frame callback. */
 export function nextPaintFrame(): Promise<void> {
   return new Promise<void>((resolve) => {

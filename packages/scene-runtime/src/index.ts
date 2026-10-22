@@ -10,6 +10,7 @@ import {
   clampFrame,
   configureDeterministicGsap,
   createFrameSettler,
+  createLayoutSettler,
   decodeImages,
   flushLayout,
   IMAGE_LOAD_GRACE_MS,
@@ -152,6 +153,13 @@ async function boot(): Promise<void> {
     }
   })();
 
+  // THE WARM-PAGE DOOR.
+  //
+  // Published at BOOT, before any scene is mounted — the engine's warm page
+  // boots with NO scene id, so a door that only appeared after the first
+  // mount would never open for the very first (and most expensive) mount.
+  window.mountSceneFromHost = mountSceneFromHost;
+
   if (sceneId) {
     let scene: SceneSpec | null = null;
     try {
@@ -267,8 +275,7 @@ async function mountScene(
   sceneId: string,
   fps: number,
   renderMode: boolean
-): Promise<void> {
-  let scene: SceneSpec;
+): Promise<void> {  let scene: SceneSpec;
   try {
     scene = sceneSpecSchema.parse(rawScene);
   } catch {
@@ -333,6 +340,33 @@ async function mountScene(
     nextFrame: nextPaintFrame,
   });
 
+  // THE LAYOUT SETTLE — the same geometry, without the pixels.
+  //
+  // A bounding box does not depend on a video's currentTime or on a bitmap's
+  // pixels, so a layout measurement skips both. The font wait and the layout
+  // flush are kept: a web font DOES change the size of the text it renders.
+  const layoutSettle = createLayoutSettler({
+    seekTimeline: () => {
+      tl.seek(targetTimeSec, false);
+    },
+    applyLifecycle: (timeSec) => lifecycle.apply(timeSec * 1000),
+    runSeekables: async () => undefined,
+    fontsReady: () => document.fonts.ready.then(() => undefined),
+    decodeImages: async () => undefined,
+    imageLoadGraceMs: 0,
+    flushLayout: () => flushLayout(stage!.stage),
+    nextFrame: nextPaintFrame,
+  });
+
+  // the layout-only door: the engine's warm page uses it for the
+  // zero-rasterisation layout report
+  window.seekToFrameForLayout = async (frame: number): Promise<void> => {
+    if (!mounted) return;
+    const clamped = clampFrame(frame, mounted.totalFrames);
+    targetTimeSec = clamped / mounted.fps;
+    await layoutSettle(targetTimeSec);
+  };
+
   mounted = {
     sceneId,
     scene,
@@ -351,6 +385,8 @@ async function mountScene(
   // numeric per-frame description for `inspect_scene_keyframes`
   window.describeFrame = describeFrame;
   window.getLayerBounds = computeLayerBounds;
+  // the warm-page door: the engine pushes a scene in without navigating
+  window.mountSceneFromHost = mountSceneFromHost;
 
   // A web font changes the size of the text it renders, so every text layer's
   // box changes with it. The bounds report is re-published once the fonts are
@@ -512,6 +548,33 @@ export function computeLayerBounds(): LayerBounds {
 
 function round1(value: number): number {
   return Math.round(value * 10) / 10;
+}
+
+/**
+ * Mount (or replace) a scene in the ALREADY-LOADED page.
+ *
+ * THE WARM-PAGE CONTRACT: the engine keeps one browser page alive for the
+ * lifetime of the process and pushes the scene JSON straight in here. No
+ * navigation, no `networkidle` wait, no new browser context — the page is
+ * already running the runtime bundle and the fonts are already loaded.
+ *
+ * It is the same code path the Studio's live-update message uses
+ * (`motionforge:updateScene`), so a measurement taken through this door is
+ * the same scene the renderer would draw.
+ */
+async function mountSceneFromHost(rawScene: unknown, sceneId: string, fps = 60): Promise<void> {
+  const candidate = rawScene as SceneSpec | null;
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error("mountSceneFromHost: the scene payload is not an object");
+  }
+  const { width, height } = resolveCanvasSize(candidate.canvas ?? DEFAULT_CANVAS);
+  if (!stage) {
+    stage = createStage(width, height);
+  }
+  unmountScene();
+  await mountScene(candidate, sceneId, fps, true);
+  // settle on frame 0 so the first measurement is of a real frame
+  if (mounted) await mounted.settle(0);
 }
 
 function unmountScene(): void {

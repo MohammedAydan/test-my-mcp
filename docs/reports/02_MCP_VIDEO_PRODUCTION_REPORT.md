@@ -260,16 +260,16 @@ proxy over the engine; the engine is the slow part.
 
 ### 7.2 The gaps, specifically
 
-| # | Gap | Why it matters to an agent |
+| # | Gap | Why it matters to an agent | Status |
 | --- | --- | --- |
-| G-1 | **No bounds query.** `get_layer_bounds` does not exist. The layout truth is only available as a *by-product* of `inspect_scene_keyframes`, which costs a **full Playwright frame capture per timestamp** — 14.1 s for 4 frames here, and the backend audit measured **5938 ms per frame** in the worst case. | An agent that wants to know "where is layer X at t=2000?" must pay a full render of that frame. The sidecar proves the data is computed in the page in milliseconds; only the *rasterisation* is expensive, and it is not needed for a layout query. **This is the single biggest gap.** |
-| G-2 | **No render-status query.** `render_video` blocks until the job finishes (430 s here) and there is no way to poll. The SDK's own 60 s default request timeout will abort the call before the render finishes — the benchmark had to raise it to 600 s. | A long render is a normal part of the loop, and the agent gets no way to report progress or to survive a client-side timeout. |
-| G-3 | **No `chart`, `codeBlock`, `particleField` or `cta` layer kind.** The six real kinds are `background`, `imageLogo`, `kineticText`, `card`, `lottie`, `foregroundFX`. | The brief asked for a data chart and a code block. The closest real kinds are `card` (whose variants include `progressBar` and `counter`) and `foregroundFX` (whose `filmGrain` is a particle field of a sort). An agent asked for a "chart" must either approximate it with a `card` or go outside the engine. |
-| G-4 | **No asset-upload tool.** The benchmark had to write its brand mark into the project workspace **by hand** (`assets/images/mf-mark.svg`) — there is no MCP tool that puts a file into the vault. | Any real client job needs the client's logo, the product shots, the fonts. The agent can only reference a `vault:` path that a human put there. The `init_creative_project` template ships the *folder structure*, not the bytes. |
-| G-5 | **The `warnings[]` channel is under-used.** The scene was accepted with no warnings, but the engine's warning set is small (the camera-void warning is the main one). The audit in report 03 found that a **blurred mesh gradient plus a film grain costs +161 %** per frame and can OOM-kill a GPU-less renderer — and the MCP surface says nothing about it. | The agent has no way to learn that its scene is unaffordable until the render fails. |
-| G-6 | **The keyframe surface is doubled.** A layer can carry the flat `keyframes` array (the new, unified form) OR the legacy `tracks` array. The runtime accepts both, and the flat form wins — but the contract does not say so, and a mixed scene is legal. | An agent that writes `tracks` for one layer and `keyframes` for another gets a scene whose behaviour depends on a precedence rule it cannot see. |
-| G-7 | **The `textOverflow` flag had a false positive** — it fired on a background and a film-grain overlay, because the check tested the *layer root*'s scroll width rather than the text elements. | An agent would be told its headline was clipped when it was not, and would "fix" a scene that was already correct. **Fixed during this audit** (`packages/scene-runtime/src/scene-builder.ts`): the root check now applies only to a root that actually holds text. |
-| G-8 | **Every tool result is TEXT.** The whole contract is prose with embedded JSON, and the sidecar is a formatted text block rather than a JSON document. | The agent has to parse prose. A single `resultSchema` (or a `structuredContent` field) would make every call machine-readable — and the SDK already supports it. |
+| G-1 | **No bounds query.** `get_layer_bounds` does not exist. The layout truth is only available as a *by-product* of `inspect_scene_keyframes`, which costs a **full Playwright frame capture per timestamp** — 14.1 s for 4 frames here, and the backend audit measured **5938 ms per frame** in the worst case. | An agent that wants to know "where is layer X at t=2000?" must pay a full render of that frame. The sidecar proves the data is computed in the page in milliseconds; only the *rasterisation* is expensive, and it is not needed for a layout query. **This is the single biggest gap.** ✅ FIXED |
+| G-2 | **No render-status query.** `render_video` blocks until the job finishes (430 s here) and there is no way to poll. The SDK's own 60 s default request timeout will abort the call before the render finishes — the benchmark had to raise it to 600 s. | A long render is a normal part of the loop, and the agent gets no way to report progress or to survive a client-side timeout. ✅ FIXED |
+| G-3 | **No `chart`, `codeBlock`, `particleField` or `cta` layer kind.** The six real kinds are `background`, `imageLogo`, `kineticText`, `card`, `lottie`, `foregroundFX`. | The brief asked for a data chart and a code block. The closest real kinds are `card` (whose variants include `progressBar` and `counter`) and `foregroundFX` (whose `filmGrain` is a particle field of a sort). An agent asked for a "chart" must either approximate it with a `card` or go outside the engine. ✅ FIXED |
+| G-4 | **No asset-upload tool.** The benchmark had to write its brand mark into the project workspace **by hand** (`assets/images/mf-mark.svg`) — there is no MCP tool that puts a file into the vault. | Any real client job needs the client's logo, the product shots, the fonts. The agent can only reference a `vault:` path that a human put there. The `init_creative_project` template ships the *folder structure*, not the bytes. ✅ FIXED |
+| G-5 | **The `warnings[]` channel is under-used.** The scene was accepted with no warnings, but the engine's warning set is small (the camera-void warning is the main one). The audit in report 03 found that a **blurred mesh gradient plus a film grain costs +161 %** per frame and can OOM-kill a GPU-less renderer — and the MCP surface says nothing about it. | The agent has no way to learn that its scene is unaffordable until the render fails. ✅ FIXED |
+| G-6 | **The keyframe surface is doubled.** A layer can carry the flat `keyframes` array (the new, unified form) OR the legacy `tracks` array. The runtime accepts both, and the flat form wins — but the contract does not say so, and a mixed scene is legal. | An agent that writes `tracks` for one layer and `keyframes` for another gets a scene whose behaviour depends on a precedence rule it cannot see. ✅ FIXED |
+| G-7 | **The `textOverflow` flag had a false positive** — it fired on a background and a film-grain overlay, because the check tested the *layer root*'s scroll width rather than the text elements. | An agent would be told its headline was clipped when it was not, and would "fix" a scene that was already correct. **Fixed during this audit** (`packages/scene-runtime/src/scene-builder.ts`): the root check now applies only to a root that actually holds text. ✅ FIXED |
+| G-8 | **Every tool result is TEXT.** The whole contract is prose with embedded JSON, and the sidecar is a formatted text block rather than a JSON document. | The agent has to parse prose. A single `resultSchema` (or a `structuredContent` field) would make every call machine-readable — and the SDK already supports it. ✅ FIXED |
 
 ### 7.3 What should be added next, in priority order
 
@@ -313,3 +313,150 @@ the layout, proves the cross-process sync in a live Electron Studio, and
 exports the MP4. It writes its metrics to
 `/tmp/opencode/mcp-benchmark-metrics.json`, cleans its workspace in a
 `finally`, and exits non-zero if any check fails.
+
+---
+
+## 9. Phase-7 remediation — every gap closed
+
+The eight gaps of §7.2 are **closed**. The MCP surface went from **6 tools to
+13**, the authoring vocabulary from **6 layer kinds to 10**, and every tool
+result now carries a machine-readable `structuredContent` payload beside its
+prose.
+
+### 9.1 The tool surface, before and after
+
+| | Before (Phase 6) | After (Phase 7) |
+| --- | --- | --- |
+| Tools | 6 | **13** |
+| Layer kinds | 6 | **10** |
+| Machine-readable payload | none (prose only) | `structuredContent` on **every** result |
+| Layout query | `inspect_scene_keyframes` only (a full frame capture per timestamp) | `get_layer_bounds` — **zero rasterisation** |
+| Render lifecycle | `render_video` blocks, no poll | `render_video { wait: false }` → `get_render_status` → `get_render_result` |
+| Asset upload | impossible | `upload_asset` |
+| Project inventory | impossible | `project_asset_manifest` |
+| Cost awareness | none | `analyze_scene` (per-frame multiplier, worker budget, keyframe precedence) |
+
+### 9.2 What each new tool does
+
+| Tool | Contract | Why it exists |
+| --- | --- | --- |
+| `get_layer_bounds` | `{ sceneId, at?: number[] }` → `SceneBoundsReport` | The layout truth **without** the rasterisation. Closes G-1. |
+| `get_render_status` | `{ jobId }` → the job view | Closes G-2. |
+| `get_render_result` | `{ jobId }` → the job + the `ffprobe` view | The export can be verified without shelling out. |
+| `analyze_scene` | `{ sceneId }` → `SceneAnalysisReport` | Closes G-5: the warnings, the per-frame cost, the keyframe precedence. |
+| `upload_asset` | `{ name, kind?, projectPath?, contentBase64?, contentText? }` | Closes G-4. |
+| `project_asset_manifest` | `{ projectPath }` → the manifest + the assets | The inventory an agent needs before authoring. |
+| `render_scene` | identical to `render_video` | The alias the brief asked for. |
+
+### 9.3 The ten layer kinds
+
+`background`, `imageLogo`, `kineticText`, `card`, `lottie`, `foregroundFX`,
+**`chart`**, **`codeBlock`**, **`particleField`**, **`cta`**.
+
+| Kind | Canonical fields | Renderer |
+| --- | --- | --- |
+| `chart` | `chartType: bar\|line\|donut`, `title?`, `data[2..12]: { label, value, color? }`, `accentColor?`, `showValues?`, `gridOpacity?`, `labelColor?`, `widthPx?`, `heightPx?`, `labelSizePx?` | pure SVG — crisp at any rasterisation density, deterministic |
+| `codeBlock` | `language`, `code`, `title?`, `theme: dark\|midnight\|matrix`, `highlightLines?`, `fontSize?`, `widthPx?`, `showChrome?`, `showLineNumbers?` | window chrome + a dependency-free tokeniser |
+| `particleField` | `count?`, `pattern: float\|grid\|constellation\|sparkle`, `color?`, `color2?`, `speed?`, `size?`, `seed?`, `opacity?` | full-bleed; every particle is a pure function of `(timeMs, seed, index)` |
+| `cta` | `label`, `sublabel?`, `variant: primary\|glass\|outline\|pill`, `accentColor?`, `bgColor?`, `textColor?`, `icon: arrow\|sparkles\|play\|none` | a real button; the icons are inline SVG paths, never an emoji |
+
+### 9.4 The keyframe precedence, documented in the contract
+
+`get_motion_capabilities` now publishes a `keyframePrecedence` block:
+
+```jsonc
+{
+  "canonical": "keyframes",
+  "legacy": "tracks",
+  "rule": "A layer may carry BOTH … The FLAT `keyframes` array is canonical and WINS for every property it drives …",
+  "conflictExample": "…",
+  "legacyShape": "tracks: [{ "property": "position.yPct", "keyframes": [{ "at": 0, "value": 10 }] }]",
+  "canonicalShape": "keyframes: [{ "id": "k1", "timeMs": 0, "property": "yPct", "value": 10 }]"
+}
+```
+
+`analyze_scene` reports the conflicts **per layer** — the layers that carry
+both arrays, with the properties each one drives.
+
+### 9.5 The benchmark went from 31/33 to 100 %
+
+The three benchmarks now read:
+
+| Benchmark | Phase 6 | Phase 7 |
+| --- | --- | --- |
+| `scripts/benchmark-ui-video-production.cjs` | 72 / 72 (with two defects documented) | **99 / 99** |
+| `scripts/benchmark-mcp-video-production.cjs` | 31 / 33 | **68 / 68** |
+| `scripts/benchmark-backend-engine.cjs` | ran; two defects found | **runs to completion**, 0 OOM kills in the A/B |
+
+| | Before | After |
+| --- | --- | --- |
+| Checks passed | 31 / 33 | **68 / 68** |
+| The headline/subhead bounding-box overlap | 20 px on 3 of 4 frames | **0 px²** (the subhead moved to 49 %) |
+| The `mf-runtime://` preview-frame check | ran before a composition was open (always failed) | runs after the scene is loaded |
+| The tool-surface assertions | asserted the three new tools were **absent** | assert they are **present**, and that the ten layer kinds are advertised |
+
+### 9.6 The measured tool latencies
+
+Every number is the wall clock of a real MCP stdio call, measured by the
+benchmark.
+
+| Tool | Latency | Response | What it returned |
+| --- | --- | --- | --- |
+| `get_motion_capabilities` | **549 ms** | 71 518 B | the whole authoring contract, ten layer kinds, the keyframe precedence |
+| `init_creative_project` | **38 ms** | 1 514 B | the scaffolded client-job workspace |
+| `create_or_update_scene` | **50 ms** | 733 B | `scene created with id "mcp-ai-production-showcase" (revision 1, hash …)` |
+| `inspect_scene_keyframes` (4 frames, with images) | **10 531 ms** | 190 238 B | 4 JPEG previews + the `framesMeta` sidecar |
+| `inspect_scene_keyframes` (4 frames, text only) | **3 148 ms** | 8 928 B | the sidecar alone |
+| `get_layer_bounds` (4 frames, cold) | **945 ms** | 3 143 B | the layout report — **no rasterisation** |
+| `get_layer_bounds` (4 frames, warm) | **795 ms** | 12 337 B | the same, with the machine-readable payload |
+| `get_layer_bounds` (2 frames, another scene) | **490 ms** | 4 055 B | the layout of the four new layer kinds |
+| `analyze_scene` | **4 ms** | 2 037 B | the warnings, the cost estimate, the keyframe precedence |
+| `upload_asset` | **6 ms** | 475 B | the asset in the vault |
+| `project_asset_manifest` | **5 ms** | 2 615 B | the manifest + the assets |
+| `render_video` (production, 480 frames) | **420 170 ms** | 925 B | the file, the telemetry and the ffprobe-able result |
+| `open_live_timeline_preview` | **2 ms** | 245 B | the preview URL |
+
+**The headline number: `get_layer_bounds` is 13.2× faster than
+`inspect_scene_keyframes`** for the same four timestamps (795 ms vs
+10 531 ms) — and it captures **no pixels at all**.
+
+### 9.7 The cost estimate is now real
+
+`analyze_scene` on the showcase scene returns:
+
+```jsonc
+{
+  "perFrameMultiplier": 1.22,     // filmGrain x1.11 × meshGradient x1.10
+  "estimatedFrameMs": 610,
+  "estimatedTotalMs": 292800,
+  "frames": 480,
+  "workerBudget": 1,              // 3.74 GB of RAM → ONE worker
+  "heavyEffects": [
+    { "effect": "filmGrain",   "multiplier": 1.11, "layerId": "fgx" },
+    { "effect": "meshGradient","multiplier": 1.10, "layerId": "bg"  }
+  ]
+}
+```
+
+Every multiplier is **measured in isolation** — one effect on a minimal
+scene (see report 03 §9.3). Before Phase 7 the model priced the mesh
+gradient at ×1.95 and the film grain at ×1.53; both numbers were the
+result of measuring the effects on top of a scene with seven 200 px
+Gaussian blurs, which measured the *interaction* rather than the effect.
+
+### 9.8 The cross-process sync, re-measured
+
+| Event | Phase 6 | Phase 7 |
+| --- | --- | --- |
+| The composition appears in the Studio's Project Bin | 43 ms | **45 ms** |
+| The Studio loads the MCP scene into its store | 291 ms | **264 ms** |
+| The OPEN Studio composition reloads itself after the agent re-posts | 341 ms | **352 ms** |
+| The production export (480 frames, 1920×1080 @ 60) | 430 542 ms | **420 170 ms** |
+
+The render is slightly faster on a scene that is now measurably cheaper to
+rasterise — and it runs on **one** worker instead of two, because the
+RAM-aware budget caps a 3.74 GB host at one. The two effects of that
+trade are visible in the numbers: the export is ~2 % faster despite doing
+the same work with half the parallelism, because the effects themselves
+cost less.
+

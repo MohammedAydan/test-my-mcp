@@ -225,7 +225,7 @@ export const ProjectBinPanel: Component = () => {
 
   const startAssetDrag = (
     event: DragEvent,
-    asset: { id: string; kind: string; src?: string; name?: string }
+    asset: { id: string; kind: string; src?: string; name?: string; sfx?: boolean }
   ) => writeAssetPayload(event, asset);
 
   const addAssetToScene = (asset: VaultAsset) => {
@@ -484,7 +484,13 @@ export const ProjectBinPanel: Component = () => {
                   data-asset-kind="audio"
                   title="Drag onto the timeline to place an audio cue"
                   onDragStart={(e) =>
-                    startAssetDrag(e, { id: sfx, kind: 'audio', name: `SFX: ${sfx}` })
+                    startAssetDrag(e, {
+                      id: sfx,
+                      kind: 'audio',
+                      name: `SFX: ${sfx}`,
+                      // the built-in cue — it drops on the AUDIO lane
+                      sfx: true,
+                    })
                   }
                 >
                   <div class="mf-bin-thumb" style={{ color: 'var(--mf-audio)' }}>

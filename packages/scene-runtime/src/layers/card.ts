@@ -1,7 +1,8 @@
-import type { CardLayer } from "@motionforge/scene-spec";
+import type { CardLayer, Paint } from "@motionforge/scene-spec";
 import { CRISP_TEXT_CSS } from "../determinism.js";
 import { SAFE_IMG_CSS } from "./image-logo.js";
 import { fontFamilyFor } from "../fonts.js";
+import { clamp, num, safeColor } from "./guards.js";
 import type { LayerContext } from "./context.js";
 
 /** True when the string contains any Arabic script (U+0600–U+06FF). */
@@ -41,60 +42,80 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
   // pipeline (`../transform.js`), which is the only writer of it.
   host.style.cssText = [
     "position:absolute",
-    `left:${layer.position.xPct}%`,
-    `top:${layer.position.yPct}%`,
+    `left:${clamp(num(layer.position?.xPct, 50), -300, 300)}%`,
+    `top:${clamp(num(layer.position?.yPct, 50), -300, 300)}%`,
   ].join(";");
 
   if (v.variant === "glassCard" || v.variant === "callout") {
     const card = document.createElement("div");
     card.dir = isRTL ? "rtl" : "ltr";
     const glass = v.glass ?? { blurPx: 20, tintColor: "#000000", tintOpacity: 0.5 };
-    const paddingPx = v.paddingPx ?? 24;
-    const radiusPx = v.radiusPx ?? 16;
-    const borderOpacity = (v.variant === "glassCard" ? v.borderOpacity : 0.18) ?? 0.18;
+    const paddingPx = clamp(num(v.paddingPx, 24), 0, 400);
+    const radiusPx = clamp(num(v.radiusPx, 16), 0, 400);
+    const borderOpacity = clamp(
+      num(v.variant === "glassCard" ? v.borderOpacity : 0.18, 0.18),
+      0,
+      1
+    );
+    const widthPx = num(v.widthPx, Number.NaN);
     card.style.cssText = [
       "position:relative",
-      `width:${v.widthPx ? `${v.widthPx}px` : "max-content"}`,
+      Number.isFinite(widthPx) ? `width:${clamp(widthPx, 0, 4000)}px` : "width:max-content",
       "max-width:100%",
       `padding:${paddingPx}px`,
       `border-radius:${radiusPx}px`,
-      glassCss(glass.blurPx ?? 20, glass.tintColor ?? "#000000", glass.tintOpacity ?? 0.5, borderOpacity),
+      glassCss(
+        clamp(num(glass.blurPx, 20), 0, 200),
+        safeColor(glass.tintColor, "#000000"),
+        clamp(num(glass.tintOpacity, 0.5), 0, 1),
+        borderOpacity
+      ),
     ].join(";");
     host.appendChild(card);
 
     if (v.variant === "callout") {
       const bar = document.createElement("div");
+      const accentColor = safeColor(v.accentColor, "#38bdf8");
       bar.style.cssText = [
         "position:absolute",
         `top:0;bottom:0`,
         isRTL ? (v.accentSide === "left" ? "right:0" : "left:0") : (v.accentSide === "left" ? "left:0" : "right:0"),
         "width:6px",
         `border-radius:999px`,
-        `background:${v.accentColor}`,
+        `background:${accentColor}`,
       ].join(";");
       card.appendChild(bar);
       if ((v.accentSide === "left" && !isRTL) || (v.accentSide === "right" && isRTL)) {
-        card.style.paddingLeft = `${v.paddingPx + 14}px`;
+        card.style.paddingLeft = `${paddingPx + 14}px`;
       } else {
-        card.style.paddingRight = `${v.paddingPx + 14}px`;
+        card.style.paddingRight = `${paddingPx + 14}px`;
       }
     }
 
     if (v.variant === "glassCard" && v.iconAssetId) {
       const icon = document.createElement("img");
-      icon.src = ctx.resolveAsset(v.iconAssetId);
-      icon.style.cssText = `${SAFE_IMG_CSS};width:56px;height:56px;margin-bottom:12px;`;
-      card.appendChild(icon);
+      // an undeclared asset must not take the preview down
+      let resolved = "";
+      try {
+        resolved = ctx.resolveAsset(v.iconAssetId);
+      } catch {
+        resolved = "";
+      }
+      if (resolved.length > 0) {
+        icon.src = resolved;
+        icon.style.cssText = `${SAFE_IMG_CSS};width:56px;height:56px;margin-bottom:12px;`;
+        card.appendChild(icon);
+      }
     }
 
     const textAlign = isRTL ? "right" : "left";
-    if (v.title) {
+    if (typeof v.title === "string" && v.title.length > 0) {
       const title = document.createElement("div");
       title.textContent = v.title;
       title.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "headline")};font-weight:800;font-size:34px;color:#fff;margin-bottom:10px;text-align:${textAlign};${CRISP_TEXT_CSS};`;
       card.appendChild(title);
     }
-    if (v.body) {
+    if (typeof v.body === "string" && v.body.length > 0) {
       const body = document.createElement("div");
       body.textContent = v.body;
       body.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:400;font-size:22px;line-height:1.45;color:rgba(255,255,255,0.82);text-align:${textAlign};${CRISP_TEXT_CSS};`;
@@ -102,7 +123,8 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     }
   } else if (v.variant === "progressBar") {
     const col = document.createElement("div");
-    col.style.cssText = `width:${v.widthPx ? `${v.widthPx}px` : "520px"};position:relative;`;
+    const widthPx = num(v.widthPx, Number.NaN);
+    col.style.cssText = `width:${Number.isFinite(widthPx) ? `${clamp(widthPx, 0, 4000)}px` : "520px"};position:relative;`;
     host.appendChild(col);
 
     // Header row: the label and the live percentage share one flex line pinned
@@ -120,15 +142,17 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     ].join(";");
     col.appendChild(header);
 
-    if (v.label) {
+    if (typeof v.label === "string" && v.label.length > 0) {
       const label = document.createElement("div");
       label.textContent = v.label;
       label.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:600;font-size:24px;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${CRISP_TEXT_CSS};`;
       header.appendChild(label);
     }
 
+    const heightPx = clamp(num(v.heightPx, 18), 1, 400);
+    const radiusPx = clamp(num(v.radiusPx, 120), 0, 400);
     const track = document.createElement("div");
-    track.style.cssText = `position:relative;height:${v.heightPx}px;border-radius:${Math.min(v.radiusPx, v.heightPx / 2)}px;background:${v.trackColor};overflow:hidden;`;
+    track.style.cssText = `position:relative;height:${heightPx}px;border-radius:${Math.min(radiusPx, heightPx / 2)}px;background:${safeColor(v.trackColor, "rgba(255,255,255,0.12)")};overflow:hidden;`;
     col.appendChild(track);
 
     const fill = document.createElement("div");
@@ -139,13 +163,16 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     applyPaintBackground(fill, v.fill);
     track.appendChild(fill);
 
+    // The value is a PERCENT: a malformed one (a string, a NaN, a value out
+    // of range) would animate `width: NaN%` and collapse the fill.
+    const value = clamp(num(v.value, 0), 0, 100);
     ctx.tl.to(fill, {
-      width: `${v.value}%`,
+      width: `${value}%`,
       duration: 1.3,
       ease: "power3.out",
     }, ctx.layerAtSec + 0.15);
 
-    if (v.showPercentage) {
+    if (v.showPercentage === true) {
       const pctText = document.createElement("div");
       pctText.style.cssText = [
         `font-family:${fontFamilyFor(ctx.fonts, "metric")}`,
@@ -160,7 +187,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
       header.appendChild(pctText);
       const proxy = { n: 0 };
       ctx.tl.to(proxy, {
-        n: v.value,
+        n: value,
         duration: 1.3,
         ease: "power3.out",
         onUpdate: () => {
@@ -172,22 +199,25 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     // counter
     const v2 = v.variant === "counter" ? v : undefined;
     if (!v2) throw new Error("unreachable card variant");
-    const num = document.createElement("div");
-    num.dir = isRTL ? "rtl" : "ltr";
-    num.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, v2.role)};font-weight:800;font-size:${v2.sizePx}px;color:#fff;font-variant-numeric:tabular-nums;${CRISP_TEXT_CSS};`;
-    host.appendChild(num);
+    const num2 = document.createElement("div");
+    num2.dir = isRTL ? "rtl" : "ltr";
+    const sizePx = clamp(num(v2.sizePx, 120), 8, 800);
+    num2.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, v2.role)};font-weight:800;font-size:${sizePx}px;color:#fff;font-variant-numeric:tabular-nums;${CRISP_TEXT_CSS};`;
+    host.appendChild(num2);
 
-    const fmt = new Intl.NumberFormat(v2.locale ?? "en-US", {
-      minimumFractionDigits: v2.decimals,
-      maximumFractionDigits: v2.decimals,
-    });
-    const proxy = { n: v2.from };
+    const decimals = clamp(Math.round(num(v2.decimals, 0)), 0, 20);
+    const formatter = makeFormatter(v2.locale, decimals);
+    const from = num(v2.from, 0);
+    const to = num(v2.to, from);
+    const prefix = typeof v2.prefix === "string" ? v2.prefix : "";
+    const suffix = typeof v2.suffix === "string" ? v2.suffix : "";
+    const proxy = { n: from };
     const render = () => {
-      num.textContent = `${v2.prefix}${fmt.format(proxy.n)}${v2.suffix}`;
+      num2.textContent = `${prefix}${formatter.format(proxy.n)}${suffix}`;
     };
     render();
     ctx.tl.to(proxy, {
-      n: v2.to,
+      n: to,
       duration: 1.6,
       ease: "power2.out",
       onUpdate: render,
@@ -198,12 +228,53 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
   return { content: host };
 }
 
-function applyPaintBackground(el: HTMLElement, fill: Parameters<typeof paintToCss>[0]): void {
-  el.style.background = paintToCss(fill);
+/**
+ * A number formatter that never throws.
+ *
+ * `Intl.NumberFormat` rejects an invalid locale with a `RangeError`, and a
+ * malformed `decimals` (a float, a NaN) is out of range too — either one
+ * would take the whole preview down for a cosmetic reason.
+ */
+function makeFormatter(locale: string | undefined, decimals: number): Intl.NumberFormat {
+  const options: Intl.NumberFormatOptions = {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  };
+  try {
+    return new Intl.NumberFormat(typeof locale === "string" && locale.length > 0 ? locale : "en-US", options);
+  } catch {
+    try {
+      return new Intl.NumberFormat("en-US", options);
+    } catch {
+      return {
+        format: (value: number) => value.toFixed(decimals),
+      } as Intl.NumberFormat;
+    }
+  }
 }
 
-function paintToCss(fill: string | { type: "linear"; angleDeg: number; stops: { color: string; at: number }[] }): string {
+function applyPaintBackground(el: HTMLElement, fill: Paint | undefined): void {
+  const css = paintToCss(fill);
+  if (css) el.style.background = css;
+}
+
+/**
+ * A paint → a CSS background.
+ *
+ * A MALFORMED paint must not throw: the old implementation did
+ * `fill.stops.map(...)` on whatever it was handed, so a card whose `fill`
+ * was missing took the preview down with a `TypeError`.
+ */
+function paintToCss(fill: Paint | undefined): string {
   if (typeof fill === "string") return fill;
-  const stops = fill.stops.map((s) => `${s.color} ${s.at}%`).join(", ");
-  return `linear-gradient(${fill.angleDeg}deg, ${stops})`;
+  if (fill && typeof fill === "object" && Array.isArray((fill as { stops?: unknown }).stops)) {
+    const gradient = fill as { angleDeg?: number; stops: Array<{ color: string; at: number }> };
+    const stops = gradient.stops
+      .filter((s) => s && typeof s.color === "string")
+      .map((s) => `${s.color} ${num(s.at, 0)}%`)
+      .join(", ");
+    if (stops.length === 0) return "";
+    return `linear-gradient(${num(gradient.angleDeg, 90)}deg, ${stops})`;
+  }
+  return "";
 }

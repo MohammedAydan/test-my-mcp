@@ -79,5 +79,32 @@ declare global {
      * the gizmo itself without rotating the box twice.
      */
     getLayerBounds?(): Record<string, LayerBoundsReport>;
+    /**
+     * Mount (or REPLACE) a scene in the ALREADY-LOADED page — no navigation.
+     *
+     * WHY THIS EXISTS: the engine's inspection path used to open a fresh
+     * browser context, navigate, wait for the network to go quiet and THEN
+     * measure the scene. That whole dance cost ~1.5 s per call and dominated
+     * every measurement. With a warm page the engine pushes the scene JSON
+     * straight in here and gets its numbers back in milliseconds.
+     *
+     * The contract:
+     * - the previous scene is unmounted first (no ghosting),
+     * - the scene is parsed with the real schema (a malformed scene degrades,
+     *   it never throws),
+     * - `renderConfig` / `describeFrame` / `getLayerBounds` are re-published,
+     * - the promise resolves when the scene is mounted and settled on frame 0.
+     */
+    mountSceneFromHost?(scene: unknown, sceneId: string, fps?: number): Promise<void>;
+    /**
+     * Seek to a frame for a LAYOUT measurement.
+     *
+     * The same geometry as `seekToFrame`, without the media resync and the
+     * image decode — a bounding box does not depend on a video's currentTime
+     * or on a bitmap's pixels. The engine's warm page uses this for the
+     * zero-rasterisation layout report, which is the difference between a
+     * sub-second query and a two-second one.
+     */
+    seekToFrameForLayout?(frame: number): Promise<void>;
   }
 }

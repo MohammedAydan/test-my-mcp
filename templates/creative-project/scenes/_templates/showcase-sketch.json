@@ -197,6 +197,83 @@
           "warmth": 0.12
         }
       ]
+    },
+    {
+      "id": "chart",
+      "type": "chart",
+      "at": 8600,
+      "position": {
+        "xPct": 50,
+        "yPct": 62
+      },
+      "chartType": "bar",
+      "title": "Frames per second",
+      "data": [
+        {
+          "label": "Draft",
+          "value": 8.9
+        },
+        {
+          "label": "Production",
+          "value": 4.2
+        },
+        {
+          "label": "Capture",
+          "value": 1.1
+        }
+      ],
+      "accentColor": "#38bdf8",
+      "showValues": true,
+      "entrance": {
+        "name": "smoothSlideUp"
+      }
+    },
+    {
+      "id": "snippet",
+      "type": "codeBlock",
+      "at": 6000,
+      "position": {
+        "xPct": 26,
+        "yPct": 26
+      },
+      "language": "typescript",
+      "title": "capture.ts",
+      "code": "const frame = await page.screenshot({ type: 'jpeg' });",
+      "theme": "midnight",
+      "highlightLines": [
+        1
+      ],
+      "fontSize": 20,
+      "entrance": {
+        "name": "3dFlipIn"
+      }
+    },
+    {
+      "id": "dust",
+      "type": "particleField",
+      "pattern": "constellation",
+      "count": 90,
+      "color": "#7dd3fc",
+      "speed": 0.6,
+      "size": 2.5,
+      "seed": 42
+    },
+    {
+      "id": "cta",
+      "type": "cta",
+      "at": 9200,
+      "position": {
+        "xPct": 50,
+        "yPct": 80
+      },
+      "label": "Start free trial",
+      "sublabel": "No credit card required",
+      "variant": "primary",
+      "accentColor": "#38bdf8",
+      "icon": "arrow",
+      "entrance": {
+        "name": "springPop"
+      }
     }
   ],
   "camera": {

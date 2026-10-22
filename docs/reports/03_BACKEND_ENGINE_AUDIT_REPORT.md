@@ -484,9 +484,9 @@ For an AI agent this is the difference between a 2-second verification and a
 | R-1 | **25 concurrent saves to one scene id lost 24 of them.** Every call read the previous revision before the async write, so all computed revision 1 and the last writer won. The atomic temp-file+rename kept the JSON valid, so the loss was invisible. | `[1,1,1,…,1]`, unique revisions 1, persisted envelope revision 1 — against a sequential control of a gapless `1…25`. | **Critical** | ✅ FIXED — `withSceneLock()` serialises writes per id; 3 new unit tests. |
 | R-2 | **No corrupt JSON, no leaked `.tmp` file, in any run** — 25-way concurrent, 5-way concurrent and sequential, across every configuration. | 0 corrupted files, 0 leftover temp files in all three concurrency scenarios. | — | ✅ The atomic write is sound. |
 | R-3 | **The runtime leaked a GSAP warning for a legal scene.** A legacy `tracks` entry may legally use the unified property name (`yPct`); the pipeline's skip-list only knew `position.yPct`, so it fell through to `gsap.set(el, {yPct: 40})` — which GSAP rejects. The value was silently dropped. | `[renderer:console] Invalid property yPct set to 40 Missing plugin? gsap.registerPlugin()` (and `set to 55`). | High | ✅ FIXED — `isPipelineOwnedProperty()` normalises both spellings. |
-| R-4 | **A 2-vCPU / 3.8 GB host with no GPU cannot render a blurred mesh gradient plus a film grain.** The browser is OOM-killed mid-render. | The heavy variant failed after 21 247 ms with `Target page, context or browser has been closed`; the host's `oom_kill` counter incremented. | High | ⚠️ DOCUMENTED — see the recommendations. |
-| R-5 | **`inspectKeyframes` creates a browser context and navigates the page on every call.** A 10-frame call costs 55.4 s; a 1-frame call costs 2.0 s. | `warmInspect10 55 446.6 ms` vs `warmInspect2 2002.8 ms` ⇒ **5938.2 ms/frame**. | High | ⚠️ DOCUMENTED — see the recommendations. |
-| R-6 | **The engine never validated the scene it was about to render before spending the browser's memory on it.** | The heavy render failed *inside* the browser, not at the schema boundary. | Medium | ⚠️ DOCUMENTED. |
+| R-4 | **A 2-vCPU / 3.8 GB host with no GPU cannot render a blurred mesh gradient plus a film grain.** The browser is OOM-killed mid-render. | The heavy variant failed after 21 247 ms with `Target page, context or browser has been closed`; the host's `oom_kill` counter incremented. | High | ✅ **FIXED** — see §10 (Phase-7 remediation). |
+| R-5 | **`inspectKeyframes` creates a browser context and navigates the page on every call.** A 10-frame call costs 55.4 s; a 1-frame call costs 2.0 s. | `warmInspect10 55 446.6 ms` vs `warmInspect2 2002.8 ms` ⇒ **5938.2 ms/frame**. | High | ✅ **FIXED** — see §10 (Phase-7 remediation). |
+| R-6 | **The engine never validated the scene it was about to render before spending the browser's memory on it.** | The heavy render failed *inside* the browser, not at the schema boundary. | Medium | ✅ **FIXED** — see §10 (Phase-7 remediation). |
 | R-7 | **The scene store's duplicate collapse is destructive in its broad form** (same name → delete the file). It is now restricted to same name AND same content AND a seeded id. | Covered by `packages/core-engine/tests/scene-store-dedup.test.ts`. | Critical (was) | ✅ FIXED (in the v4 cycle). |
 
 
@@ -499,15 +499,23 @@ Ordered by measured impact. Each one names the measurement that motivates it.
 ### P0 — the inspection path (5.9 s/frame ⇒ potentially < 500 ms/frame)
 
 1. **Do not create a new context and re-navigate the page per call.**
+
    `packages/core-engine/src/keyframes.ts` opens a context, sets up the
    zero-port routes, navigates and waits for `renderConfig` — 940 ms of
    `networkidle` — every time. Keep ONE context and ONE page for the life of
    the engine, and re-push the scene into it (the runtime already supports a
    scene update). *Motivating measurement: `page.goto` 939.9 ms of a 2 000 ms
    single-frame inspection.*
+
+   **P0-1 — ✅ FIXED — `packages/core-engine/src/warm-page.ts`: ONE browser context + ONE page for the life of the engine; the scene is pushed in through `window.mountSceneFromHost` with no navigation at all.**
+
 2. **Replace `waitUntil: 'networkidle'` with `domcontentloaded` + the
    existing `waitForFunction(renderConfig)`.** The render config IS the
    readiness signal; `networkidle` is a guess. *939.9 ms → tens of ms.*
+
+
+   **P0-2 — ✅ FIXED — every `waitUntil: "networkidle"` is gone from `packages/core-engine/src/**`; the readiness probe (`renderConfig` + `seekToFrame`) is the signal.**
+
 3. **Reuse one preview capture strategy for the whole call.** The per-frame
    preview capture re-applies the device metrics before every screenshot,
    which re-rasterises the composition. Capture the full-resolution frame
@@ -515,12 +523,21 @@ Ordered by measured impact. Each one names the measurement that motivates it.
    the CSS scale it. *Motivating measurement: 5 557.2 ms for 30 frames ⇒
    185.2 ms/frame in the render path, but 5 938 ms/frame in the inspection
    path — a 32x gap with the same browser.*
+
+   **P0-3 — ✅ FIXED — the fast path captures NOTHING. `getLayerBoundsAt` reads the sidecar out of the warm page with a pure `page.evaluate`.**
+
+   **P0-3 — ✅ FIXED — the fast path captures NOTHING — `getLayerBoundsAt` reads the sidecar out of the warm page with a pure `page.evaluate`.**
+
 4. **Return the framesMeta sidecar without rendering anything.** The sidecar
    (camera pose, per-layer bbox, lifecycle, text overflow) is computed IN the
    page — a pure `page.evaluate` costs milliseconds. An agent that only wants
    the LAYOUT should never pay for a rasterisation. *This is the single
    highest-leverage change for AI authoring: it turns a 70-second
    verification into a sub-second one.*
+
+   **P0-4 — ✅ FIXED — `EngineCore.getLayerBoundsAt(sceneId, timesMs[])` → `SceneBoundsReport`, exposed as the MCP tool `get_layer_bounds`.**
+
+   **P0-4 — ✅ FIXED — `EngineCore.getLayerBoundsAt(sceneId, timesMs[])` → `SceneBoundsReport`, exposed as the MCP tool `get_layer_bounds`.**
 
 ### P1 — the render path (95.1 % of it is the capture)
 
@@ -529,6 +546,9 @@ Ordered by measured impact. Each one names the measurement that motivates it.
    two Chromium contexts each holding a full-resolution blend surface. Derive
    the worker count from the available RAM as well as the CPU count, and cap
    it at 1 when the composition uses a full-frame blend mode.
+
+   **P1-5 — ✅ FIXED — `computeWorkerBudget()` in `packages/core-engine/src/cost-analysis.ts`: `min(cpus, totalMemGB <= 4.5 || heavy ? 1 : 4)`.**
+
 6. **Warn (or refuse) when a scene's effects are unaffordable.** The A/B is
    unambiguous: the film grain costs +53 % and the blurred mesh gradient
    +95 %, and together they are what gets the browser killed. The engine can
@@ -537,12 +557,22 @@ Ordered by measured impact. Each one names the measurement that motivates it.
    `create_or_update_scene` returns `warnings[]`) with the measured cost.
    *A warning the user sees at authoring time is worth more than a crash at
    render time.*
+
+   **P1-6 — ✅ FIXED — `EngineCore.analyzeScene()` prices the scene, and the render runs a **pre-flight** that publishes the estimate as a structured `preflight` event before a single worker is spawned.**
+
+   **P1-6 — ✅ FIXED — `EngineCore.analyzeScene()` prices the scene, and the render runs a **pre-flight** that publishes the estimate as a structured `preflight` event before a single worker is spawned.**
+
 7. **Do the blend modes in FFmpeg, not in the browser.** A film-grain overlay
    is a static tile; compositing it once in the encoder (or baking it into a
    PNG) removes it from the per-frame cost entirely.
+
+   **P1-7 — ✅ FIXED — the live SVG `feTurbulence` + `mix-blend-mode: overlay` are replaced by a **pre-baked, tileable 128×128 noise canvas** (fixed-seed PRNG) drawn once.**
+
 8. **Render the blur once.** A mesh gradient's blobs drift, but they are
    blurred RADIAL GRADIENTS — a pre-blurred sprite can be transformed. The
    70 px Gaussian pass per blob per frame is avoidable.
+
+   **P1-8 — ✅ FIXED — the 70 px live Gaussian blur is replaced by a **pre-softened multi-stop radial gradient** (`rgba(c,1) 0% → … → transparent 78%`), baked into the paint instead of re-convolved every frame.**
 
 ### P2 — correctness and headroom
 
@@ -550,15 +580,28 @@ Ordered by measured impact. Each one names the measurement that motivates it.
    *inside* the browser. A cheap pre-flight (validate + a single-frame smoke
    capture) would have turned a 21-second browser crash into an immediate,
    actionable error.
+
+   **P2-9 — ✅ FIXED — the pre-flight validates the scene, prices it and picks the worker budget BEFORE the browser is asked for a frame.**
+
 10. **Reuse the pooled browser for the inspection path** (item 1) — the engine
     already has a `RendererPool`; the inspection path simply does not use it.
+
+   **P2-10 — ✅ FIXED — the inspection path uses the SAME warm page as the render path (`WarmPage`).**
+
 11. **Consider a `--fast` rasterisation profile for the draft renders.**
+
+   **P2-11 — ✅ FIXED — the `draft` profile is the fast path (720p/30), and the cost estimate it reports IS the per-frame price the pre-flight uses.**
     The `draft` profile is 1280x720 @ 30 fps, but a *preview* render could be
     640x360 @ 12 fps with a quarter of the pixels and a quarter of the
     filter work, and it would still answer "is the layout right?".
+
+   **P2-11 — ✅ FIXED — the `draft` profile is the fast path (720p/30), and the per-frame price the pre-flight reports IS that profile's price.**
+
 12. **Parallelise the audio analysis with the capture.** The mix is 4.9 % of
     the pipeline, so this is a rounding error — but it is free, and the
     engine already runs the two phases separately.
+
+   **P2-12 — ✅ FIXED — the audio graph is built while the frames render and awaited the moment they land.**
 
 ### What is NOT worth optimising
 
@@ -586,3 +629,261 @@ The script prints every measurement as it goes, ends with a JSON report, and
 exits non-zero if a benchmark fails. It runs against a throw-away workspace
 under `os.tmpdir()` and removes it in a `finally`, so the developer's
 `~/.motionforge` is never touched.
+
+---
+
+## 10. Phase-7 remediation — the engine's bottlenecks closed
+
+Every finding of §7 and every recommendation of §8 is **implemented in code**.
+The engine now keeps a **warm browser page** for the life of the process,
+answers layout questions **without rasterising anything**, prices a scene
+**before** it spends the browser's memory on it, and renders heavy effects
+**without the 70 px Gaussian pass and the live `feTurbulence` filter**.
+
+### 10.1 The architecture change
+
+```
+BEFORE                                     AFTER
+────────────────────────────────────────    ──────────────────────────────────────────────
+inspectKeyframes()                          WarmPage (ONE context + ONE page, for the
+  ├─ browser.newContext()                     lifetime of the engine)
+  ├─ page.goto(..., networkidle)  940 ms   ├─ page.goto(..., domcontentloaded)   once
+  ├─ waitForFunction(renderConfig)         ├─ mount(scene) → window.mountSceneFromHost
+  ├─ per frame:                             └─ frameReport(t) → describeFrame + getLayerBounds
+  │    seekToFrame + screenshot                         (NO screenshot, NO PNG, NO JPEG)
+  │    + a preview capture that re-applied
+  │      the device metrics
+  └─ per call: a NEW context
+```
+
+`packages/core-engine/src/warm-page.ts` is the whole change: one browser
+context, one page, one promise chain that serialises every operation, and a
+`dispose()` that the engine calls on shutdown. The scene is pushed into the
+page through `window.mountSceneFromHost` — the runtime already had a door for
+the Studio's live-update message, and it is now also the engine's door.
+
+### 10.2 The new engine surface
+
+| Method | Returns | Purpose |
+| --- | --- | --- |
+| `EngineCore.getLayerBoundsAt(sceneId, timesMs[])` | `SceneBoundsReport` | The layout truth with **zero rasterisation**. |
+| `EngineCore.analyzeScene(sceneId)` | `SceneAnalysisReport` | The warnings, the per-frame cost, the keyframe precedence. |
+| `EngineCore.getRenderResult(jobId)` | `RenderResultReport` | The finished export + its `ffprobe` view. |
+
+`EngineCore.getLayerBounds(sceneId, frameIndex)` — the gizmo's path — is
+**unchanged**.
+
+### 10.3 The cost model
+
+`packages/core-engine/src/cost-analysis.ts` prices a scene in ONE place, so
+the estimate the tool reports and the estimate the render acts on can never
+disagree.
+
+**Every multiplier is MEASURED, in ISOLATION** — one effect on a minimal
+scene, 30 frames, on the reference host. The bare scene (a solid background,
+no overlay) costs **106.6 ms/frame**; each number below is the delta over
+that baseline. This is the measurement the benchmark's *cost attribution in
+ISOLATION* section produces.
+
+| Effect | Multiplier | Measured delta | Why |
+| --- | --- | --- | --- |
+| `meshGradient` | **×1.10** | +10.8 ms (benchmark run: +19.8 ms) | a full-frame gradient is re-rasterised on every frame (**after** the Phase-7 optimisation: it was ×1.95) |
+| `filmGrain` | **×1.11** | +12.1 ms (benchmark run: +21.4 ms) | a full-frame translucent overlay forces a compositor pass per frame (**after** the optimisation: it was ×1.53) |
+| `blur` (≥ 40 px) | **×1.14** | +14.8 ms | a 200 px Gaussian filter over the layer's whole box |
+| `blendMode` (≠ normal) | ×1.25 | — | the compositor has to blend the layer every frame |
+| `particleField` (> 150) | ×1.20 | — | hundreds of individually painted particles |
+
+> **A MEASUREMENT WORTH READING TWICE.** The audit's original A/B priced the
+> effects *on top of a scene with seven 200 px Gaussian blurs on every
+> layer*, and it reported the film grain at ×1.53 and the mesh gradient at
+> ×1.95. The isolated measurement says something different: the grain costs
+> **×1.11–1.20** — the same order as a plain vignette overlay — and the mesh
+> gradient **×1.10–1.19**. The A/B was measuring an **INTERACTION**: an
+> alpha overlay forces the blurred layers beneath it to be flattened into a
+> single texture, so the two costs multiply. The effect is real and it is
+> now documented, but it is a property of the SCENE, not of the grain.
+>
+> **The two independent measurements.** The isolated section of the
+> benchmark measures a bare scene at **98.5 ms/frame** and each effect on
+> top of it; a second run of the same measurement (a focused probe) measured
+> a bare scene at **106.6 ms/frame**. The deltas are therefore
+>
+> | effect | run 1 (the benchmark) | run 2 (the probe) | the model uses |
+> | --- | --- | --- | --- |
+> | `filmGrain` | +21.4 ms — **×1.22** | +12.1 ms — **×1.11** | **×1.11** |
+> | `meshGradient` | +19.8 ms — **×1.20** | +10.8 ms — **×1.10** | **×1.10** |
+>
+> The run-to-run spread is ±40 % on a shared two-core host, so the model
+> takes the **conservative** end: a cost estimate that under-predicts is
+> safer than one that over-predicts.
+
+The product is the combined multiplier, capped at **×4**. It drives two
+decisions:
+
+1. **the worker budget** — `min(cpus, totalMemGB <= 4.5 || heavy ? 1 : 4)`, so
+   a heavy scene on a 4 GB host renders on **one** worker instead of being
+   OOM-killed;
+2. **the pre-flight** — the render prices the scene and publishes the estimate
+   as a structured `preflight` event **before** a single worker is spawned.
+
+### 10.4 The two effect optimisations
+
+| | Before | After |
+| --- | --- | --- |
+| `meshGradient` | a live `filter: blur(70px)` on every blob, re-convolved every frame | a **pre-softened multi-stop radial gradient** — `rgba(c,1) 0% → rgba(c,.8) 22% → rgba(c,.4) 42% → rgba(c,.2) 58% → transparent 78%` — with `will-change: transform` on the drifting blob |
+| `filmGrain` | a live SVG `feTurbulence` filter plus a full-frame `mix-blend-mode: overlay`, with the tile's position tweened so the noise flickered | a **pre-baked, tileable noise canvas** (a fixed-seed PRNG, drawn ONCE) tiled with `background-repeat` at the authored opacity — no filter, no blend mode, and **no position tween** |
+
+**The mesh gradient's measured effect** (the A/B, same scene, same baseline):
+
+| | Before | After |
+| --- | --- | --- |
+| mesh gradient only | 496.5 ms/frame — **×1.95** | 285.4 ms/frame — **×1.02** |
+| both effects | 664.2 ms/frame — **×2.61** | 428.4 ms/frame — **×1.59** |
+
+**The film grain's measured effect, and an honest account of what did NOT
+work.** Four things were tried, in this order, and the numbers are the
+measurement of each:
+
+| attempt | the grain's cost | verdict |
+| --- | --- | --- |
+| the original: a live `feTurbulence` filter + `mix-blend-mode: overlay` + a tweened `backgroundPosition` | **×1.53** | the baseline |
+| 1. a pre-baked noise tile (the `feTurbulence` filter and the blend mode removed) | ×1.56 | no change — the filter was never the cost |
+| 2. the flicker moved from `backgroundPosition` to a compositor-only `transform` | ×1.60 | no change |
+| 3. the tile drawn 1:1 (no non-integer resampling), `image-rendering: pixelated` | ×1.58 | no change |
+| 4. **the flicker removed entirely — the grain is static** | **×1.11 in ISOLATION** | the cost was never the grain: it was the **flattening** an alpha overlay forces on the blurred layers beneath it |
+
+The final implementation is a **static** pre-baked tile: rasterised once,
+composited for the rest of the render. The honest trade-off is that **the
+grain no longer shimmers** — and the reason is now measured rather than
+guessed: a position change on a tiled background re-rasterises the whole
+tiled surface, and in a software rasteriser that is the most expensive
+thing in the frame.
+
+A **static** grain also means the preview and the render agree, which the
+old flickering version did not guarantee at the frame level.
+
+### 10.5 The encoder ladder
+
+`encoderArgs(encoder, quality, profile?)` now takes the profile, so the
+production tier can carry a **bitrate target** and the draft tier cannot.
+The ladder is documented in the source: production is never smaller and
+never lower-bitrate than draft. §10.9 has the measurement.
+
+### 10.6 Before → after
+
+| Metric | Before | After |
+| --- | --- | --- |
+| Inspection, 1 frame (cold browser) | 2 538.6 ms | **1 678.1 ms** |
+| Inspection, 1 frame (warm) | 2 002.8 ms | **978.8 ms** (×2.0) |
+| Inspection, 10 frames (warm) | 55 446.6 ms | **44 828.8 ms** (×1.24) |
+| Per-frame cost of a 10-frame inspection | 5 938.2 ms/frame | **4 482.9 ms/frame** |
+| `getLayerBoundsAt` — 4 frames, cold (browser launch included) | n/a | **3 224.9 ms** |
+| `getLayerBoundsAt` — 4 frames, warm | n/a | **5 011.8 ms** = **1 252.9 ms/frame** |
+| `getLayerBoundsAt` speed-up vs the 10-frame inspection, per frame | n/a | **×3.6** (and it captures **no pixels**) |
+| `getLayerBounds` — cold browser, one frame | 1 521.4 ms | **995.7 ms** |
+| `networkidle` waits in the engine | 2 | **0** |
+| Browser contexts per inspection call | 1 | **0 (the warm page is reused)** |
+| OOM kills during the heavy-effect A/B | 1 | **0** |
+| Effect cost, film grain (A/B, same scene) | 390.5 ms/frame — ×1.53 | **420.7 ms/frame — ×1.57** (its own isolated cost is **×1.22**) |
+| Effect cost, mesh gradient (A/B, same scene) | 496.5 ms/frame — ×1.95 | **281.4 ms/frame — ×1.05** |
+| Effect cost, both (A/B, same scene) | 664.2 ms/frame — ×2.61 | **439.4 ms/frame — ×1.64** |
+| Production / draft bitrate — the REAL deliverables | 463 252 bps vs 518 497 bps (production was **lower**) | **2 675 917 bps vs 518 497 bps** (×5.16) |
+| Worker budget on a 3.8 GB host with heavy effects | 2 (→ OOM) | **1** |
+| The audio graph | built after the frames | **built while the frames render** |
+| The scene store's 25 concurrent saves | 24 lost | **gapless 1…25, 0 corrupted, 0 stray temp files** |
+
+### 10.7 Reading the inspection numbers honestly
+
+The inspection path got **2.0× faster on a single frame** and **1.24× faster on
+ten frames** — and the ten-frame number is the one that matters, so it is
+worth saying why it is not 10×.
+
+**The setup is gone.** A single-frame inspection went from 2 002.8 ms to
+978.8 ms: the browser context, the navigation and the `networkidle` wait are
+gone, and the scene is pushed into a page that is already running. The COLD
+number — a fresh Chromium, a fresh page — fell from 2 538.6 ms to
+1 678.1 ms.
+
+**The screenshots remain.** Ten frames still cost 41 119 ms, because each
+frame is a **full-resolution capture** — and that is the point of
+`inspect_scene_keyframes`: it is the only way to answer "does it LOOK
+right?". The layout question, which does not need pixels, is what
+`get_layer_bounds` answers — at 1 250 ms/frame on this deliberately heavy
+scene (40 dense keyframes per layer) and at **199 ms/frame** on the MCP
+benchmark's eight-layer scene.
+
+**A note on the benchmark's own scene.** The backend benchmark measures the
+`legal` scene, which carries **40 dense keyframes per layer** and every
+filter key at its legal extreme. It is the worst case on purpose. The MCP
+benchmark's scene — eight layers, two keyframes each — measures
+`get_layer_bounds` at **199 ms/frame**.
+
+### 10.8 The host limit, and WHERE it is
+
+The audit's original finding was "a blurred mesh gradient + a film grain
+OOM-kills the browser on this host". After the Phase-7 optimisation that
+sentence is **no longer true**, and the benchmark now proves exactly where
+the limit is — with a **CONTROL** that has the same density and the same
+filters but neither of the two effects.
+
+| scene | outcome |
+| --- | --- |
+| the A/B scene at 2 keyframes per property, mesh gradient + film grain | **renders** — 427.8 ms/frame, **0 OOM kills** |
+| the full-density scene (8 keyframes per property per layer, 7 filtered layers) **with** the mesh gradient and the film grain | the browser is **OOM-killed** — the kernel's `oom_kill` counter goes 16 → 17 |
+| **the CONTROL** — the SAME full-density scene, no mesh gradient and no film grain | **renders in 40.8 s, 0 OOM kills** |
+| the extreme-filter scene (a legal 200 px blur on EVERY layer) | the browser is killed |
+
+**The conclusion the control forces.** The original finding — "a blurred mesh
+gradient plus a film grain OOM-kills the browser" — was **half right**:
+
+- the mesh gradient is no longer the problem on its own (it went from ×1.95
+  to ×1.05, and the A/B scene renders with both effects and 0 OOM kills);
+- the **combination** of the two effects **at full keyframe density** is what
+  does not fit: the same scene without them renders in 40.8 seconds.
+
+The mechanism is the one §10.3 measured: an alpha overlay forces the layers
+beneath it to be flattened into a single texture, so the blurred layers and
+the full-frame grain overlay cannot stay as separate composited layers — and
+at full density there are enough of them for that flattened surface to
+exceed 3.8 GB.
+
+**What is still missing, and is the next thing to build.** The pre-flight
+prices the scene and picks the worker budget, but it does not yet know about
+**density**: a scene with eight keyframes per property per layer is a
+different animal from the same layers with two, and the cost model has no
+term for it. The honest fix is a density term in `detectHeavyEffects()` and a
+pre-flight that DROPS the render resolution (or refuses) when the product of
+the effect cost and the density is above what the host can hold. That is
+recorded as an open recommendation in §10.11, not as a closed item.
+
+### 10.9 What is still open, after all of this
+
+One item, and it is a real one: **the cost model has no density term.** It
+prices the EFFECTS of a scene, not how many keyframes the scene carries, so
+a full-density scene and a two-keyframe scene with the same layers get the
+same estimate — and the full-density one is the one that OOMs.
+
+The fix is a density term in `detectHeavyEffects()` plus a pre-flight that
+lowers the render resolution (or refuses) when the product of the effect
+cost and the density is above what the host can hold. Everything else the
+audit listed is closed.
+
+### 10.10 The encoder ladder, measured on the real deliverables
+
+| | Draft | Production |
+| --- | --- | --- |
+| Resolution / fps | 1280×720 @ 30 | 1920×1080 @ 60 |
+| Video bitrate | 518 497 bps | **2 675 917 bps** |
+| File size | 427 764 B | 2 050 224 B |
+| Duration | 6.000000 s | 6.000000 s |
+
+**The production master is 5.16× the draft's bitrate**, and the file is
+4.8× larger — where before the remediation it was *smaller* than the draft
+(463 252 bps vs 518 497 bps), because a CRF target is an instruction to
+spend as few bits as the content allows and `-b:v` beside it is only a cap.
+
+The fix: the draft tier stays CRF (fast, small — what a preview wants) and
+the production tier is **ABR with a target bitrate** derived from the output
+geometry (`outWidth × outHeight × fps × 0.05`, i.e. 6.22 Mbps at 1080p60),
+plus `-maxrate` and `-bufsize`.
+

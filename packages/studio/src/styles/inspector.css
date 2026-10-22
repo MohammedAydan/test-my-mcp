@@ -209,3 +209,134 @@
     justify-self: start;
   }
 }
+
+/* ==========================================================================
+   The AUTO-KEY arm
+   --------------------------------------------------------------------------
+   A small toggle in the layer header: a dot plus the label. The armed state
+   is obvious at a glance — a red dot on a blue pill.
+   ========================================================================== */
+.mf-autokey {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--mf-border);
+  background: var(--mf-bg-elevated);
+  color: var(--mf-text-3);
+  font-size: var(--mf-text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mf-autokey:hover {
+  border-color: var(--mf-border-strong);
+  color: var(--mf-text-2);
+}
+.mf-autokey-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mf-text-3);
+  box-shadow: none;
+}
+.mf-autokey.is-armed {
+  border-color: var(--mf-record);
+  color: var(--mf-text-1);
+  background: var(--mf-record-dim);
+}
+.mf-autokey.is-armed .mf-autokey-dot {
+  background: var(--mf-record);
+  box-shadow: 0 0 5px var(--mf-record);
+}
+
+/* ==========================================================================
+   The rejected-save banner
+   --------------------------------------------------------------------------
+   NON-TRANSIENT: it stays until the next successful save or until the
+   author dismisses it. A toast disappears after four seconds, which is not
+   long enough to fix a scene the engine refused to store.
+   ========================================================================== */
+.mf-save-issues {
+  margin: 6px 8px 0;
+  padding: 7px 8px;
+  border: 1px solid var(--mf-border-danger);
+  border-left: 2px solid var(--mf-record);
+  border-radius: var(--radius-sm);
+  background: var(--mf-record-dim);
+  color: var(--mf-text-1);
+  font-size: var(--mf-text-xs);
+}
+.mf-save-issues-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  color: var(--mf-record);
+}
+.mf-save-issues-head > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.mf-save-issues-list {
+  margin: 5px 0 0;
+  padding: 0 0 0 16px;
+  font-family: var(--mf-font-mono);
+  font-size: var(--mf-text-xs);
+  color: var(--mf-text-2);
+  max-height: 120px;
+  overflow-y: auto;
+}
+.mf-save-issues-list li {
+  margin: 1px 0;
+  overflow-wrap: anywhere;
+}
+
+/* ==========================================================================
+   The aspect-ratio sync indicator (the COMPOSITION section)
+   ========================================================================== */
+.mf-aspect-sync {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--mf-border);
+  border-radius: var(--radius-sm);
+  background: var(--mf-bg-sunken);
+}
+.mf-aspect-sync-value {
+  font-family: var(--mf-font-mono);
+  font-size: var(--mf-text-xs);
+  color: var(--mf-text-1);
+}
+.mf-aspect-sync[data-aspect='differs'] {
+  border-color: var(--mf-warning);
+}
+
+/* ==========================================================================
+   The per-blob / per-datum rows (the mesh gradient and the chart)
+   ========================================================================== */
+.mf-blob-row,
+.mf-chart-row {
+  display: grid;
+  grid-template-columns: auto 1fr 1fr 1fr auto;
+  align-items: center;
+  gap: 4px;
+  margin: 3px 0;
+}
+.mf-chart-row {
+  grid-template-columns: auto 1fr auto auto;
+}
+.mf-blob-row > .mf-scrub,
+.mf-chart-row > .mf-scrub {
+  min-width: 0;
+}
+.mf-field-note {
+  flex: none;
+  font-family: var(--mf-font-mono);
+  font-size: var(--mf-text-xs);
+  color: var(--mf-text-3);
+}

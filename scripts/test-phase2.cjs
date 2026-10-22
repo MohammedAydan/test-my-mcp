@@ -581,7 +581,10 @@ async function run() {
     console.log('--> Testing 2.20: MCP Server');
     let mcpToolCount = 0;
     try {
-      const toolsSrc = fs.readFileSync('D:/Projects/mcps/test-my-mcp/packages/mcp-server/src/tools.ts', 'utf8');
+      const toolsSrc = fs.readFileSync(
+        path.join(__dirname, '..', 'packages', 'mcp-server', 'src', 'tools.ts'),
+        'utf8'
+      );
       const match = toolsSrc.match(/TOOL_NAMES\s*=\s*\[([\s\S]*?)\]\s*as\s*const/);
       const tools = match ? match[1].split(',').map(s => s.trim().replace(/['"]/g, '')).filter(Boolean) : [];
       mcpToolCount = tools.length;
@@ -591,8 +594,8 @@ async function run() {
 
     results['2.20'] = {
       test: 'MCP Server',
-      status: mcpToolCount === 6 ? 'PASS' : 'FAIL',
-      evidence: `TOOL_NAMES length: ${mcpToolCount} (expected exactly 6 tools)`,
+      status: mcpToolCount === 13 ? 'PASS' : 'FAIL',
+      evidence: `TOOL_NAMES length: ${mcpToolCount} (expected exactly 13 tools)`,
     };
     console.log(`2.20 Result: ${results['2.20'].status}`);
 

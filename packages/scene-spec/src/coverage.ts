@@ -136,9 +136,21 @@ export const PEAK_HOLD_MS = Math.min(PEAK_COVER_TARGET_MS, PEAK_COVER_MAX_MS);
  *
  * A `background` is always painted and a `foregroundFX` is a grade over
  * whatever is beneath it, so neither can fill a frame on its own — neither
- * closes a coverage gap.
+ * closes a coverage gap. A `particleField` is decorative in the same way: a
+ * field of dots is not an act.
+ *
+ * `chart`, `codeBlock` and `cta` ARE content: they carry the message of an
+ * act, exactly like a `card` does.
  */
-export const FOREGROUND_LAYER_TYPES = ["kineticText", "imageLogo", "card", "lottie"] as const;
+export const FOREGROUND_LAYER_TYPES = [
+  "kineticText",
+  "imageLogo",
+  "card",
+  "lottie",
+  "chart",
+  "codeBlock",
+  "cta",
+] as const;
 export type ForegroundLayerType = (typeof FOREGROUND_LAYER_TYPES)[number];
 
 export function isForegroundContent(layer: SceneSpec["layers"][number]): boolean {

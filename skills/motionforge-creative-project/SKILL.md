@@ -12,7 +12,7 @@ description: >-
 
 A MotionForge creative project is a **client job workspace**: brief, brand
 assets, SceneSpec JSON and renders. The engine is a separate program; you drive
-it through its six MCP tools and never by editing engine code.
+it through its MCP tools and never by editing engine code.
 
 ## Startup (mandatory, before any tool call)
 
@@ -82,7 +82,14 @@ found is reported with the exact directories that were searched.
 | 3 | `create_or_update_scene` | validate + store a SceneSpec; returns the scene id |
 | 4 | `inspect_scene_keyframes` | images at exact ms — the quality gate |
 | 5 | `open_live_timeline_preview` | interactive scrubber; auto-refreshes on re-post |
-| 6 | `render_video` | `draft` while iterating, `production` once approved |
+| 6 | `render_video` | `draft` while iterating, `production` once approved; `wait: false` returns a `jobId` to poll |
+| 7 | `render_scene` | an alias of `render_video` |
+| 8 | `get_layer_bounds` | the layout sidecar WITHOUT rasterisation — use it for layout questions |
+| 9 | `get_render_status` | poll a render started with `wait: false` |
+| 10 | `get_render_result` | the finished export + its ffprobe metadata |
+| 11 | `analyze_scene` | the warnings, the per-frame render-cost estimate, the keyframe precedence |
+| 12 | `upload_asset` | put a file into the vault from the protocol |
+| 13 | `project_asset_manifest` | what the project already has on disk |
 
 `get_motion_capabilities` also serves as the offline guide
 (`motionforge://scenespec/v1`) when the engine is unreachable.
