@@ -142,7 +142,13 @@ export function findOverlaps(layers: readonly BoundsLayerReport[]): BoundsOverla
       const height =
         Math.min(a.bbox.y + a.bbox.height, b.bbox.y + b.bbox.height) - Math.max(a.bbox.y, b.bbox.y);
       if (width <= 0 || height <= 0) continue;
-      overlaps.push({ a: a.id, b: b.id, areaPx2: Math.round(width * height * 10) / 10 });
+      overlaps.push({
+        a: a.id,
+        b: b.id,
+        areaPx2: Math.round(width * height * 10) / 10,
+        aBox: { ...a.bbox },
+        bBox: { ...b.bbox },
+      });
     }
   }
   return overlaps;

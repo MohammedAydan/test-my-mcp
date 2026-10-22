@@ -123,3 +123,13 @@ export function engineConfig(overrides?: Partial<Pick<EngineConfig, "port" | "ma
 export const DRAFT_HEIGHT = 720;
 export const PRODUCTION_FPS = 60;
 export const DRAFT_FPS = 30;
+/**
+ * The FAST PREVIEW tier (audit P2-11).
+ *
+ * A preview render answers one question — "is the LAYOUT right?" — and it
+ * must be cheap enough to answer it every time the author moves something.
+ * 640×360 @ 12 fps is a quarter of the draft's pixels and 40 % of its
+ * frames, so a six-second scene costs a fraction of a draft render.
+ */
+export const PREVIEW_HEIGHT = 360;
+export const PREVIEW_FPS = 12;

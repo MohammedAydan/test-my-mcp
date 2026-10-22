@@ -297,6 +297,10 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
   a minimal scene. The A/B on a scene full of 200 px blurs measures the
   INTERACTION between an alpha overlay and the filters beneath it, not the
   effect itself.
+- **There are THREE render tiers.** `preview` (640×360 @ 12) is a layout
+  check — 3.2× faster than `draft`; `draft` (720p/30) is the working
+  preview; `production` (full canvas/60) is the master. The production tier
+  is ABR with a TARGET bitrate, so it is never lower-bitrate than the draft.
 
 ## Camera & transitions (the invariants)
 

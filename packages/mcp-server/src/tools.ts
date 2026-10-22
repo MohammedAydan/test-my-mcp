@@ -421,7 +421,7 @@ export async function handleInitCreativeProject(args: InitCreativeProjectOptions
 
 export async function handleRenderVideo(args: {
   sceneId: string;
-  quality: "draft" | "production";
+  quality: "preview" | "draft" | "production";
   waitMaxSec?: number;
   projectPath?: string;
   /**
@@ -780,7 +780,9 @@ export function registerTools(server: McpServer): void {
         "Render a stored scene to MP4. quality=draft is 720p/30 (fast iteration); production is full canvas/60. Blocks until the render finishes and returns telemetry. Pass wait: false to get a jobId back IMMEDIATELY and poll it with get_render_status — a production render can take minutes and outlast the client's own request timeout. Optional: pass projectPath to auto-file the MP4 into renders/<quality>/ and update the manifest status.",
       inputSchema: {
         sceneId: z.string().describe("Scene id from create_or_update_scene"),
-        quality: z.enum(["draft", "production"]).describe("Render quality profile"),
+        quality: z
+          .enum(["preview", "draft", "production"])
+          .describe("Render quality profile: preview = 360p/12 (a layout check, seconds), draft = 720p/30, production = full canvas/60"),
         waitMaxSec: z.number().optional().describe("Poll budget in seconds (default 300)"),
         wait: z.boolean().optional().describe("Wait for the render to finish (default true). false returns a jobId immediately."),
         projectPath: z.string().optional().describe("Project root containing motionforge.project.json; enables automatic render filing"),
@@ -802,7 +804,9 @@ export function registerTools(server: McpServer): void {
         "An ALIAS of render_video, for hosts that expect the older name. Identical arguments and behaviour: quality=draft is 720p/30, production is full canvas/60, wait:false returns a jobId immediately.",
       inputSchema: {
         sceneId: z.string().describe("Scene id from create_or_update_scene"),
-        quality: z.enum(["draft", "production"]).describe("Render quality profile"),
+        quality: z
+          .enum(["preview", "draft", "production"])
+          .describe("Render quality profile: preview = 360p/12 (a layout check, seconds), draft = 720p/30, production = full canvas/60"),
         waitMaxSec: z.number().optional().describe("Poll budget in seconds (default 300)"),
         wait: z.boolean().optional().describe("Wait for the render to finish (default true). false returns a jobId immediately."),
         projectPath: z.string().optional().describe("Project root containing motionforge.project.json; enables automatic render filing"),

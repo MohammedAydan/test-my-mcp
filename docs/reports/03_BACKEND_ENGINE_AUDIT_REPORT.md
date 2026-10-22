@@ -687,8 +687,8 @@ ISOLATION* section produces.
 
 | Effect | Multiplier | Measured delta | Why |
 | --- | --- | --- | --- |
-| `meshGradient` | **×1.10** | +10.8 ms (benchmark run: +19.8 ms) | a full-frame gradient is re-rasterised on every frame (**after** the Phase-7 optimisation: it was ×1.95) |
-| `filmGrain` | **×1.11** | +12.1 ms (benchmark run: +21.4 ms) | a full-frame translucent overlay forces a compositor pass per frame (**after** the optimisation: it was ×1.53) |
+| `meshGradient` | **×1.10** | +10.8 ms (benchmark run: +16.7 ms) | a full-frame gradient is re-rasterised on every frame (**after** the Phase-7 optimisation: it was ×1.95) |
+| `filmGrain` | **×1.11** | +12.1 ms (benchmark run: +18.1 ms) | a full-frame translucent overlay forces a compositor pass per frame (**after** the optimisation: it was ×1.53) |
 | `blur` (≥ 40 px) | **×1.14** | +14.8 ms | a 200 px Gaussian filter over the layer's whole box |
 | `blendMode` (≠ normal) | ×1.25 | — | the compositor has to blend the layer every frame |
 | `particleField` (> 150) | ×1.20 | — | hundreds of individually painted particles |
@@ -710,8 +710,8 @@ ISOLATION* section produces.
 >
 > | effect | run 1 (the benchmark) | run 2 (the probe) | the model uses |
 > | --- | --- | --- | --- |
-> | `filmGrain` | +21.4 ms — **×1.22** | +12.1 ms — **×1.11** | **×1.11** |
-> | `meshGradient` | +19.8 ms — **×1.20** | +10.8 ms — **×1.10** | **×1.10** |
+> | `filmGrain` | +18.1 ms — **×1.18** | +12.1 ms — **×1.11** | **×1.11** |
+> | `meshGradient` | +16.7 ms — **×1.16** | +10.8 ms — **×1.10** | **×1.10** |
 >
 > The run-to-run spread is ±40 % on a shared two-core host, so the model
 > takes the **conservative** end: a cost estimate that under-predicts is
@@ -773,24 +773,35 @@ never lower-bitrate than draft. §10.9 has the measurement.
 
 | Metric | Before | After |
 | --- | --- | --- |
-| Inspection, 1 frame (cold browser) | 2 538.6 ms | **1 678.1 ms** |
-| Inspection, 1 frame (warm) | 2 002.8 ms | **978.8 ms** (×2.0) |
-| Inspection, 10 frames (warm) | 55 446.6 ms | **44 828.8 ms** (×1.24) |
-| Per-frame cost of a 10-frame inspection | 5 938.2 ms/frame | **4 482.9 ms/frame** |
-| `getLayerBoundsAt` — 4 frames, cold (browser launch included) | n/a | **3 224.9 ms** |
-| `getLayerBoundsAt` — 4 frames, warm | n/a | **5 011.8 ms** = **1 252.9 ms/frame** |
-| `getLayerBoundsAt` speed-up vs the 10-frame inspection, per frame | n/a | **×3.6** (and it captures **no pixels**) |
-| `getLayerBounds` — cold browser, one frame | 1 521.4 ms | **995.7 ms** |
+| Inspection, 1 frame (cold browser) | 2 538.6 ms | **2 034.1 ms** |
+| Inspection, 1 frame (warm) | 2 002.8 ms | **1 086.9 ms** (×1.8) |
+| Inspection, 10 frames (warm) | 55 446.6 ms | **64 008.1 ms** (see the note below) |
+| Per-frame cost of a 10-frame inspection | 5 938.2 ms/frame | **6 400.8 ms/frame** |
+| `getLayerBoundsAt` — 4 frames, cold (browser launch included) | n/a | **3 626.3 ms** |
+| `getLayerBoundsAt` — 4 frames, warm | n/a | **5 108.1 ms** = **1 277.0 ms/frame** |
+| `getLayerBoundsAt` speed-up vs the 10-frame inspection, per frame | n/a | **×5.0** (and it captures **no pixels**) |
 | `networkidle` waits in the engine | 2 | **0** |
 | Browser contexts per inspection call | 1 | **0 (the warm page is reused)** |
 | OOM kills during the heavy-effect A/B | 1 | **0** |
-| Effect cost, film grain (A/B, same scene) | 390.5 ms/frame — ×1.53 | **420.7 ms/frame — ×1.57** (its own isolated cost is **×1.22**) |
-| Effect cost, mesh gradient (A/B, same scene) | 496.5 ms/frame — ×1.95 | **281.4 ms/frame — ×1.05** |
-| Effect cost, both (A/B, same scene) | 664.2 ms/frame — ×2.61 | **439.4 ms/frame — ×1.64** |
+| Effect cost, film grain (A/B, same scene) | 390.5 ms/frame — ×1.53 | **421.2 ms/frame — ×1.55** (its own isolated cost is **×1.18**) |
+| Effect cost, mesh gradient (A/B, same scene) | 496.5 ms/frame — ×1.95 | **286.9 ms/frame — ×1.06** |
+| Effect cost, both (A/B, same scene) | 664.2 ms/frame — ×2.61 | **443.0 ms/frame — ×1.63** |
 | Production / draft bitrate — the REAL deliverables | 463 252 bps vs 518 497 bps (production was **lower**) | **2 675 917 bps vs 518 497 bps** (×5.16) |
 | Worker budget on a 3.8 GB host with heavy effects | 2 (→ OOM) | **1** |
 | The audio graph | built after the frames | **built while the frames render** |
 | The scene store's 25 concurrent saves | 24 lost | **gapless 1…25, 0 corrupted, 0 stray temp files** |
+
+> **A NOTE ON THE TEN-FRAME INSPECTION, because it went UP.** The
+> inspection now measures every frame in one pass BEFORE it captures any
+> preview. That is what makes the sidecar comparable with the warm page's
+> zero-rasterisation measurement — the preview's viewport dance used to
+> contaminate the frames after the first — but it costs a second seek per
+> frame, and on a shared two-core host the ten-frame call measured
+> 64 008 ms this run against 44 829 ms in the previous one. The run-to-run
+> spread on this host is large; the SINGLE-frame number (1 086.9 ms, a ×1.8
+> improvement) and the **×5.0** speed-up of the zero-rasterisation path are
+> the stable ones. A layout question should not use `inspect_scene_keyframes`
+> at all — that is what `get_layer_bounds` is for.
 
 ### 10.7 Reading the inspection numbers honestly
 
@@ -799,10 +810,10 @@ ten frames** — and the ten-frame number is the one that matters, so it is
 worth saying why it is not 10×.
 
 **The setup is gone.** A single-frame inspection went from 2 002.8 ms to
-978.8 ms: the browser context, the navigation and the `networkidle` wait are
+1 086.9 ms: the browser context, the navigation and the `networkidle` wait are
 gone, and the scene is pushed into a page that is already running. The COLD
 number — a fresh Chromium, a fresh page — fell from 2 538.6 ms to
-1 678.1 ms.
+2 034.1 ms.
 
 **The screenshots remain.** Ten frames still cost 41 119 ms, because each
 frame is a **full-resolution capture** — and that is the point of
@@ -856,7 +867,33 @@ pre-flight that DROPS the render resolution (or refuses) when the product of
 the effect cost and the density is above what the host can hold. That is
 recorded as an open recommendation in §10.11, not as a closed item.
 
-### 10.9 What is still open, after all of this
+### 10.9 The FAST PREVIEW tier (audit P2-11)
+
+A preview render answers one question — "is the LAYOUT right?" — and it has
+to be cheap enough to answer it every time the author moves something. The
+audit asked for a third tier below `draft`, and there is one now:
+**640×360 @ 12 fps**, a quarter of the draft's pixels and 40 % of its
+frames.
+
+Measured on the reference host, the same three-layer scene at all three
+tiers:
+
+| tier | output | frames | wall clock | per frame | file |
+| --- | --- | --- | --- | --- | --- |
+| **preview** | 640×360 @ 12 | 72 | **4 564 ms** | 63.4 ms | 25 865 B |
+| draft | 1280×720 @ 30 | 180 | 14 534 ms | 80.7 ms | 81 076 B |
+| production | 1920×1080 @ 60 | 360 | 44 936 ms | 124.8 ms | 567 652 B |
+
+And through the Studio's own render modal (the UI benchmark, a six-layer
+composition): **preview 7 706 ms** vs **draft 29 281 ms** vs **production
+102 072 ms** — the same 3.8× / 3.5× relationship, measured through the UI.
+
+**The preview tier is 3.2× faster than the draft and 9.8× faster than
+production** — a layout check in 4.5 seconds instead of 45. It is offered in
+the Studio's render modal, over MCP (`render_video { quality: "preview" }`)
+and in the engine's API.
+
+### 10.10 What is still open, after all of this
 
 One item, and it is a real one: **the cost model has no density term.** It
 prices the EFFECTS of a scene, not how many keyframes the scene carries, so
@@ -868,7 +905,7 @@ lowers the render resolution (or refuses) when the product of the effect
 cost and the density is above what the host can hold. Everything else the
 audit listed is closed.
 
-### 10.10 The encoder ladder, measured on the real deliverables
+### 10.11 The encoder ladder, measured on the real deliverables
 
 | | Draft | Production |
 | --- | --- | --- |

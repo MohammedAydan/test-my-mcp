@@ -301,7 +301,16 @@ describe("buildBoundsFrameReport", () => {
       bounds: {},
       canvas,
     });
-    expect(frame.overlaps).toEqual([{ a: "a", b: "b", areaPx2: 2500 }]);
+    // the overlap report carries BOTH boxes, so a consumer can plan the fix
+    expect(frame.overlaps).toEqual([
+      {
+        a: "a",
+        b: "b",
+        areaPx2: 2500,
+        aBox: { x: 0, y: 0, width: 100, height: 100 },
+        bBox: { x: 50, y: 50, width: 100, height: 100 },
+      },
+    ]);
   });
 
   it("excludes full-bleed layers from BOTH sides of an overlap", () => {
@@ -376,6 +385,23 @@ describe("encoderArgs", () => {
     // `-b:v` beside it is only a cap — it never raises the bitrate
     expect(productionArgs).toContain("medium");
     expect(productionArgs).not.toContain("-crf");
+  });
+
+  it("offers a FAST PREVIEW tier (audit P2-11)", () => {
+    const preview = profileFor("preview", parseScene(PLAIN_SCENE));
+    const draft = profileFor("draft", parseScene(PLAIN_SCENE));
+    // a quarter of the draft's pixels and 40 % of its frames
+    expect(preview.fps).toBe(12);
+    expect(preview.outWidth).toBe(640);
+    expect(preview.outHeight).toBe(360);
+    const draftPixels = draft.outWidth * draft.outHeight;
+    const previewPixels = preview.outWidth * preview.outHeight;
+    expect(previewPixels / draftPixels).toBeLessThan(0.3);
+    // the preview tier is CRF — it is a working file, not a deliverable
+    const previewArgs = encoderArgs("libx264", "preview", preview);
+    expect(previewArgs).toContain("-crf");
+    expect(previewArgs).toContain("32");
+    expect(previewArgs).not.toContain("-b:v");
   });
 
   it("gives production an explicit bitrate TARGET (not a CRF with a cap)", () => {

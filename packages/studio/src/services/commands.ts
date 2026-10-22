@@ -91,7 +91,7 @@ async function saveScene(): Promise<void> {
   }
 }
 
-async function renderScene(quality: 'draft' | 'production'): Promise<void> {
+async function renderScene(quality: 'preview' | 'draft' | 'production'): Promise<void> {
   if (!store.state.sceneId) {
     store.addToast('Load a composition before rendering', 'warning');
     return;

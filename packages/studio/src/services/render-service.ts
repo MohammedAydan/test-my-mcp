@@ -8,7 +8,7 @@ import { invokeEngine, onEngineEvent } from './engine-bridge.js';
  * render without knowing anything about the IPC layer.
  */
 
-export type RenderQuality = 'draft' | 'production';
+export type RenderQuality = 'preview' | 'draft' | 'production';
 
 /**
  * The engine's render job.

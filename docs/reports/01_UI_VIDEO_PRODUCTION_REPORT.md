@@ -378,7 +378,7 @@ readable name and a kind swatch in the layer stack, and its own timeline lane.
 
 | Benchmark | Phase 6 | Phase 7 |
 | --- | --- | --- |
-| `scripts/benchmark-ui-video-production.cjs` | 72 / 72 (with two defects documented) | **99 / 99** |
+| `scripts/benchmark-ui-video-production.cjs` | 72 / 72 (with two defects documented) | **102 / 102** |
 | `scripts/benchmark-mcp-video-production.cjs` | 31 / 33 | **68 / 68** |
 | `scripts/benchmark-backend-engine.cjs` | ran; two defects found | **runs to completion**, 0 OOM kills in the A/B |
 
@@ -386,7 +386,7 @@ readable name and a kind swatch in the layer stack, and its own timeline lane.
 
 | Metric | Before | After |
 | --- | --- | --- |
-| Benchmark checks passed | 72 / 72 (with two defects documented) | **99 / 99** |
+| Benchmark checks passed | 72 / 72 (with two defects documented) | **102 / 102** |
 | The Mesh Gradient background | refused by the engine (`blobs: Required`) | **persists with 3 schema-valid blobs** (1 619 ms from the click to the persisted variant) |
 | A layer window past the composition end | the save failed, with an unhandled rejection | **auto-clamped**, with a toast naming the layer |
 | `state.renderQueue` after a render | `0` | **populated — and live DURING the render** (the queue held the job while it ran) |
@@ -395,9 +395,10 @@ readable name and a kind swatch in the layer stack, and its own timeline lane.
 | The "Add Layer" modal | unreachable | **three commands open it** (10 layer templates) |
 | The four new layer kinds | did not exist | **created, edited and saved from the Tool Dock and the Inspector** |
 | Unhandled promise rejections in the renderer | 1 per failed save | **0** (`engineRejections: 0`) |
-| The draft render | 23 600 ms | **29 342 ms** (one worker instead of two — the RAM-aware budget) |
-| The production render | 79 400 ms | **100 701 ms** (one worker) |
+| The draft render | 23 600 ms | **29 287 ms** (one worker instead of two — the RAM-aware budget) |
+| **The preview render** (640×360 @ 12 — a layout check) | did not exist | **7 081 ms** — **4.1× faster than the draft**, 14× faster than production |
+| The production render | 79 400 ms | **99 058 ms** (one worker) |
 | The draft export | 518 497 bps, 427 764 B | **518 497 bps, 427 764 B** (CRF — small and fast) |
-| The production export | 463 252 bps, 390 726 B | **2 675 917 bps, 2 050 224 B** (ABR with a guaranteed target — **5.2× the draft**) |
+| The production export | 463 252 bps, 390 726 B | **2 685 220 bps, 2 057 201 B** (ABR with a guaranteed target — **5.2× the draft**) |
 | The timeline canvas after a splitter drag | painted into a stale backing store (the A1 waveform fell outside it) | **follows its container** (a ResizeObserver) |
 

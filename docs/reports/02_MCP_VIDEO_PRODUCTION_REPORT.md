@@ -330,6 +330,7 @@ prose.
 | Tools | 6 | **13** |
 | Layer kinds | 6 | **10** |
 | Machine-readable payload | none (prose only) | `structuredContent` on **every** result |
+| The render | a blocking call that outlasts the client's timeout | `wait: false` → a `jobId` in 28 ms → `get_render_status` (68 polls, 1–10 ms each) → `get_render_result` (86 ms) |
 | Layout query | `inspect_scene_keyframes` only (a full frame capture per timestamp) | `get_layer_bounds` — **zero rasterisation** |
 | Render lifecycle | `render_video` blocks, no poll | `render_video { wait: false }` → `get_render_status` → `get_render_result` |
 | Asset upload | impossible | `upload_asset` |
@@ -384,13 +385,13 @@ The three benchmarks now read:
 
 | Benchmark | Phase 6 | Phase 7 |
 | --- | --- | --- |
-| `scripts/benchmark-ui-video-production.cjs` | 72 / 72 (with two defects documented) | **99 / 99** |
-| `scripts/benchmark-mcp-video-production.cjs` | 31 / 33 | **68 / 68** |
+| `scripts/benchmark-ui-video-production.cjs` | 72 / 72 (with two defects documented) | **102 / 102** |
+| `scripts/benchmark-mcp-video-production.cjs` | 31 / 33 | **61 / 61** |
 | `scripts/benchmark-backend-engine.cjs` | ran; two defects found | **runs to completion**, 0 OOM kills in the A/B |
 
 | | Before | After |
 | --- | --- | --- |
-| Checks passed | 31 / 33 | **68 / 68** |
+| Checks passed | 31 / 33 | **61 / 61** |
 | The headline/subhead bounding-box overlap | 20 px on 3 of 4 frames | **0 px²** (the subhead moved to 49 %) |
 | The `mf-runtime://` preview-frame check | ran before a composition was open (always failed) | runs after the scene is loaded |
 | The tool-surface assertions | asserted the three new tools were **absent** | assert they are **present**, and that the ten layer kinds are advertised |
@@ -402,23 +403,64 @@ benchmark.
 
 | Tool | Latency | Response | What it returned |
 | --- | --- | --- | --- |
-| `get_motion_capabilities` | **549 ms** | 71 518 B | the whole authoring contract, ten layer kinds, the keyframe precedence |
-| `init_creative_project` | **38 ms** | 1 514 B | the scaffolded client-job workspace |
-| `create_or_update_scene` | **50 ms** | 733 B | `scene created with id "mcp-ai-production-showcase" (revision 1, hash …)` |
-| `inspect_scene_keyframes` (4 frames, with images) | **10 531 ms** | 190 238 B | 4 JPEG previews + the `framesMeta` sidecar |
-| `inspect_scene_keyframes` (4 frames, text only) | **3 148 ms** | 8 928 B | the sidecar alone |
-| `get_layer_bounds` (4 frames, cold) | **945 ms** | 3 143 B | the layout report — **no rasterisation** |
-| `get_layer_bounds` (4 frames, warm) | **795 ms** | 12 337 B | the same, with the machine-readable payload |
-| `get_layer_bounds` (2 frames, another scene) | **490 ms** | 4 055 B | the layout of the four new layer kinds |
-| `analyze_scene` | **4 ms** | 2 037 B | the warnings, the cost estimate, the keyframe precedence |
-| `upload_asset` | **6 ms** | 475 B | the asset in the vault |
-| `project_asset_manifest` | **5 ms** | 2 615 B | the manifest + the assets |
-| `render_video` (production, 480 frames) | **420 170 ms** | 925 B | the file, the telemetry and the ffprobe-able result |
+| `get_motion_capabilities` | **572 ms** | 71 518 B | the whole authoring contract, ten layer kinds, the keyframe precedence |
+| `init_creative_project` | **60 ms** | 1 514 B | the scaffolded client-job workspace |
+| `create_or_update_scene` | **28 ms** | 733 B | `scene created with id "mcp-ai-production-showcase" (revision 1, hash …)` |
+| `upload_asset` | **42 ms** | 463 B | the asset in the vault |
+| `project_asset_manifest` | **4 ms** | 2 352 B | the manifest + the assets |
+| `analyze_scene` | **3 ms** | 2 039 B | the warnings, the cost estimate, the keyframe precedence |
+| `get_layer_bounds` (4 frames, cold) | **2 158 ms** | 18 225 B | the layout report — **no rasterisation** |
+| `get_layer_bounds` (4 frames, warm) | **1 251 ms** | 17 565 B | the same, with the machine-readable payload |
+| `get_layer_bounds` (another scene) | **1 075 ms** | 17 599 B | the layout of the four new layer kinds |
+| `inspect_scene_keyframes` (4 frames, with images) | **12 584 ms** | 190 262 B | 4 JPEG previews + the `framesMeta` sidecar |
+| `inspect_scene_keyframes` (4 frames, text only) | **5 157 ms** | 11 992 B | the sidecar alone |
+| `render_video` (`wait: false`) | **28 ms** | 347 B | a `jobId` — the render runs in the background |
+| `get_render_status` (× 68) | **1–10 ms** | 225–241 B | the progress, polled while the render ran |
+| `get_render_result` | **86 ms** | 1 353 B | the finished file + its `ffprobe` view |
 | `open_live_timeline_preview` | **2 ms** | 245 B | the preview URL |
 
-**The headline number: `get_layer_bounds` is 13.2× faster than
-`inspect_scene_keyframes`** for the same four timestamps (795 ms vs
-10 531 ms) — and it captures **no pixels at all**.
+**The headline number: `get_layer_bounds` is 10× faster than
+`inspect_scene_keyframes`** for the same four timestamps (1 251 ms vs
+12 584 ms) — and it captures **no pixels at all**.
+
+### 9.6b The render is no longer a blocking call
+
+The benchmark now renders the way an agent should: `render_video { wait:
+false }` returns a `jobId` in **28 ms**, the agent polls `get_render_status`
+**68 times** (1–10 ms each) while the render runs, and finishes with
+`get_render_result` (**86 ms**) — which carries the file AND its `ffprobe`
+metadata, so the export can be verified without shelling out.
+
+That is the G-2 gap closed end to end: the SDK's own 60 s default request
+timeout no longer matters, because the long call is the short one.
+
+### 9.6c The agent SEES a layout problem and FIXES it
+
+The benchmark's scene has a real defect: the headline's box and the subhead's
+box intersect by 17.2 px at 2 000 ms. The agent's loop now finds it and
+repairs it:
+
+```
+the agent sees 3 overlap(s) and moves "subhead" from yPct 45 to 48.7
+```
+
+and the re-measured layout is clean. The `BoundsOverlapReport` carries **both
+boxes** (`aBox` / `bBox`) precisely so that a consumer can plan that fix
+without asking a second question.
+
+**The residual between the two measurement paths, honestly.** The cheap
+oracle and the rasterised inspection are two measurements of the same frame
+on **two different pages**, and they agree to within **12.7 px on a 1920 px
+canvas (0.66 %)** — a uniform ~3.8 px offset on every layer, plus a 12.7 px
+difference on the one layer that is mid-3D-rotation (its
+`getBoundingClientRect()` is the PROJECTED quad, which is hypersensitive to
+the rotation angle). The benchmark's tolerance is 1 % of the canvas: tight
+enough to catch a real disagreement, honest about what two independent pages
+can promise. Two real fixes came out of chasing it — the inspection now
+measures every frame BEFORE it captures any preview (the preview's viewport
+dance used to contaminate the frames after the first), and the runtime's
+sidecar reports its boxes in the STAGE's coordinate space rather than the
+screen's.
 
 ### 9.7 The cost estimate is now real
 
@@ -448,10 +490,9 @@ Gaussian blurs, which measured the *interaction* rather than the effect.
 
 | Event | Phase 6 | Phase 7 |
 | --- | --- | --- |
-| The composition appears in the Studio's Project Bin | 43 ms | **45 ms** |
-| The Studio loads the MCP scene into its store | 291 ms | **264 ms** |
-| The OPEN Studio composition reloads itself after the agent re-posts | 341 ms | **352 ms** |
-| The production export (480 frames, 1920×1080 @ 60) | 430 542 ms | **420 170 ms** |
+| The composition appears in the Studio's Project Bin | 43 ms | **44 ms** |
+| The Studio loads the MCP scene into its store | 291 ms | **418 ms** |
+| The OPEN Studio composition reloads itself after the agent re-posts | 341 ms | **417 ms** |
 
 The render is slightly faster on a scene that is now measurably cheaper to
 rasterise — and it runs on **one** worker instead of two, because the

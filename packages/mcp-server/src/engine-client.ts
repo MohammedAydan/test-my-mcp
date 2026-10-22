@@ -172,11 +172,15 @@ export const engineClient = {
 
   saveRender: async (
     sceneId: string,
-    quality: "draft" | "production",
+    quality: "preview" | "draft" | "production",
     mp4Base64: string,
     projectPath: string
   ): Promise<{ file: string; latest: string; status: string; projectRenderFilePath: string }> => {
-    const saved = await saveRenderToDisk(projectPath, sceneId, quality, Buffer.from(mp4Base64, "base64"));
+    // A PREVIEW render is a working file, not a deliverable: it is filed
+    // under `draft/` (the project manifest only knows `draft` and
+    // `production`).
+    const projectQuality = quality === "preview" ? "draft" : quality;
+    const saved = await saveRenderToDisk(projectPath, sceneId, projectQuality, Buffer.from(mp4Base64, "base64"));
     return {
       file: saved.file,
       latest: saved.latest,
@@ -215,7 +219,10 @@ export const engineClient = {
   previewUrl: (sceneId: string): string =>
     `mf-runtime://app/index.html?scene=${encodeURIComponent(sceneId)}`,
 
-  enqueueRender: async (sceneId: string, quality: "draft" | "production"): Promise<{ jobId: string; status: string }> => {
+  enqueueRender: async (
+    sceneId: string,
+    quality: "preview" | "draft" | "production"
+  ): Promise<{ jobId: string; status: string }> => {
     const core = await getInProcessCore();
     return await core.startRender(sceneId, quality);
   },

@@ -161,7 +161,7 @@ export interface CapabilitiesResponse {
 export interface RenderJobStatus {
   id: string;
   sceneId: string;
-  quality: 'draft' | 'production';
+  quality: 'preview' | 'draft' | 'production';
   status: 'pending' | 'rendering' | 'completed' | 'failed';
   progressPct?: number;
   /** the frame the encoder is on (the modal shows `frame N / M`) */

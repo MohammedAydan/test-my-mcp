@@ -24,7 +24,7 @@ import {
 import { renderFramesParallel, RendererPool } from "./renderer.js";
 import type { SceneStore } from "./scene-store.js";
 
-export type RenderQuality = "draft" | "production";
+export type RenderQuality = "preview" | "draft" | "production";
 export type RenderStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface RenderJob {
@@ -220,7 +220,7 @@ export class RenderRunner extends EventEmitter {
     const started = Date.now();
     const { scene } = this.store.require(job.sceneId);
     const profile = profileFor(job.quality, scene);
-    const encoder = await pickEncoder(job.quality);
+    const encoder = await pickEncoder(job.quality === "preview" ? "draft" : job.quality);
     this.log(`render ${job.id}: ${scene.name} @ ${profile.outWidth}x${profile.outHeight}/${profile.fps}fps via ${encoder}`);
 
     // ---------------------------------------------------------------------

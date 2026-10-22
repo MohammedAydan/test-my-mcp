@@ -593,6 +593,9 @@ function makeFrameDescriber(
 ): FrameDescriber {
   return (timeMs: number): FrameDescription => {
     const layers: LayerFrameInfo[] = [];
+    // the stage's origin, so every box below is in the stage's space
+    const stageRect = stage.stage.getBoundingClientRect();
+    const stageOrigin = { x: stageRect.left, y: stageRect.top };
     for (const { layer, built, wrappers, plan } of descriptors) {
       const visible = timeMs >= plan.visibleStartMs && timeMs < plan.visibleEndMs;
       const { phase, progressPct } = lifecyclePhaseAt(plan, timeMs);
@@ -600,7 +603,10 @@ function makeFrameDescriber(
         ? alphaOf(wrappers.root) * alphaOf(wrappers.entrance) * alphaOf(wrappers.emphasis) * alphaOf(wrappers.exit)
         : 0;
       const painted = built.content.firstElementChild as HTMLElement | null;
-      const box = paintedBox(painted ?? wrappers.exit);
+      // The stage's own origin: the boxes are reported in the STAGE's
+      // coordinate space, so a measurement does not move when the page
+      // scrolls or the viewport changes size.
+      const box = paintedBox(painted ?? wrappers.exit, stageOrigin);
       layers.push({
         id: layer.id,
         type: layer.type,
@@ -656,9 +662,23 @@ function alphaOf(el: HTMLElement): number {
  * would then be `250x0` — a number that tells an agent nothing. The union of
  * the painted descendants is the box that actually matters.
  */
-function paintedBox(root: HTMLElement): DOMRect {
+function paintedBox(root: HTMLElement, origin?: { x: number; y: number }): DOMRect {
+  // THE ORIGIN IS SUBTRACTED FROM EVERY RECT.
+  //
+  // `getBoundingClientRect()` is SCREEN space: it moves when the page
+  // scrolls, when the viewport is resized, and when the page is laid out
+  // differently. The sidecar is a LAYOUT report — a number an agent
+  // compares against the canvas — so it is reported in the STAGE's space,
+  // where the canvas is exactly (0, 0) to (width, height).
+  //
+  // Without this, two measurements of the SAME frame on two different pages
+  // disagreed by 3.8 px, and the frames after the first drifted.
+  const ox = origin?.x ?? 0;
+  const oy = origin?.y ?? 0;
   const own = root.getBoundingClientRect();
-  if (own.width > 0 && own.height > 0) return own;
+  if (own.width > 0 && own.height > 0) {
+    return shiftRect(own, ox, oy);
+  }
   let left = Infinity;
   let top = Infinity;
   let right = -Infinity;
@@ -671,16 +691,32 @@ function paintedBox(root: HTMLElement): DOMRect {
     right = Math.max(right, rect.right);
     bottom = Math.max(bottom, rect.bottom);
   }
-  if (!Number.isFinite(left)) return own;
+  if (!Number.isFinite(left)) return shiftRect(own, ox, oy);
   return {
-    x: left,
-    y: top,
+    x: left - ox,
+    y: top - oy,
     width: right - left,
     height: bottom - top,
-    top,
-    bottom,
-    left,
-    right,
+    top: top - oy,
+    bottom: bottom - oy,
+    left: left - ox,
+    right: right - ox,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+/** A copy of `rect` with its origin moved by (-dx, -dy). */
+function shiftRect(rect: DOMRect, dx: number, dy: number): DOMRect {
+  if (dx === 0 && dy === 0) return rect;
+  return {
+    x: rect.x - dx,
+    y: rect.y - dy,
+    width: rect.width,
+    height: rect.height,
+    top: rect.top - dy,
+    bottom: rect.bottom - dy,
+    left: rect.left - dx,
+    right: rect.right - dx,
     toJSON: () => ({}),
   } as DOMRect;
 }

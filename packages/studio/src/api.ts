@@ -75,7 +75,7 @@ export const api = {
     return engineInspectKeyframes(id, at, includeFullResolution);
   },
 
-  async startRender(sceneId: string, quality: 'draft' | 'production') {
+  async startRender(sceneId: string, quality: 'preview' | 'draft' | 'production') {
     return engineStartRender(sceneId, quality);
   },
 

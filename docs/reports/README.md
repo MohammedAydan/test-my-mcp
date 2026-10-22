@@ -7,8 +7,8 @@ the script that produced its data, and each script is re-runnable and isolated
 
 | Report | Question it answers | Script | Result |
 | --- | --- | --- | --- |
-| [01 — UI video production](01_UI_VIDEO_PRODUCTION_REPORT.md) | Can a *person* build a real promo in the Studio UI, and how fast does the UI feel? | `scripts/benchmark-ui-video-production.cjs` | a 6 s / 1920×1080 H.264+AAC MP4, built by hand, and every defect/friction point closed |
-| [02 — MCP video production](02_MCP_VIDEO_PRODUCTION_REPORT.md) | Can an *AI agent* build the same thing through the MCP tools, and what is missing from that surface? | `scripts/benchmark-mcp-video-production.cjs` | an 8 s SaaS promo, authored over MCP, rendered and cross-checked in the live Studio |
+| [01 — UI video production](01_UI_VIDEO_PRODUCTION_REPORT.md) | Can a *person* build a real promo in the Studio UI, and how fast does the UI feel? | `scripts/benchmark-ui-video-production.cjs` | **102/102** — a 6 s / 1920×1080 H.264+AAC MP4, built by hand, and every defect/friction point closed |
+| [02 — MCP video production](02_MCP_VIDEO_PRODUCTION_REPORT.md) | Can an *AI agent* build the same thing through the MCP tools, and what is missing from that surface? | `scripts/benchmark-mcp-video-production.cjs` | **61/61** — an 8 s SaaS promo, authored over MCP, rendered and cross-checked in the live Studio |
 | [03 — Backend engine audit](03_BACKEND_ENGINE_AUDIT_REPORT.md) | Where does the engine's time and memory actually go, and is it safe under concurrency? | `scripts/benchmark-backend-engine.cjs` | schema/sanitizer, concurrency, inspection latency, render throughput and audio mixing |
 
 ## How to run them
@@ -68,3 +68,5 @@ Two more surfaced while the fixes were landing:
 | Heavy effects | a live 70 px Gaussian blur + a live `feTurbulence` filter | a **pre-softened gradient** + a **pre-baked noise tile** |
 | Render worker budget | `min(4, cpuCount)` | `min(cpus, RAM <= 4.5 GB \|\| heavy ? 1 : 4)` |
 | Render pre-flight | none | the scene is **priced and validated** before a worker is spawned |
+| Render tiers | 2 (draft, production) | **3** — `preview` (640×360 @ 12) is 4.1× faster than the draft |
+| The render's blocking shape | one long call | `wait: false` → `get_render_status` → `get_render_result` |

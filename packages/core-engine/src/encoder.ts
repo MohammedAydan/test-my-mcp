@@ -9,7 +9,7 @@ import type { AudioCue, MusicTrack } from "@motionforge/scene-spec";
 const execFileP = promisify(execFile);
 import { resolveCanvasSize, type SceneSpec } from "@motionforge/scene-spec";
 import type { EnginePaths } from "./config.js";
-import { DRAFT_FPS, DRAFT_HEIGHT, PRODUCTION_FPS } from "./config.js";
+import { DRAFT_FPS, DRAFT_HEIGHT, PREVIEW_FPS, PREVIEW_HEIGHT, PRODUCTION_FPS } from "./config.js";
 import { resolveAssetSource } from "./vault.js";
 
 // ---------------------------------------------------------------------------
@@ -144,7 +144,7 @@ function rateControl(floor: number): string[] {
  */
 export function encoderArgs(
   encoder: string,
-  quality: "draft" | "production",
+  quality: "preview" | "draft" | "production",
   profile?: RenderProfile
 ): string[] {
   const size = profile ?? DEFAULT_PROFILE;
@@ -153,6 +153,9 @@ export function encoderArgs(
     case "h264_nvenc":
       // draft: the fastest preset, CRF (the smallest file the content allows)
       // production: the slow preset, ABR with a TARGET bitrate
+      if (quality === "preview") {
+        return ["-c:v", "h264_nvenc", "-preset", "p1", "-b:v", "1M"];
+      }
       return quality === "draft"
         ? ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", "30", "-b:v", "0"]
         : [
@@ -160,16 +163,25 @@ export function encoderArgs(
             ...rateControl(floor),
           ];
     case "h264_qsv":
+      if (quality === "preview") {
+        return ["-c:v", "h264_qsv", "-b:v", "1M"];
+      }
       return quality === "draft"
         ? ["-c:v", "h264_qsv", "-b:v", "4M"]
         : ["-c:v", "h264_qsv", ...rateControl(Math.max(floor, 14_000_000))];
     case "h264_videotoolbox":
+      if (quality === "preview") {
+        return ["-c:v", "h264_videotoolbox", "-b:v", "1M"];
+      }
       return quality === "draft"
         ? ["-c:v", "h264_videotoolbox", "-b:v", "6M"]
         : ["-c:v", "h264_videotoolbox", ...rateControl(Math.max(floor, 14_000_000))];
     default:
-      // libx264: the draft is CRF (fast and small), the production is ABR
-      // with a guaranteed target bitrate.
+      // libx264: the preview and the draft are CRF (fast and small), the
+      // production is ABR with a guaranteed target bitrate.
+      if (quality === "preview") {
+        return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "32"];
+      }
       return quality === "draft"
         ? ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "30"]
         : ["-c:v", "libx264", "-preset", "medium", ...rateControl(floor)];
@@ -233,7 +245,7 @@ export async function pickEncoder(quality: "draft" | "production"): Promise<stri
 // ---------------------------------------------------------------------------
 
 export interface RenderProfile {
-  quality: "draft" | "production";
+  quality: "preview" | "draft" | "production";
   fps: number;
   /** encoded output size (canvas aspect preserved) */
   outWidth: number;
@@ -241,8 +253,19 @@ export interface RenderProfile {
   jpegQuality: number;
 }
 
-export function profileFor(quality: "draft" | "production", scene: SceneSpec): RenderProfile {
+export function profileFor(quality: "preview" | "draft" | "production", scene: SceneSpec): RenderProfile {
   const { width, height } = resolveCanvasSize(scene.canvas);
+  if (quality === "preview") {
+    // the FAST PREVIEW: a quarter of the draft's pixels, 40 % of its frames
+    const scale = PREVIEW_HEIGHT / Math.min(width, height);
+    return {
+      quality,
+      fps: PREVIEW_FPS,
+      outWidth: Math.round((width * scale) / 2) * 2,
+      outHeight: Math.round((height * scale) / 2) * 2,
+      jpegQuality: 70,
+    };
+  }
   if (quality === "draft") {
     // scale the short side to DRAFT_HEIGHT, keep aspect, even-ify for yuv420p
     const scale = DRAFT_HEIGHT / Math.min(width, height);

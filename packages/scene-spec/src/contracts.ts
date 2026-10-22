@@ -69,6 +69,17 @@ export interface BoundsOverlapReport {
   b: string;
   /** the intersection area, in square composition px */
   areaPx2: number;
+  /**
+   * The box of `a` and the box of `b`.
+   *
+   * WHY THEY ARE HERE: a consumer that wants to FIX an overlap needs the
+   * geometry, not just the fact of one. Which of the two is the upper box,
+   * how deep the intersection is and how far the lower one has to move are
+   * all answers that need the boxes — and the agent that has to author the
+   * fix should not have to ask a second question to get them.
+   */
+  aBox: { x: number; y: number; width: number; height: number };
+  bBox: { x: number; y: number; width: number; height: number };
 }
 
 /** A layer that extends past the canvas edge on a frame. */

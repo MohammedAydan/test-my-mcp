@@ -2244,8 +2244,42 @@ async function main() {
     }
     metrics.draftOutputPath = draftPath;
 
+    /* ── 11b. the FAST PREVIEW tier (audit P2-11) ───────────────────────── */
+    section('Step 8b — The fast preview tier (640x360 @ 12) — a layout check');
+    const preview = await renderThroughModal(page, { quality: 'preview', readJob });
+    metrics.previewRenderDurationMs = preview.durationMs;
+    metrics.previewOutputPath = preview.outputPath;
+    check(
+      'The preview render succeeded',
+      preview.ok,
+      `${preview.status} after ${(preview.durationMs / 1000).toFixed(1)} s`
+    );
+    check(
+      'The preview tier is CHEAPER than the draft (that is the point of it)',
+      preview.ok && metrics.renderDurationMs > 0 && preview.durationMs < metrics.renderDurationMs,
+      `preview ${(preview.durationMs / 1000).toFixed(1)} s vs draft ${(metrics.renderDurationMs / 1000).toFixed(1)} s`
+    );
+    if (preview.outputPath && fs.existsSync(preview.outputPath)) {
+      // ffprobe directly — the shared `probe()` helper is declared further down
+      const previewProbe = run('ffprobe', [
+        '-v', 'error',
+        '-show_entries',
+        'stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration,size',
+        '-of', 'default=noprint_wrappers=0',
+        preview.outputPath,
+      ]).trim();
+      metrics.previewFfprobe = previewProbe;
+      const pv = previewProbe.split('\n').find((l) => l.startsWith('width='));
+      const pf = previewProbe.split('\n').find((l) => l.startsWith('r_frame_rate='));
+      check(
+        'The preview export is 640x360 @ 12',
+        pv === 'width=640' && pf === 'r_frame_rate=12/1',
+        `${pv}, ${pf}`
+      );
+    }
+
     /* ── 12. the production render (1920x1080) ─────────────────────────── */
-    section('Step 9 — Production render (the Studio only offers 720p/30 and 1080p/60)');
+    section('Step 9 — Production render (1920x1080 @ 60fps)');
     const production = await renderThroughModal(page, { quality: 'production', readJob });
     const prodStatus = production.status;
     const prodPath = production.outputPath;

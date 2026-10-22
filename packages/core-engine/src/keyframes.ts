@@ -151,7 +151,18 @@ export async function inspectKeyframes(opts: {
       (globalThis as unknown as { whenSceneReady?: () => Promise<unknown> }).whenSceneReady?.()
     );
 
-    const frames: InspectedFrame[] = [];
+    // ── PASS 1 — MEASURE every frame, with the viewport untouched ─────────
+    //
+    // THE ORDER MATTERS. The inline preview capture (below) resizes the
+    // viewport to render a smaller copy of the frame, and restoring it can
+    // leave the page with a residual scroll offset — which moved the stage by
+    // 3.8 px and made every frame AFTER the first disagree with the warm
+    // page's zero-rasterisation measurement of the same frame.
+    //
+    // So the measurement pass runs FIRST, on a pristine page, and the
+    // capture pass runs after it. The numbers an agent reads are then
+    // measured on the same layout the first frame was measured on.
+    const metas: unknown[] = [];
     for (const atMs of opts.at) {
       // the runtime clamps to its own totalFrames internally
       const frame = Math.max(0, Math.round((atMs / 1000) * 60));
@@ -165,6 +176,16 @@ export async function inspectKeyframes(opts: {
         // a runtime without the sidecar yields undefined, not a throw
         return typeof describe === "function" ? (describe(ms) as unknown) : undefined;
       }, atMs);
+      metas.push(meta);
+    }
+
+    // ── PASS 2 — CAPTURE the frames ─────────────────────────────────────
+    const frames: InspectedFrame[] = [];
+    for (const [index, atMs] of opts.at.entries()) {
+      const frame = Math.max(0, Math.round((atMs / 1000) * 60));
+      await page.evaluate((f) => {
+        return (globalThis as unknown as { seekToFrame(frame: number): Promise<void> }).seekToFrame(f);
+      }, frame);
       // The inline preview: the same frame rendered at a lower device pixel
       // ratio, which keeps the composition identical (the CSS layout is
       // untouched — only the rasterization density changes) while shrinking
@@ -175,6 +196,7 @@ export async function inspectKeyframes(opts: {
       const buffer = opts.includeFullResolution
         ? ((await page.screenshot({ type: "png" })) as Buffer)
         : null;
+      const meta = metas[index];
       frames.push({
         atMs,
         image: buffer ? `data:image/png;base64,${buffer.toString("base64")}` : "",
@@ -234,9 +256,19 @@ async function capturePreview(
         const g = globalThis as unknown as { document: { getElementById(id: string): { style: { transform: string } } | null } };
         const stage = g.document.getElementById("stage");
         if (stage) stage.style.transform = transform;
+        // the viewport dance can leave the document scrolled — and a scrolled
+        // document moves every box by the scroll offset
+        const w = globalThis as unknown as { scrollTo?: (x: number, y: number) => void };
+        w.scrollTo?.(0, 0);
       }, original)
       .catch(() => undefined);
     await page.setViewportSize({ width, height }).catch(() => undefined);
+    await page
+      .evaluate(() => {
+        const w = globalThis as unknown as { scrollTo?: (x: number, y: number) => void };
+        w.scrollTo?.(0, 0);
+      })
+      .catch(() => undefined);
   }
 }
 
