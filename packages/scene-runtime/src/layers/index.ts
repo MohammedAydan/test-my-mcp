@@ -14,6 +14,8 @@ import { renderDeviceMockup } from "./device-mockup.js";
 import { renderCursorFlow } from "./cursor-flow.js";
 import { renderBentoGrid } from "./bento-grid.js";
 import { renderConnectorDiagram } from "./connector-diagram.js";
+import { renderMetricTicker } from "./metric-ticker.js";
+import { renderComparisonSplit } from "./comparison-split.js";
 
 export interface BuiltLayer {
   /** element that entrance/emphasis/exit presets animate */
@@ -60,5 +62,9 @@ export function renderLayer(layer: Layer, ctx: LayerContext): BuiltLayer {
       return renderBentoGrid(layer, ctx);
     case "connectorDiagram":
       return renderConnectorDiagram(layer, ctx);
+    case "metricTicker":
+      return renderMetricTicker(layer, ctx);
+    case "comparisonSplit":
+      return renderComparisonSplit(layer, ctx);
   }
 }

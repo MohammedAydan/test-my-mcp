@@ -46,6 +46,12 @@ import {
 import {
   connectorDiagramLayerSchema,
 } from "./layers/connector-diagram.js";
+import {
+  metricTickerLayerSchema,
+} from "./layers/metric-ticker.js";
+import {
+  comparisonSplitLayerSchema,
+} from "./layers/comparison-split.js";
 import { THEME_PRESETS } from "./themes.js";
 import { LAYOUT_SLOTS } from "./layout-slots.js";
 import {
@@ -71,6 +77,8 @@ export type DeviceMockupLayerInput = z.input<typeof deviceMockupLayerSchema>;
 export type CursorFlowLayerInput = z.input<typeof cursorFlowLayerSchema>;
 export type BentoGridLayerInput = z.input<typeof bentoGridLayerSchema>;
 export type ConnectorDiagramLayerInput = z.input<typeof connectorDiagramLayerSchema>;
+export type MetricTickerLayerInput = z.input<typeof metricTickerLayerSchema>;
+export type ComparisonSplitLayerInput = z.input<typeof comparisonSplitLayerSchema>;
 
 export type AnyLayerInput =
   | BackgroundLayerInput
@@ -86,7 +94,9 @@ export type AnyLayerInput =
   | DeviceMockupLayerInput
   | CursorFlowLayerInput
   | BentoGridLayerInput
-  | ConnectorDiagramLayerInput;
+  | ConnectorDiagramLayerInput
+  | MetricTickerLayerInput
+  | ComparisonSplitLayerInput;
 
 /** Keys every layer needs, plus the timing/motion knobs shared by all of them. */
 export const COMMON_LAYER_REQUIRED = ["id", "type"] as const;
@@ -110,6 +120,8 @@ export const COMMON_LAYER_OPTIONAL = [
 ] as const;
 
 export interface LayerFieldGuideEntry {
+  /** short summary of the layer's visual intent */
+  summary: string;
   /** keys that MUST be present (beyond the common id/type) */
   required: string[];
   /** keys worth knowing; all are optional or defaulted */
@@ -120,12 +132,13 @@ export interface LayerFieldGuideEntry {
 
 export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
   background: {
+    summary: "Full-bleed background canvas with solid color, animated mesh gradients, particles, or video/image media.",
     required: ["variant (OBJECT, discriminated by its own `variant` key)"],
     optional: [
-      "variant=solid: { color }",
-      "variant=meshGradient: { base?, blobs: [{ color, xPct, yPct, radiusPct, drift? }] } (2-6 blobs)",
-      "variant=particles: { count, color?, sizePx?, speed?, direction? }",
-      "variant=media: { assetId (must be declared in assets), blurPx?, dimOpacity?, kenBurns? }",
+      "variant=solid: { color (CSS color, default '#05070d') }",
+      "variant=meshGradient: { base? (default '#05070d'), blobs: [{ color, xPct, yPct, radiusPct, drift? }] } (2-6 blobs)",
+      "variant=particles: { count (default 60), color? (default '#ffffff'), sizePx? (default 2), speed? (default 1), direction? (default 'up') }",
+      "variant=media: { assetId (must be declared in assets), blurPx? (default 0), dimOpacity? (default 0), kenBurns? { fromScale?, toScale?, panFrom?, panTo? } }",
     ],
     example: {
       id: "bg",
@@ -134,16 +147,17 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   imageLogo: {
-    required: ["assetId (declared in assets)", "widthPx", "position { xPct, yPct }"],
+    summary: "Vector or raster mark with optional SVG mask, ring border, drop shadow, glass backdrop, glow, and specular light sweep.",
+    required: ["assetId (declared in assets)", "widthPx (16-4000 design px)", "position { xPct, yPct } (canvas percent)"],
     optional: [
-      "heightPx",
-      "mask: rect | circle | squircle | hexagon | blob",
-      "cornerRadiusPx",
-      "shadow { color?, opacity?, blurPx?, offsetYpx? }",
-      "ring { widthPx, color, opacity? }",
-      "glass { blurPx?, tintColor?, tintOpacity? }",
-      "glow { color, strength? }",
-      "lightSweep { at, durationMs?, angleDeg?, color?, widthFactor? }",
+      "heightPx (16-4000 design px, defaults to preserve aspect ratio)",
+      "mask: rect | circle | squircle | hexagon | blob (default 'rect')",
+      "cornerRadiusPx (0-400 design px, for rect mask)",
+      "shadow { color? (default '#000000'), opacity? (default 0.45), blurPx? (default 24), offsetYpx? (default 10) }",
+      "ring { widthPx (1-40), color, opacity? }",
+      "glass { blurPx? (default 18), tintColor? (default '#ffffff'), tintOpacity? (default 0.08) }",
+      "glow { color, strength? (0-2, default 1) }",
+      "lightSweep { at (ms), durationMs? (default 600), angleDeg? (default 45), color?, widthFactor? }",
     ],
     example: {
       id: "logo",
@@ -160,18 +174,19 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   kineticText: {
-    required: ["text", "sizePx"],
+    summary: "Broadcast typography with staggered word/char/line entrances, gradient fills, and marker highlights.",
+    required: ["text (1-600 characters)", "sizePx (8-600 design px)"],
     optional: [
-      "direction: ltr | rtl (use rtl for Arabic/Hebrew)",
-      "role: hero | headline | body | accent | metric (pairs with fonts[])",
-      "googleFamily",
+      "direction: ltr | rtl (default 'ltr', auto-detected for Arabic/Hebrew copy)",
+      "role: hero | headline | body | accent | metric (default 'headline', pairs with scene.fonts[])",
+      "googleFamily (explicit Google Font family override, e.g. 'Cairo')",
       "fontWeight (100-900, default 800)",
-      "lineHeight, letterSpacingPx, align: left | center | right",
-      "position { xPct, yPct } (default canvas center)",
-      "box { maxWidthPct, paddingPx?, chip? }",
-      "fill: CSS color string OR { type: 'linear', angleDeg, stops: [{ color, at }] }",
-      "stroke { color, widthPx }, shadow { ... }, highlight { color, radiusPx?, paddingPx? }",
-      "animateBy: word | char | line (drives the staggered entrance)",
+      "lineHeight (0.7-2.5, default 1.15), letterSpacingPx (-10-60, default 0), align: left | center | right (default 'center')",
+      "position { xPct, yPct } (default { xPct: 50, yPct: 50 })",
+      "box { maxWidthPct? (10-100, default 70), paddingPx? (0-200, default 0), chip?: { color, opacity? (0.14), radiusPx? (18) } }",
+      "fill: CSS color string OR { type: 'linear', angleDeg, stops: [{ color, at }] } (default '#ffffff')",
+      "stroke { color, widthPx (0.5-20) }, shadow { color?, opacity?, blurPx?, offsetYpx? }, highlight { color, radiusPx? (12), paddingPx? (8) }",
+      "animateBy: word | char | line (default 'word', drives staggered entrance)",
     ],
     example: {
       id: "headline",
@@ -188,12 +203,13 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   card: {
+    summary: "Glassmorphic information surfaces, callout cards, animated progress bars, and numeric counter chips.",
     required: ["position { xPct, yPct }", "variant (OBJECT, discriminated by its own `variant` key)"],
     optional: [
-      "variant=glassCard: { title?, body?, iconAssetId?, widthPx?, paddingPx?, radiusPx?, glass?, borderOpacity? }",
-      "variant=callout: { accentColor, accentSide?, title?, body?, ... }",
-      "variant=progressBar: { value (0-100), fill (paint), label?, trackColor?, heightPx?, radiusPx?, showPercentage?, widthPx? }",
-      "variant=counter: { from, to, decimals?, prefix?, suffix?, locale?, role?, sizePx? }",
+      "variant=glassCard: { title?, body?, iconAssetId?, widthPx?, paddingPx? (default 36), radiusPx? (default 28), glass? { blurPx: 22, tintColor: '#0b0f1a', tintOpacity: 0.35 }, borderOpacity? (default 0.25) }",
+      "variant=callout: { accentColor, accentSide? (default 'left'), title?, body?, widthPx?, paddingPx? (default 32), radiusPx? (default 24), glass? }",
+      "variant=progressBar: { value (0-100), fill (paint), label?, trackColor? (default 'rgba(255,255,255,0.12)'), heightPx? (default 18), radiusPx? (default 120), showPercentage? (default false), widthPx? }",
+      "variant=counter: { from, to, decimals? (default 0), prefix? (default ''), suffix? (default ''), locale?, role? (default 'metric'), sizePx? (default 120) }",
     ],
     example: {
       id: "card",
@@ -210,8 +226,9 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   lottie: {
+    summary: "Scrubbed vector Lottie animation, deterministic and synchronized to scene timeline progress.",
     required: ["assetId (kind 'lottie', declared in assets)", "position { xPct, yPct }"],
-    optional: ["widthPx"],
+    optional: ["widthPx (16-4000 design px)"],
     example: {
       id: "anim",
       type: "lottie",
@@ -222,11 +239,12 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   foregroundFX: {
+    summary: "Full-frame post-processing and cinematic grading overlays (vignette, film grain, color grade).",
     required: ["effects (1-6 overlay effects)"],
     optional: [
-      "{ kind: 'vignette', strength?, color? }",
-      "{ kind: 'filmGrain', opacity?, sizePx? }",
-      "{ kind: 'colorGrade', warmth?, contrast?, saturation?, tint? }",
+      "{ kind: 'vignette', strength? (0-1, default 0.5), color? (default '#000000') }",
+      "{ kind: 'filmGrain', opacity? (0-1, default 0.06), sizePx? (1-6, default 2) }",
+      "{ kind: 'colorGrade', warmth? (-1..1, default 0), contrast? (-1..1, default 0), saturation? (-1..1, default 0), tint?: { color, opacity? (default 0.15) } }",
     ],
     example: {
       id: "fgx",
@@ -238,17 +256,18 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   chart: {
+    summary: "Pure SVG data visualisation plots for keynote presentations (bar chart, line plot, donut chart).",
     required: [
       "position { xPct, yPct }",
       "data (2-12 points: [{ label, value, color? }])",
     ],
     optional: [
-      "chartType: bar | line | donut (default bar)",
-      "title (a heading drawn above the plot)",
-      "accentColor (base colour; a per-datum `color` wins)",
-      "showValues (print the numeric value on each bar / point)",
-      "gridOpacity (0 hides the grid lines)",
-      "labelColor, widthPx, heightPx, labelSizePx",
+      "chartType: bar | line | donut (default 'bar')",
+      "title (heading text above the plot, max 160 chars)",
+      "accentColor (default '#38bdf8'; per-datum 'color' overrides)",
+      "showValues (boolean, default false; displays numbers above points/bars)",
+      "gridOpacity (0-1, default 0.16)",
+      "labelColor (default '#cbd5e1'), widthPx (default 760), heightPx (default 420), labelSizePx (default 18)",
     ],
     example: {
       id: "chart",
@@ -267,14 +286,15 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   codeBlock: {
-    required: ["position { xPct, yPct }", "code (the source)"],
+    summary: "Developer keynote code snippet window with realistic chrome, syntax highlighting, and line callouts.",
+    required: ["position { xPct, yPct }", "code (source code string, max 8000 chars)"],
     optional: [
-      "language (e.g. typescript, python, bash — drives the highlighter)",
-      "title (the window chrome title)",
-      "theme: dark | midnight | matrix",
-      "highlightLines (1-indexed line numbers to emphasise)",
-      "fontSize (design px; `fontSizePx` is accepted as an alias)",
-      "widthPx, showChrome, showLineNumbers",
+      "language (default 'typescript', e.g. python, bash, rust, json)",
+      "title (window chrome title string, max 160 chars)",
+      "theme: dark | midnight | matrix (default 'dark')",
+      "highlightLines (array of 1-indexed line numbers to emphasize)",
+      "fontSize (8-96 design px, default 22; 'fontSizePx' accepted as alias)",
+      "widthPx (120-2400 design px, default 760), showChrome (default true), showLineNumbers (default true)",
     ],
     example: {
       id: "snippet",
@@ -290,17 +310,18 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   particleField: {
+    summary: "Deterministic mathematical field of animated motion particles across four generative patterns.",
     required: [
       "(none — every particleField field has a default, so `id` + `type` are the only requirements)",
     ],
     optional: [
       "count (1-400 particles, default 80)",
-      "pattern: float | grid | constellation | sparkle (default float)",
-      "color, color2 (a second colour the particles interpolate towards)",
+      "pattern: float | grid | constellation | sparkle (default 'float')",
+      "color (default '#7dd3fc'), color2 (secondary interpolation color)",
       "speed (0.1-4, default 1)",
-      "size (radius in design px; `sizePx` is accepted as an alias)",
-      "seed (same seed => the same field, every machine)",
-      "opacity (per-particle ceiling)",
+      "size (radius 0.5-40 design px, default 3; 'sizePx' accepted as alias)",
+      "seed (integer seed, default 20260101; same seed guarantees identical particle layout)",
+      "opacity (per-particle opacity ceiling, default 0.85)",
     ],
     example: {
       id: "dust",
@@ -315,13 +336,14 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   cta: {
-    required: ["position { xPct, yPct }", "label (the button text)"],
+    summary: "High-conversion action button with vector icon glyphs, secondary sublabels, and pill/glass treatments.",
+    required: ["position { xPct, yPct }", "label (button title string, 1-80 chars)"],
     optional: [
-      "sublabel (a second line)",
-      "variant: primary | glass | outline | pill (default primary)",
-      "accentColor, bgColor, textColor",
-      "icon: arrow | sparkles | play | none (default arrow) — a VECTOR glyph, never an emoji",
-      "widthPx, heightPx, radiusPx, labelSizePx",
+      "sublabel (secondary subtitle text, max 120 chars)",
+      "variant: primary | glass | outline | pill (default 'primary')",
+      "accentColor (default '#38bdf8'), bgColor (custom background), textColor (custom text color)",
+      "icon: arrow | sparkles | play | none (default 'arrow'; vector SVG glyph, never emoji)",
+      "widthPx (80-1200, default 360), heightPx (32-240, default 72), radiusPx (default 18), labelSizePx (default 20)",
     ],
     example: {
       id: "cta",
@@ -338,14 +360,16 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   deviceMockup: {
-    required: ["titleOrUrl (defaults to app.motionforge.ai)"],
+    summary: "Responsive hardware frame for browser, laptop, smartphone, or terminal with realistic chrome and 3D tilt.",
+    required: ["(none — all fields have defaults; titleOrUrl defaults to 'app.motionforge.ai')"],
     optional: [
-      "deviceType: browser | macbook | iphone | terminal (default browser)",
-      "theme: dark | light (default dark)",
-      "contentVariant: dashboard | code | metrics | analytics | blank (default dashboard)",
-      "headline (heading text rendered above the device)",
+      "deviceType: browser | macbook | iphone | terminal (default 'browser')",
+      "theme: dark | light (default 'dark')",
+      "contentVariant: dashboard | code | metrics | analytics | blank (default 'dashboard')",
+      "titleOrUrl (address bar / terminal header text, max 160 chars, default 'app.motionforge.ai')",
+      "headline (heading text rendered above the device frame, max 120 chars)",
       "accentColor (hex color string)",
-      "tiltDeg ({ rotateX?, rotateY? } between -35 and 35 deg)",
+      "tiltDeg ({ rotateX?, rotateY? } between -35 and 35 deg, default { rotateX: 0, rotateY: 0 })",
     ],
     example: {
       id: "device-preview",
@@ -360,13 +384,16 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   cursorFlow: {
+    summary: "Simulated software user interaction with vector mouse cursor, cubic waypoint paths, click ripples, and hover halos.",
     required: [
       "waypoints (1-20 waypoints: [{ atMs, xPct, yPct, action?, label? }])",
     ],
     optional: [
-      "cursorStyle: macos | pointer | collaborator (default macos)",
-      "accentColor (hex color, default #38bdf8)",
+      "cursorStyle: macos | pointer | collaborator (default 'macos')",
+      "accentColor (hex color, default '#38bdf8')",
       "cursorScale (0.5 to 3, default 1.2)",
+      "waypoints[].action: move | click | hover (default 'move')",
+      "waypoints[].label (floating tooltip text beside cursor, max 40 chars)",
     ],
     example: {
       id: "cursor-1",
@@ -383,10 +410,13 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   bentoGrid: {
+    summary: "Modern glassmorphic bento box grid layout with metric callouts, status badges, and staggered card entrances.",
     required: ["cells (2 to 6 cells: [{ title, subtitle?, metricValue?, badge?, spanCols?, accentColor? }])"],
     optional: [
       "columns: 2 | 3 (default 3)",
       "staggerMs: number (0-600, default 110)",
+      "cells[].spanCols: 1 | 2 | 3 (default 1, clamped to columns)",
+      "cells[].accentColor: hex color (tint for card border and badge)",
     ],
     example: {
       id: "bento-metrics",
@@ -414,12 +444,13 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
     },
   },
   connectorDiagram: {
+    summary: "System architecture diagram with labeled HTML nodes, cubic Bezier connecting edges, and animated flow pulses.",
     required: [
       "nodes (2 to 8 nodes: [{ id, label, sublabel?, xPct, yPct, accentColor? }])",
       "edges (1 to 12 edges: [{ from, to, label?, animatedPulse? }])",
     ],
     optional: [
-      "nodes[].sublabel (secondary text)",
+      "nodes[].sublabel (secondary text under node title)",
       "nodes[].accentColor (hex color string for node ring)",
       "edges[].label (text centered on Bezier arc)",
       "edges[].animatedPulse (boolean, default true)",
@@ -435,6 +466,70 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
       edges: [
         { from: "node-client", to: "node-server", label: "HTTPS / gRPC", animatedPulse: true },
       ],
+    },
+  },
+  metricTicker: {
+    summary: "High-impact KPI number ticker with animated cubic counting, tabular digits, currency/unit affixes, and delta badge.",
+    required: [
+      "label (metric title string, max 80 chars)",
+      "toValue (target finite number)",
+    ],
+    optional: [
+      "fromValue (initial finite number, default 0)",
+      "prefix (string prepended to number, max 12 chars, default '')",
+      "suffix (string appended to number, max 16 chars, default '')",
+      "decimals (0-4 integer decimal places, default 0)",
+      "countDurationMs (200-10000ms duration of the count, default 1600)",
+      "deltaBadge (pill badge text, max 24 chars, e.g. '+24.8% YoY')",
+      "accentColor (hex color string for number and badge tint)",
+    ],
+    example: {
+      id: "kpi-ticker",
+      type: "metricTicker",
+      at: 400,
+      label: "ANNUAL RECURRING REVENUE",
+      fromValue: 0,
+      toValue: 2450000,
+      prefix: "$",
+      suffix: "",
+      decimals: 0,
+      countDurationMs: 1800,
+      deltaBadge: "+48% YoY",
+      accentColor: "#10b981",
+    },
+  },
+  comparisonSplit: {
+    summary: "Side-by-side comparison matrix with contrasting positive/negative vector indicators, stagger, and central VS badge.",
+    required: [
+      "leftTitle (left column header, max 60 chars)",
+      "leftItems (1-6 strings, each max 100 chars)",
+      "rightTitle (right column header, max 60 chars)",
+      "rightItems (1-6 strings, each max 100 chars)",
+    ],
+    optional: [
+      "leftAccent (hex color for left column indicators, default '#ef4444')",
+      "rightAccent (hex color for right column indicators, default '#10b981')",
+      "vsBadge (central badge pill text, max 12 chars, default 'VS')",
+    ],
+    example: {
+      id: "comparison",
+      type: "comparisonSplit",
+      at: 600,
+      leftTitle: "Legacy Workflow",
+      leftItems: [
+        "Manual timeline editing",
+        "Slow render farms",
+        "Fragile video templates",
+      ],
+      rightTitle: "MotionForge Engine",
+      rightItems: [
+        "Declarative JSON SceneSpec",
+        "Sub-second frame inspection",
+        "Deterministic programmatic render",
+      ],
+      leftAccent: "#ef4444",
+      rightAccent: "#10b981",
+      vsBadge: "VS",
     },
   },
 };

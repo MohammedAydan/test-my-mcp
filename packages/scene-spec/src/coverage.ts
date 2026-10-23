@@ -153,6 +153,8 @@ export const FOREGROUND_LAYER_TYPES = [
   "deviceMockup",
   "bentoGrid",
   "connectorDiagram",
+  "metricTicker",
+  "comparisonSplit",
 ] as const;
 export type ForegroundLayerType = (typeof FOREGROUND_LAYER_TYPES)[number];
 

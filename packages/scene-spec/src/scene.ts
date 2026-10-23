@@ -18,6 +18,8 @@ import { deviceMockupLayerSchema } from "./layers/device-mockup.js";
 import { cursorFlowLayerSchema } from "./layers/cursor-flow.js";
 import { bentoGridLayerSchema } from "./layers/bento-grid.js";
 import { connectorDiagramLayerSchema } from "./layers/connector-diagram.js";
+import { metricTickerLayerSchema } from "./layers/metric-ticker.js";
+import { comparisonSplitLayerSchema } from "./layers/comparison-split.js";
 import { themePresetSchema } from "./themes.js";
 
 // ---------------------------------------------------------------------------
@@ -134,6 +136,8 @@ export const LAYER_TYPES = [
   "cursorFlow",
   "bentoGrid",
   "connectorDiagram",
+  "metricTicker",
+  "comparisonSplit",
 ] as const;
 export type LayerType = (typeof LAYER_TYPES)[number];
 
@@ -166,6 +170,8 @@ export const layerSchema = z.discriminatedUnion("type", [
   cursorFlowLayerSchema,
   bentoGridLayerSchema,
   connectorDiagramLayerSchema,
+  metricTickerLayerSchema,
+  comparisonSplitLayerSchema,
 ]);
 export type Layer = z.infer<typeof layerSchema>;
 

@@ -21,6 +21,8 @@ export * from "./layers/device-mockup.js";
 export * from "./layers/cursor-flow.js";
 export * from "./layers/bento-grid.js";
 export * from "./layers/connector-diagram.js";
+export * from "./layers/metric-ticker.js";
+export * from "./layers/comparison-split.js";
 // --- keyframe evaluation (shared by the runtime AND the studio) --------------
 export * from "./keyframes.js";
 // --- scene + validation -----------------------------------------------------

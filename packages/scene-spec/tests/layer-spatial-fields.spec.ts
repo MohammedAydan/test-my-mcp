@@ -92,6 +92,21 @@ const LAYER_FIXTURES: Record<string, Record<string, unknown>> = {
     ],
     edges: [{ from: "n1", to: "n2" }],
   },
+  metricTicker: {
+    id: "ticker",
+    type: "metricTicker",
+    label: "REVENUE",
+    fromValue: 0,
+    toValue: 125000,
+  },
+  comparisonSplit: {
+    id: "split",
+    type: "comparisonSplit",
+    leftTitle: "Legacy",
+    leftItems: ["Manual pipelines", "Slow renders"],
+    rightTitle: "MotionForge",
+    rightItems: ["Programmatic API", "Sub-second preview"],
+  },
 };
 
 const SPATIAL = {

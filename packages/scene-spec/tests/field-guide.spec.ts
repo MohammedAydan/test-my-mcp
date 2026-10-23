@@ -30,6 +30,8 @@ describe("field guide examples", () => {
   for (const layerType of LAYER_TYPES) {
     it(`ships a schema-valid example for "${layerType}"`, () => {
       const entry = LAYER_FIELD_GUIDE[layerType];
+      expect(typeof entry.summary).toBe("string");
+      expect(entry.summary.length).toBeGreaterThan(0);
       expect(entry.required.length).toBeGreaterThan(0);
       expect(entry.optional.length).toBeGreaterThan(0);
       // the example layer itself must satisfy the real discriminated union
