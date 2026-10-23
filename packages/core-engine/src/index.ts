@@ -87,4 +87,19 @@ export {
   type StoryboardReport,
   type SceneArchetypeRole,
 } from "./storyboard-generator.js";
+export {
+  StoryboardComposer,
+  planStoryboardCompose,
+  composeInputSchema,
+  composeSceneInputSchema,
+  composeTransitionSchema,
+  COMPOSE_TRANSITIONS,
+  type ComposeTransition,
+  type ComposeSceneInput,
+  type ComposeInput,
+  type ComposeSceneResult,
+  type ComposeReport,
+  type StoryboardPlan,
+  type PlannedTransition,
+} from "./storyboard-composer.js";
 

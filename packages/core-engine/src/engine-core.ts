@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -51,6 +52,14 @@ import {
   type StoryboardBrief,
   type StoryboardReport,
 } from "./storyboard-generator.js";
+import {
+  StoryboardComposer,
+  type ComposeInput,
+  type ComposeReport,
+  type ComposeSceneInput,
+  type ComposeSceneResult,
+  type ComposeTransition,
+} from "./storyboard-composer.js";
 import { SceneStore, sceneHash, type StoredScene } from "./scene-store.js";
 import { storeScene, type SceneStoreResponse } from "./scene-operations.js";
 import { ensureSfxBank } from "./sfx-bank.js";
@@ -119,6 +128,7 @@ export class EngineCore extends EventEmitter {
    * browser at all.
    */
   private warm: WarmPage | null = null;
+  private readonly composeJobs = new Map<string, RenderJob>();
 
   constructor(
     readonly config: EngineConfig,
@@ -620,12 +630,55 @@ export class EngineCore extends EventEmitter {
     projectPath?: string
   ): Promise<{ jobId: string; status: string }> {
     this.store.require(sceneId);
+    // A render owns its own Chromium. Keep the process budget at exactly one:
+    // the warm page is recreated lazily by the next inspection.
+    await this.closeWarmPage();
     const job = this.runner.enqueue(sceneId, quality);
     return { jobId: job.id, status: job.status };
   }
 
   getRenderStatus(jobId: string): RenderJob | undefined {
-    return this.runner.jobId(jobId);
+    return this.composeJobs.get(jobId) ?? this.runner.jobId(jobId);
+  }
+
+  async composeStoryboardVideo(
+    input: ComposeInput
+  ): Promise<ComposeReport | { jobId: string; status: string }> {
+    await this.closeWarmPage();
+    const composer = new StoryboardComposer(
+      this.store,
+      this.runner,
+      this.paths,
+      this.config,
+      this.log
+    );
+
+    const jobId = `compose-${randomUUID().slice(0, 8)}`;
+    const job: RenderJob = {
+      id: jobId,
+      sceneId: "<storyboard>",
+      quality: input.quality ?? "draft",
+      status: "running",
+      progress: 0,
+    };
+    this.composeJobs.set(jobId, job);
+
+    if (input.wait === false) {
+      void composer.compose(input, job).catch((err) => {
+        job.status = "failed";
+        job.error = err instanceof Error ? err.message : String(err);
+        this.log(`[EngineCore] background compose ${jobId} failed: ${job.error}`);
+      });
+      return { jobId, status: "running" };
+    }
+
+    try {
+      return await composer.compose(input, job);
+    } catch (err) {
+      job.status = "failed";
+      job.error = err instanceof Error ? err.message : String(err);
+      throw err;
+    }
   }
 
   getPreviewUrl(sceneId: string): string {
@@ -646,6 +699,18 @@ export class EngineCore extends EventEmitter {
       log: this.log,
     });
     return this.warm;
+  }
+
+  /**
+   * Release the warm Chromium before a render opens its own.
+   *
+   * The next `inspectKeyframes` / `getLayerBoundsAt` call recreates it lazily;
+   * keeping both alive at once would break the one-Chromium hardware envelope.
+   */
+  async closeWarmPage(): Promise<void> {
+    const warm = this.warm;
+    this.warm = null;
+    if (warm) await warm.dispose();
   }
 
   private startWatchers(): void {
@@ -813,4 +878,12 @@ export async function createEngineCore(
   return core;
 }
 
-export type { AudioChoreographyOptions, AudioChoreographyReport };
+export type {
+  AudioChoreographyOptions,
+  AudioChoreographyReport,
+  ComposeInput,
+  ComposeReport,
+  ComposeSceneInput,
+  ComposeSceneResult,
+  ComposeTransition,
+};

@@ -13,7 +13,7 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | M6 | critique_and_autofix_scene | core-engine, mcp-server | COMPLETED | 5 new (2 files, 38 targeted green) | PASS (6/6 workspaces) | npm test 637/637; no-emoji 153 files; 7 rules, 4-pass overlap, WCAG >= 7:1 auto-fix, 14 MCP tools | pending (M12) |
 | M7 | 14 SFX + auto_choreograph_audio | core-engine, scene-spec, mcp-server | COMPLETED | 7 new (2 files, 41 targeted green) | PASS (6/6 workspaces) | npm test 644/644; no-emoji 154 files; 14 clean procedural SFX, 15 MCP tools | pending (M12) |
 | M8 | generate_storyboard_from_brief | core-engine, mcp-server | COMPLETED | 9 new (2 files, 44 targeted green) | PASS (6/6 workspaces) | npm test 653/653; no-emoji 155 files; 5 archetypes, zero dead air, score >= 95, 16 MCP tools | pending (M12) |
-| M9 | compose_storyboard_video | core-engine, mcp-server | PENDING | pending | pending | preview / full render | pending |
+| M9 | compose_storyboard_video | core-engine, mcp-server | COMPLETED | 7 new (2 files, 43 targeted green) | PASS (6/6 workspaces) | npm test 660/660; no-emoji 156 files; preview / full render, 17 MCP tools | pending (M12) |
 | M10 | static-frame dedup + JPEG piping | core-engine, scene-runtime | PENDING | pending | pending | pending | pending |
 | M11 | flagship benchmark | core-engine, mcp-server | PENDING | pending | pending | pending | pending |
 | M12 | report + final gate | docs/mcp-evolution, root | PENDING | pending | pending | pending | pending |
@@ -120,4 +120,25 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 - Added `EngineCore.generateStoryboardFromBrief(brief)` in `packages/core-engine/src/engine-core.ts` and exported from `packages/core-engine/src/index.ts`.
 - Forwarded in `packages/mcp-server/src/engine-client.ts` and registered MCP tool `generate_storyboard_from_brief` in `packages/mcp-server/src/tools.ts` with prose summary and `structuredContent`, expanding the MCP surface to 16 tools (`TOOL_NAMES`).
 - Verification: typecheck 6/6 workspaces PASS, targeted 2 files / 44 tests green (`storyboard-generator.test.ts` 8/8, `tools.test.ts` 36/36), full suite 45 files / 653 tests green, zero-emoji scan 155 files clean.
+
+### M9: compose_storyboard_video (2026-10-23)
+- Added `packages/core-engine/src/storyboard-composer.ts`:
+  - Defined types: `ComposeTransition` (`cut | fade | wipeleft | slideright | smoothleft | circleopen`), `ComposeSceneInput`, `ComposeInput`, `ComposeSceneResult`, `ComposeReport`, `StoryboardPlan`, and Zod schemas (`composeInputSchema`, `composeSceneInputSchema`, `composeTransitionSchema`).
+  - Implemented pure planner `planStoryboardCompose(input, durations)`: computes `totalDurationMs`, `totalDurationSec`, every xfade video offset (seconds, 3 decimals), and validates `transitionDurationMs < min(adjacent scene durations) - 100` (rejecting transitions longer than adjacent scenes, treating cuts as 0 timeline overlap).
+  - Implemented sequential rendering in `StoryboardComposer.compose`: renders scenes strictly one at a time via `RenderRunner.enqueue` awaiting `completed` or `failed` events to protect 3.8 GB RAM / 1 Chromium budget.
+  - Probes every segment (`probeMedia`), enforces geometry consistency (outWidth, outHeight, fps match), normalizes missing audio streams with temp `anullsrc` inputs, and stitches via concat demuxer (when all transitions are cuts and audio is present) or FFmpeg `filter_complex` (`xfade` + `acrossfade` chains, with cut microfades).
+- Added `EngineCore.composeStoryboardVideo(input)` in `packages/core-engine/src/engine-core.ts`:
+  - Maintains `private readonly composeJobs = new Map<string, RenderJob>()`.
+  - Updated `getRenderStatus(jobId)` to check `composeJobs` first, enabling existing `get_render_status` and `get_render_result` to inspect finished compose jobs.
+  - Supports `wait: false` by immediately returning `{ jobId, status: "running" }` and executing composition in the background with progress reporting and error handling.
+- Forwarded in `packages/mcp-server/src/engine-client.ts` and registered MCP tool `compose_storyboard_video` in `packages/mcp-server/src/tools.ts` with schema validation, prose telemetry, and `structuredContent` (`ComposeReport` for wait:true, `{ jobId, status }` for wait:false), bringing the server tool surface to 17 tools (`TOOL_NAMES`).
+- Unit and integration tests in `packages/core-engine/tests/storyboard-composer.test.ts`:
+  - Unit 1: offset math for [2, 2] + fade 0.5 -> total 3.5, offset 1.5.
+  - Unit 2: three scenes [2, 3, 2] with fades [0.5, 0.25] -> total 6.25, offsets 1.5 and 4.25.
+  - Unit 3: rejection of transition duration >= min(adjacent) - 100.
+  - Unit 4: cut between segments preserving total = sum of durations.
+  - Integration 5: end-to-end rendering and stitching of two 2-second scenes with 500 ms fade at preview quality, probe assertions for 3.5s +/- 0.15, H.264 video, AAC audio, and file size > 10 KB.
+  - Integration 6: `wait: false` background job lifecycle, status polling, output verification, and `getRenderResult` probe verification.
+- Verification: typecheck 6/6 workspaces PASS, targeted 2 files / 43 tests green (`storyboard-composer.test.ts` 6/6, `tools.test.ts` 37/37), full suite 46 files / 660 tests green, zero-emoji scan 156 files clean.
+
 

@@ -15,6 +15,7 @@ import {
   registerTools,
   SCENESPEC_RESOURCE_URI,
   TOOL_NAMES,
+  type ComposeReport,
 } from "../src/index.js";
 
 afterEach(() => {
@@ -96,7 +97,7 @@ describe("MCP contract over a live client session", () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
-    expect(tools).toHaveLength(16);
+    expect(tools).toHaveLength(17);
     // the original six are all still there, unchanged in name
     for (const name of [
       "get_motion_capabilities",
@@ -191,9 +192,9 @@ describe("MCP contract over a live client session", () => {
     expect(parsed.minimalValidScene).toBeDefined();
     expect(parsed.nestedShapeNotes).toBeDefined();
 
-    // …and the tool count is still exactly 16
+    // …and the tool count is still exactly 17
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(16);
+    expect(tools).toHaveLength(17);
   });
 });
 
@@ -972,5 +973,111 @@ describe("critique_and_autofix_scene", () => {
     expect(structured.totalDurationMs).toBe(12000);
     expect(structured.scenes).toHaveLength(3);
     expect(structured.manifest).toHaveLength(3);
+  });
+
+  it("composes storyboard video with wait: true and wait: false", async () => {
+    const mockReport: ComposeReport = {
+      jobId: "compose-abc12345",
+      outputPath: "/tmp/storyboard-master.mp4",
+      durationMs: 7500,
+      totalWallMs: 14200,
+      quality: "draft",
+      scenes: [
+        {
+          sceneId: "scene-1",
+          mp4Path: "/tmp/scene-1.mp4",
+          durationMs: 4000,
+          renderWallMs: 6500,
+          frames: 120,
+          workerCount: 1,
+          transitionToNext: "fade",
+          transitionDurationMs: 500,
+        },
+        {
+          sceneId: "scene-2",
+          mp4Path: "/tmp/scene-2.mp4",
+          durationMs: 4000,
+          renderWallMs: 6700,
+          frames: 120,
+          workerCount: 1,
+          transitionToNext: "cut",
+          transitionDurationMs: 0,
+        },
+      ],
+      probe: {
+        path: "/tmp/storyboard-master.mp4",
+        sizeBytes: 154200,
+        durationSec: 7.5,
+        format: "mov,mp4,m4a,3gp,3g2,mj2",
+        streams: [
+          {
+            index: 0,
+            type: "video",
+            codec: "h264",
+            width: 1280,
+            height: 720,
+            fps: 30,
+            durationSec: 7.5,
+          },
+          {
+            index: 1,
+            type: "audio",
+            codec: "aac",
+            channels: 2,
+            sampleRate: 48000,
+            durationSec: 7.5,
+          },
+        ],
+      },
+    };
+
+    const spy = vi
+      .spyOn(engineClient, "composeStoryboardVideo")
+      .mockResolvedValueOnce(mockReport)
+      .mockResolvedValueOnce({ jobId: "compose-async999", status: "running" });
+
+    const client = await connect();
+
+    // wait: true
+    const result1 = await client.callTool({
+      name: "compose_storyboard_video",
+      arguments: {
+        outputName: "client-master",
+        scenes: [
+          { sceneId: "scene-1", transitionToNext: "fade", transitionDurationMs: 500 },
+          { sceneId: "scene-2", transitionToNext: "cut" },
+        ],
+        quality: "draft",
+        wait: true,
+      },
+    });
+
+    const text1 = result1.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(text1).toContain("storyboard master composed: /tmp/storyboard-master.mp4");
+    expect(text1).toContain("total duration: 7.50s (7500ms)");
+    expect(text1).toContain("quality: draft");
+    expect(text1).toContain("scenes (2):");
+    const struct1 = (result1 as any).structuredContent;
+    expect(struct1).toBeDefined();
+    expect(struct1.jobId).toBe("compose-abc12345");
+    expect(struct1.scenes).toHaveLength(2);
+
+    // wait: false
+    const result2 = await client.callTool({
+      name: "compose_storyboard_video",
+      arguments: {
+        outputName: "client-master-async",
+        scenes: [
+          { sceneId: "scene-1" },
+          { sceneId: "scene-2" },
+        ],
+        wait: false,
+      },
+    });
+
+    const text2 = result2.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(text2).toContain("compose storyboard master compose-async999 started in background (wait: false)");
+    const struct2 = (result2 as any).structuredContent;
+    expect(struct2).toEqual({ jobId: "compose-async999", status: "running" });
   });
 });

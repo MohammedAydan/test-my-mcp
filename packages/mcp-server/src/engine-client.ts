@@ -13,6 +13,11 @@ import {
   saveStillsToDisk,
   type AudioChoreographyOptions,
   type AudioChoreographyReport,
+  type ComposeInput,
+  type ComposeReport,
+  type ComposeSceneInput,
+  type ComposeSceneResult,
+  type ComposeTransition,
   type CritiqueOptions,
   type CritiqueReport,
   type EngineCore,
@@ -368,11 +373,28 @@ export const engineClient = {
       throw new EngineError(error.status ?? error.statusCode ?? 400, error.message, error.issues);
     }
   },
+
+  /** Compose multiple scenes into an xfade storyboard master video. */
+  composeStoryboardVideo: async (
+    input: ComposeInput
+  ): Promise<ComposeReport | { jobId: string; status: string }> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.composeStoryboardVideo(input);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? error.statusCode ?? 400, error.message, error.issues);
+    }
+  },
 };
 
 export type {
   AudioChoreographyOptions,
   AudioChoreographyReport,
+  ComposeInput,
+  ComposeReport,
+  ComposeSceneInput,
+  ComposeSceneResult,
+  ComposeTransition,
   CritiqueOptions,
   CritiqueReport,
   StoryboardBrief,

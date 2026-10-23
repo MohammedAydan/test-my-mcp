@@ -18,6 +18,8 @@ import {
 import {
   engineClient,
   EngineError,
+  type ComposeInput,
+  type ComposeReport,
   type KeyframeFrameMeta,
   type RenderJobView,
   type SceneWarning,
@@ -71,6 +73,7 @@ export const TOOL_NAMES = [
   "critique_and_autofix_scene",
   "auto_choreograph_audio",
   "generate_storyboard_from_brief",
+  "compose_storyboard_video",
 ] as const;
 
 export const SCENESPEC_RESOURCE_URI = "motionforge://scenespec/v1";
@@ -803,6 +806,46 @@ export async function handleGenerateStoryboardFromBrief(
   });
 }
 
+export async function handleComposeStoryboardVideo(
+  input: ComposeInput
+): Promise<ToolTextResult> {
+  return withEngineErrors(async () => {
+    const result = await engineClient.composeStoryboardVideo(input);
+    if ("jobId" in result && !("scenes" in result)) {
+      const text =
+        `compose storyboard master ${result.jobId} started in background (wait: false)\n` +
+        `status: "${result.status}"\n` +
+        `poll with get_render_status { jobId: "${result.jobId}" } and get result with get_render_result { jobId: "${result.jobId}" }`;
+      return ok(text, result as unknown as Record<string, unknown>);
+    }
+
+    const report = result as ComposeReport;
+    const vStream = report.probe.streams.find((s) => s.type === "video");
+    const aStream = report.probe.streams.find((s) => s.type === "audio");
+    const resolution = vStream ? `${vStream.width}x${vStream.height}@${vStream.fps}fps` : "unknown";
+    const audioSummary = aStream ? `${aStream.codec} (${aStream.channels}ch, ${aStream.sampleRate}Hz)` : "none";
+
+    const lines = [
+      `storyboard master composed: ${report.outputPath}`,
+      `jobId: ${report.jobId}`,
+      `quality: ${report.quality}`,
+      `total duration: ${(report.durationMs / 1000).toFixed(2)}s (${report.durationMs}ms)`,
+      `wall time: ${(report.totalWallMs / 1000).toFixed(1)}s`,
+      `video: ${resolution} via ${vStream?.codec ?? "h264"}`,
+      `audio: ${audioSummary}`,
+      `file size: ${(report.probe.sizeBytes / 1024).toFixed(1)} KB`,
+      `scenes (${report.scenes.length}):`,
+      ...report.scenes.map(
+        (s, i) =>
+          `  ${i + 1}. [${s.sceneId}] duration: ${(s.durationMs / 1000).toFixed(2)}s, render wall: ${(s.renderWallMs / 1000).toFixed(1)}s, frames: ${s.frames}` +
+          (i < report.scenes.length - 1 ? ` -> [${s.transitionToNext} ${s.transitionDurationMs}ms]` : "")
+      ),
+    ];
+
+    return ok(lines.join("\n"), report as unknown as Record<string, unknown>);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -1083,6 +1126,52 @@ export function registerTools(server: McpServer): void {
       },
     },
     async (args) => handleGenerateStoryboardFromBrief(args as StoryboardBrief)
+  );
+
+  server.registerTool(
+    "compose_storyboard_video",
+    {
+      title: "Compose storyboard video with crossfades",
+      description:
+        "Renders and stitches multiple scenes into a seamless master video with xfade transitions (cut, fade, wipeleft, slideright, smoothleft, circleopen) and audio crossfades. Enforces strictly sequential rendering on 3.8 GB RAM. Pass wait: false to return a jobId immediately and poll with get_render_status.",
+      inputSchema: {
+        outputName: z
+          .string()
+          .min(1)
+          .max(80)
+          .default("storyboard-master")
+          .describe("Output file name slug without extension (default: storyboard-master)"),
+        scenes: z
+          .array(
+            z.strictObject({
+              sceneId: z.string().min(1).describe("The stored scene ID"),
+              transitionToNext: z
+                .enum(["cut", "fade", "wipeleft", "slideright", "smoothleft", "circleopen"])
+                .default("fade")
+                .describe("Transition to next scene (default: fade)"),
+              transitionDurationMs: z
+                .number()
+                .int()
+                .min(0)
+                .max(1500)
+                .default(500)
+                .describe("Transition duration in ms (0..1500, default 500)"),
+            })
+          )
+          .min(1)
+          .max(10)
+          .describe("Sequential scenes to render and compose (1..10)"),
+        quality: z
+          .enum(["preview", "draft", "production"])
+          .default("draft")
+          .describe("Render quality tier: preview = 360p/12, draft = 720p/30, production = full canvas/60"),
+        wait: z
+          .boolean()
+          .default(true)
+          .describe("Wait for composition to complete (default true); false returns jobId immediately"),
+      },
+    },
+    async (args) => handleComposeStoryboardVideo(args as ComposeInput)
   );
 }
 

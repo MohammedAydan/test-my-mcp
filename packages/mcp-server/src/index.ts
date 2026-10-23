@@ -18,8 +18,16 @@ export {
   handleUploadAsset,
   handleProjectAssetManifest,
   handleCritiqueAndAutofixScene,
+  handleComposeStoryboardVideo,
   formatFrameMeta,
   formatWarnings,
   type ToolTextResult,
 } from "./tools.js";
 export { engineClient, ENGINE_URL, EngineError } from "./engine-client.js";
+export type {
+  ComposeInput,
+  ComposeReport,
+  ComposeSceneInput,
+  ComposeSceneResult,
+  ComposeTransition,
+} from "./engine-client.js";
