@@ -19,6 +19,8 @@ export * from "./layers/particle-field.js";
 export * from "./layers/cta.js";
 export * from "./layers/device-mockup.js";
 export * from "./layers/cursor-flow.js";
+export * from "./layers/bento-grid.js";
+export * from "./layers/connector-diagram.js";
 // --- keyframe evaluation (shared by the runtime AND the studio) --------------
 export * from "./keyframes.js";
 // --- scene + validation -----------------------------------------------------

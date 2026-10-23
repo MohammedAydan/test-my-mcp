@@ -318,6 +318,27 @@ function normalizeNewLayerKinds(layer: Record<string, unknown>, path: string, re
       }
     }
   }
+
+  // ---- bentoGrid: clamp spanCols to columns ----------------------------
+  if (type === "bentoGrid") {
+    const columns = layer.columns === 2 ? 2 : 3;
+    const cells = layer.cells;
+    if (Array.isArray(cells)) {
+      for (let j = 0; j < cells.length; j++) {
+        const cell = cells[j];
+        if (isPlainObject(cell)) {
+          const span = cell.spanCols;
+          if (typeof span === "number") {
+            const clampedSpan = clamp(span, 1, columns);
+            if (clampedSpan !== span) {
+              cell.spanCols = clampedSpan;
+              report.clamped.push(`${path}.cells.${j}.spanCols`);
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 /**

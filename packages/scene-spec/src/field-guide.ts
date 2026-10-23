@@ -39,6 +39,13 @@ import {
   CURSOR_STYLES,
   CURSOR_ACTIONS,
 } from "./layers/cursor-flow.js";
+import {
+  bentoGridLayerSchema,
+  BENTO_COLUMNS,
+} from "./layers/bento-grid.js";
+import {
+  connectorDiagramLayerSchema,
+} from "./layers/connector-diagram.js";
 import { THEME_PRESETS } from "./themes.js";
 import { LAYOUT_SLOTS } from "./layout-slots.js";
 import {
@@ -62,6 +69,8 @@ export type ParticleFieldLayerInput = z.input<typeof particleFieldLayerSchema>;
 export type CtaLayerInput = z.input<typeof ctaLayerSchema>;
 export type DeviceMockupLayerInput = z.input<typeof deviceMockupLayerSchema>;
 export type CursorFlowLayerInput = z.input<typeof cursorFlowLayerSchema>;
+export type BentoGridLayerInput = z.input<typeof bentoGridLayerSchema>;
+export type ConnectorDiagramLayerInput = z.input<typeof connectorDiagramLayerSchema>;
 
 export type AnyLayerInput =
   | BackgroundLayerInput
@@ -75,7 +84,9 @@ export type AnyLayerInput =
   | ParticleFieldLayerInput
   | CtaLayerInput
   | DeviceMockupLayerInput
-  | CursorFlowLayerInput;
+  | CursorFlowLayerInput
+  | BentoGridLayerInput
+  | ConnectorDiagramLayerInput;
 
 /** Keys every layer needs, plus the timing/motion knobs shared by all of them. */
 export const COMMON_LAYER_REQUIRED = ["id", "type"] as const;
@@ -368,6 +379,61 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
         { atMs: 0, xPct: 20, yPct: 30, action: "move" },
         { atMs: 500, xPct: 50, yPct: 50, action: "click", label: "Submit" },
         { atMs: 1000, xPct: 80, yPct: 70, action: "hover" },
+      ],
+    },
+  },
+  bentoGrid: {
+    required: ["cells (2 to 6 cells: [{ title, subtitle?, metricValue?, badge?, spanCols?, accentColor? }])"],
+    optional: [
+      "columns: 2 | 3 (default 3)",
+      "staggerMs: number (0-600, default 110)",
+    ],
+    example: {
+      id: "bento-metrics",
+      type: "bentoGrid",
+      at: 500,
+      columns: 3,
+      staggerMs: 110,
+      cells: [
+        {
+          title: "Throughput",
+          subtitle: "Requests processed per second",
+          metricValue: "125k",
+          badge: "Live",
+          spanCols: 2,
+          accentColor: "#38bdf8",
+        },
+        {
+          title: "Uptime",
+          metricValue: "99.99%",
+          badge: "SLA",
+          spanCols: 1,
+          accentColor: "#22c55e",
+        },
+      ],
+    },
+  },
+  connectorDiagram: {
+    required: [
+      "nodes (2 to 8 nodes: [{ id, label, sublabel?, xPct, yPct, accentColor? }])",
+      "edges (1 to 12 edges: [{ from, to, label?, animatedPulse? }])",
+    ],
+    optional: [
+      "nodes[].sublabel (secondary text)",
+      "nodes[].accentColor (hex color string for node ring)",
+      "edges[].label (text centered on Bezier arc)",
+      "edges[].animatedPulse (boolean, default true)",
+    ],
+    example: {
+      id: "diagram-flow",
+      type: "connectorDiagram",
+      at: 600,
+      nodes: [
+        { id: "node-client", label: "Client App", sublabel: "Edge device", xPct: 20, yPct: 50, accentColor: "#38bdf8" },
+        { id: "node-server", label: "API Gateway", sublabel: "Cloud cluster", xPct: 80, yPct: 50, accentColor: "#818cf8" },
+      ],
+      edges: [
+        { from: "node-client", to: "node-server", label: "HTTPS / gRPC", animatedPulse: true },
       ],
     },
   },

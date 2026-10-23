@@ -12,6 +12,8 @@ import { renderParticleField } from "./particle-field.js";
 import { renderCta } from "./cta.js";
 import { renderDeviceMockup } from "./device-mockup.js";
 import { renderCursorFlow } from "./cursor-flow.js";
+import { renderBentoGrid } from "./bento-grid.js";
+import { renderConnectorDiagram } from "./connector-diagram.js";
 
 export interface BuiltLayer {
   /** element that entrance/emphasis/exit presets animate */
@@ -54,5 +56,9 @@ export function renderLayer(layer: Layer, ctx: LayerContext): BuiltLayer {
       return renderDeviceMockup(layer, ctx);
     case "cursorFlow":
       return renderCursorFlow(layer, ctx);
+    case "bentoGrid":
+      return renderBentoGrid(layer, ctx);
+    case "connectorDiagram":
+      return renderConnectorDiagram(layer, ctx);
   }
 }

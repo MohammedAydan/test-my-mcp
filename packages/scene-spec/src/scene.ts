@@ -16,6 +16,8 @@ import { particleFieldLayerSchema } from "./layers/particle-field.js";
 import { ctaLayerSchema } from "./layers/cta.js";
 import { deviceMockupLayerSchema } from "./layers/device-mockup.js";
 import { cursorFlowLayerSchema } from "./layers/cursor-flow.js";
+import { bentoGridLayerSchema } from "./layers/bento-grid.js";
+import { connectorDiagramLayerSchema } from "./layers/connector-diagram.js";
 import { themePresetSchema } from "./themes.js";
 
 // ---------------------------------------------------------------------------
@@ -130,6 +132,8 @@ export const LAYER_TYPES = [
   "cta",
   "deviceMockup",
   "cursorFlow",
+  "bentoGrid",
+  "connectorDiagram",
 ] as const;
 export type LayerType = (typeof LAYER_TYPES)[number];
 
@@ -140,7 +144,7 @@ export type LayerType = (typeof LAYER_TYPES)[number];
  * off-canvas / overlap checks — a background is *supposed* to extend past the
  * frame edge, and calling that an overlap is a false positive.
  */
-export const FULL_BLEED_LAYER_TYPES = ["background", "foregroundFX", "particleField"] as const;
+export const FULL_BLEED_LAYER_TYPES = ["background", "foregroundFX", "particleField", "cursorFlow"] as const;
 export type FullBleedLayerType = (typeof FULL_BLEED_LAYER_TYPES)[number];
 
 export function isFullBleedLayerType(type: string): boolean {
@@ -160,6 +164,8 @@ export const layerSchema = z.discriminatedUnion("type", [
   ctaLayerSchema,
   deviceMockupLayerSchema,
   cursorFlowLayerSchema,
+  bentoGridLayerSchema,
+  connectorDiagramLayerSchema,
 ]);
 export type Layer = z.infer<typeof layerSchema>;
 
@@ -341,6 +347,30 @@ export const sceneSpecSchema = sceneShapeSchema
             expectAsset(layer.variant.iconAssetId, ["layers", i], ["image"]);
           }
           break;
+        case "connectorDiagram": {
+          const nodeIds = new Set<string>();
+          layer.nodes.forEach((node, nodeIdx) => {
+            if (nodeIds.has(node.id)) {
+              fail(["layers", i, "nodes", nodeIdx, "id"], `duplicate node id "${node.id}" in connectorDiagram`);
+            }
+            nodeIds.add(node.id);
+          });
+          layer.edges.forEach((edge, edgeIdx) => {
+            if (!nodeIds.has(edge.from)) {
+              fail(
+                ["layers", i, "edges", edgeIdx, "from"],
+                `edge references undeclared node id "${edge.from}"`
+              );
+            }
+            if (!nodeIds.has(edge.to)) {
+              fail(
+                ["layers", i, "edges", edgeIdx, "to"],
+                `edge references undeclared node id "${edge.to}"`
+              );
+            }
+          });
+          break;
+        }
         default:
           break;
       }

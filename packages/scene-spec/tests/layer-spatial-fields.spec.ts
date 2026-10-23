@@ -75,6 +75,23 @@ const LAYER_FIXTURES: Record<string, Record<string, unknown>> = {
     type: "cursorFlow",
     waypoints: [{ atMs: 0, xPct: 10, yPct: 10 }],
   },
+  bentoGrid: {
+    id: "bento",
+    type: "bentoGrid",
+    cells: [
+      { title: "Speed", metricValue: "10x" },
+      { title: "Reliability", metricValue: "99.9%" },
+    ],
+  },
+  connectorDiagram: {
+    id: "diagram",
+    type: "connectorDiagram",
+    nodes: [
+      { id: "n1", label: "Client", xPct: 20, yPct: 50 },
+      { id: "n2", label: "Server", xPct: 80, yPct: 50 },
+    ],
+    edges: [{ from: "n1", to: "n2" }],
+  },
 };
 
 const SPATIAL = {

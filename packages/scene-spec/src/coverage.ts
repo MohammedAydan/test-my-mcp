@@ -151,6 +151,8 @@ export const FOREGROUND_LAYER_TYPES = [
   "codeBlock",
   "cta",
   "deviceMockup",
+  "bentoGrid",
+  "connectorDiagram",
 ] as const;
 export type ForegroundLayerType = (typeof FOREGROUND_LAYER_TYPES)[number];
 
