@@ -146,7 +146,39 @@ async function main() {
     await callTool(client, 'upload_asset', { name: 'logo.svg', kind: 'image', contentText: LOGO_SVG });
     await callTool(client, 'upload_asset', { name: 'check.json', kind: 'lottie', contentText: LOTTIE_JSON });
 
-    section('2. Author three flagship scenes');
+    section('2. Storyboard generation probe');
+    const briefCall = await callTool(client, 'generate_storyboard_from_brief', {
+      projectTitle: 'Automated Agency Pipeline',
+      productName: 'MotionForge v5.0',
+      tagline: 'Autonomous broadcast-grade motion graphics engine over MCP',
+      themePreset: 'linearMinimal',
+      sceneCount: 3,
+      sceneDurationMs: 4000,
+      keyMetrics: [
+        { label: 'Render speed', value: '10x', delta: '+900%' },
+        { label: 'Layer union', value: '16', numericValue: 16 },
+      ],
+      features: [
+        { title: 'Strict SceneSpec', description: 'Validated Zod schemas across boundaries' },
+        { title: 'Deterministic SFX', description: 'Procedural 14-cue sound synthesis' },
+      ],
+      codeSnippet: {
+        language: 'typescript',
+        code: 'const result = await composeStoryboardVideo({ quality: "draft" });',
+      },
+      ctaText: 'Build with MotionForge',
+      ctaUrl: 'https://motionforge.dev',
+      autoCritiqueAndFix: true,
+      autoChoreographAudio: true,
+    });
+    const briefReport = briefCall.structured;
+    assert(briefReport.scenes && briefReport.scenes.length === 3, `expected 3 generated scenes, got ${briefReport.scenes?.length}`);
+    assert(briefReport.totalDurationMs === 12000, `expected 12000ms total duration, got ${briefReport.totalDurationMs}`);
+    assert(briefReport.scenes.every((s) => s.score >= 90), 'generated scene scores below 90');
+    assert(briefReport.manifest && briefReport.manifest.length === 3, 'missing manifest entries');
+    console.log(`  generated storyboard: ${briefReport.scenes.length} scenes, ${briefReport.totalDurationMs}ms, scores: ${briefReport.scenes.map((s) => s.score).join(', ')}`);
+
+    section('3. Author three flagship scenes');
     const scenes = [sceneOne(), sceneTwo(), sceneThree()];
     for (const scene of scenes) {
       const call = await callTool(client, 'create_or_update_scene', scene);
@@ -158,7 +190,7 @@ async function main() {
     assert(allLayers.size === 16, `flagship layer union has ${allLayers.size}, expected 16`);
     console.log(`  layer union: ${[...allLayers].join(', ')}`);
 
-    section('3. Critique and autofix');
+    section('4. Critique and autofix');
     const brokenCall = await callTool(client, 'create_or_update_scene', brokenScene());
     assert(brokenCall.structured.id === 'agency-broken', 'broken scene was not stored');
     const brokenCritique = await callTool(client, 'critique_and_autofix_scene', { sceneId: 'agency-broken', autoApplyFixes: true });
@@ -180,18 +212,49 @@ async function main() {
     }
     console.table(scores);
 
-    section('4. Audio choreography');
+    section('5. Audio choreography and literal timestamp assertions');
     const cueUnion = new Set();
+    const scheduledCuesByScene = {};
     for (const scene of scenes) {
       const call = await callTool(client, 'auto_choreograph_audio', { sceneId: scene.id, includeAmbientBed: true, overwriteExisting: true, masterGain: 0.7 });
       const report = call.structured;
+      scheduledCuesByScene[scene.id] = report.cues || [];
       for (const [name, count] of Object.entries(report.bySfx || {})) { if (count) cueUnion.add(name); }
       cues.push({ scene: scene.id, total: report.totalCues, bySfx: JSON.stringify(report.bySfx || {}) });
     }
+    // Terminal probe scene to verify terminal typingTick offset (350ms)
+    const termProbe = baseScene('agency-term-probe', 'Agency Terminal Audio Probe', [
+      timed({ id: 'bg-term', type: 'background', variant: { variant: 'solid', color: '#07111f' } }),
+      timed({ id: 'term-device', type: 'deviceMockup', deviceType: 'terminal', theme: 'dark', titleOrUrl: 'agency-term', at: 0, duration: 4000 }),
+    ], assets());
+    await callTool(client, 'create_or_update_scene', termProbe);
+    const termCall = await callTool(client, 'auto_choreograph_audio', { sceneId: 'agency-term-probe', includeAmbientBed: true, overwriteExisting: true, masterGain: 0.7 });
+    const termCues = termCall.structured.cues || [];
+
+    // Verify complete 14-cue union
     assert(cueUnion.size === 14 && [...SFX_NAMES].every((name) => cueUnion.has(name)), `audio union missing: ${[...SFX_NAMES].filter((name) => !cueUnion.has(name)).join(', ')}`);
     console.table(cues);
 
-    section('5. Compose draft masterpiece');
+    // Literal scheduled timestamp assertions (M11 requirement):
+    // 1. ambientPad at 0ms
+    assert(scheduledCuesByScene['agency-hook'].some((c) => c.sfx === 'ambientPad' && c.at === 0), 'missing ambientPad at 0ms');
+    // 2. whoosh at kineticText entrance (0ms)
+    assert(scheduledCuesByScene['agency-hook'].some((c) => c.sfx === 'whoosh' && c.at === 0), 'missing whoosh at kineticText entrance (0ms)');
+    // 3. counterTick at metric/chart offset (150ms)
+    assert(scheduledCuesByScene['agency-hook'].some((c) => c.sfx === 'counterTick' && c.at === 150), 'missing counterTick at metric offset (150ms)');
+    assert(scheduledCuesByScene['agency-proof'].some((c) => c.sfx === 'counterTick' && c.at === 150), 'missing counterTick at chart offset (150ms)');
+    // 4. typingTick at code offset (200ms) and terminal offset (350ms)
+    assert(scheduledCuesByScene['agency-product'].some((c) => c.sfx === 'typingTick' && c.at === 200), 'missing typingTick at codeBlock offset (200ms)');
+    assert(termCues.some((c) => c.sfx === 'typingTick' && c.at === 350), 'missing typingTick at terminal offset (350ms)');
+    // 5. mouseClick at cursor waypoint click times (1800ms and 2800ms)
+    assert(scheduledCuesByScene['agency-product'].some((c) => c.sfx === 'mouseClick' && c.at === 1800), 'missing mouseClick at waypoint 1800ms');
+    assert(scheduledCuesByScene['agency-product'].some((c) => c.sfx === 'mouseClick' && c.at === 2800), 'missing mouseClick at waypoint 2800ms');
+    // 6. notificationChime at CTA offset (100ms)
+    assert(scheduledCuesByScene['agency-proof'].some((c) => c.sfx === 'notificationChime' && c.at === 100), 'missing notificationChime at CTA offset (100ms)');
+
+    console.log('  audio timestamp assertions passed: ambientPad@0ms, whoosh@0ms, counterTick@150ms, typingTick@200ms/350ms, mouseClick@1800ms/2800ms, notificationChime@100ms');
+
+    section('6. Compose draft masterpiece');
     const compose = await callTool(client, 'compose_storyboard_video', { outputName: 'agency-masterpiece-showcase', quality: 'draft', wait: true, scenes: [
       { sceneId: 'agency-hook', transitionToNext: 'fade', transitionDurationMs: 400 },
       { sceneId: 'agency-product', transitionToNext: 'fade', transitionDurationMs: 400 },
@@ -209,7 +272,7 @@ async function main() {
     console.table(report.scenes.map((scene) => ({ scene: scene.sceneId, durationMs: scene.durationMs, frames: scene.frames, workerCount: scene.workerCount, renderWallMs: scene.renderWallMs })));
     console.table(report.telemetry ? [report.telemetry] : []);
 
-    section('6. Stills and audio proof');
+    section('7. Stills and audio proof');
     for (const second of [1, 3, 5, 7, 9, 11]) {
       const output = path.join(dirs.renders, `agency-masterpiece-t${second}.png`);
       const still = run('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', String(second), '-i', report.outputPath, '-frames:v', '1', '-y', output]);
@@ -223,7 +286,7 @@ async function main() {
       console.log(`  audio ${start.toFixed(1)}s mean_volume=${mean} dB`);
     }
 
-    section('7. Benchmark tables');
+    section('8. Benchmark tables');
     console.table(latencies);
     console.log(JSON.stringify(report.probe, null, 2));
     console.log('EXIT=0');

@@ -278,6 +278,21 @@ describe("audio choreography and SFX bank", () => {
     expect(updated).not.toBeNull();
     const cues = updated!.audio?.cues ?? [];
     expect(cues).toHaveLength(14);
+    expect(report.cues).toHaveLength(14);
+
+    // Literal timestamp verification:
+    // terminal typingTick at layer.at (0) + 350ms
+    expect(cues.find((c) => c.sfx === "typingTick" && c.at === 350)).toBeDefined();
+    // kineticText whoosh at layer.at (0)
+    expect(cues.find((c) => c.sfx === "whoosh" && c.at === 0)).toBeDefined();
+    // ambientPad at 0ms
+    expect(cues.find((c) => c.sfx === "ambientPad" && c.at === 0)).toBeDefined();
+    // chart counterTick at layer.at (1800) + 150ms = 1950ms
+    expect(cues.find((c) => c.sfx === "counterTick" && c.at === 1950)).toBeDefined();
+    // cta notificationChime at layer.at (2200) + 100ms = 2300ms
+    expect(cues.find((c) => c.sfx === "notificationChime" && c.at === 2300)).toBeDefined();
+    // cursor click at waypoint atMs (2700ms)
+    expect(cues.find((c) => c.sfx === "mouseClick" && c.at === 2700)).toBeDefined();
 
     for (const cue of cues) {
       expect(cue.gain).toBeGreaterThanOrEqual(0);

@@ -14,6 +14,7 @@ export interface AudioChoreographyReport {
   bySfx: Record<string, number>;
   ambientIncluded: boolean;
   skipped: string[];
+  cues: AudioCue[];
 }
 
 interface RawCandidateCue {
@@ -35,6 +36,7 @@ export function choreographSceneAudio(
   bySfx: Record<string, number>;
   ambientIncluded: boolean;
   skipped: string[];
+  cues: AudioCue[];
 } {
   const includeAmbientBed = options?.includeAmbientBed !== false;
   const overwriteExisting = options?.overwriteExisting === true;
@@ -182,5 +184,6 @@ export function choreographSceneAudio(
     bySfx,
     ambientIncluded: finalCues.some((c) => c.sfx === "ambientPad"),
     skipped,
+    cues: finalCues,
   };
 }

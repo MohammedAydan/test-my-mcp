@@ -562,6 +562,7 @@ export class EngineCore extends EventEmitter {
       bySfx: result.bySfx,
       ambientIncluded: result.ambientIncluded,
       skipped: result.skipped,
+      cues: result.cues,
     };
   }
 
@@ -616,6 +617,7 @@ export class EngineCore extends EventEmitter {
               capturedFrames: job.result.capturedFrames ?? 0,
               reusedStaticFrames: job.result.reusedStaticFrames ?? 0,
               captureMsPerFrame: job.result.captureMsPerFrame ?? 0,
+              reuseMsPerFrame: job.result.reuseMsPerFrame ?? 0,
             },
           }
         : {}),
