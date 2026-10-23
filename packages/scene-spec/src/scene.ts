@@ -14,6 +14,8 @@ import { chartLayerSchema } from "./layers/chart.js";
 import { codeBlockLayerSchema } from "./layers/code-block.js";
 import { particleFieldLayerSchema } from "./layers/particle-field.js";
 import { ctaLayerSchema } from "./layers/cta.js";
+import { deviceMockupLayerSchema } from "./layers/device-mockup.js";
+import { cursorFlowLayerSchema } from "./layers/cursor-flow.js";
 import { themePresetSchema } from "./themes.js";
 
 // ---------------------------------------------------------------------------
@@ -126,6 +128,8 @@ export const LAYER_TYPES = [
   "codeBlock",
   "particleField",
   "cta",
+  "deviceMockup",
+  "cursorFlow",
 ] as const;
 export type LayerType = (typeof LAYER_TYPES)[number];
 
@@ -154,6 +158,8 @@ export const layerSchema = z.discriminatedUnion("type", [
   codeBlockLayerSchema,
   particleFieldLayerSchema,
   ctaLayerSchema,
+  deviceMockupLayerSchema,
+  cursorFlowLayerSchema,
 ]);
 export type Layer = z.infer<typeof layerSchema>;
 

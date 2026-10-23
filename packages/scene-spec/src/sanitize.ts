@@ -294,6 +294,30 @@ function normalizeNewLayerKinds(layer: Record<string, unknown>, path: string, re
       });
     }
   }
+
+  // ---- cursorFlow: sort waypoints stably by atMs ------------------------
+  if (type === "cursorFlow") {
+    const waypoints = layer.waypoints;
+    if (Array.isArray(waypoints)) {
+      let outOfOrder = false;
+      for (let i = 0; i < waypoints.length - 1; i++) {
+        const a = (waypoints[i] as Record<string, unknown>)?.atMs;
+        const b = (waypoints[i + 1] as Record<string, unknown>)?.atMs;
+        if (typeof a === "number" && typeof b === "number" && a > b) {
+          outOfOrder = true;
+          break;
+        }
+      }
+      if (outOfOrder) {
+        layer.waypoints = [...waypoints].sort((a, b) => {
+          const atA = typeof (a as Record<string, unknown>)?.atMs === "number" ? ((a as Record<string, unknown>).atMs as number) : 0;
+          const atB = typeof (b as Record<string, unknown>)?.atMs === "number" ? ((b as Record<string, unknown>).atMs as number) : 0;
+          return atA - atB;
+        });
+        report.healed.push(`${path}.waypoints`);
+      }
+    }
+  }
 }
 
 /**

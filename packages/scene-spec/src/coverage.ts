@@ -150,6 +150,7 @@ export const FOREGROUND_LAYER_TYPES = [
   "chart",
   "codeBlock",
   "cta",
+  "deviceMockup",
 ] as const;
 export type ForegroundLayerType = (typeof FOREGROUND_LAYER_TYPES)[number];
 

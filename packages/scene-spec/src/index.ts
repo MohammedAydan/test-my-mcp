@@ -17,6 +17,8 @@ export * from "./layers/chart.js";
 export * from "./layers/code-block.js";
 export * from "./layers/particle-field.js";
 export * from "./layers/cta.js";
+export * from "./layers/device-mockup.js";
+export * from "./layers/cursor-flow.js";
 // --- keyframe evaluation (shared by the runtime AND the studio) --------------
 export * from "./keyframes.js";
 // --- scene + validation -----------------------------------------------------

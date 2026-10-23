@@ -65,6 +65,16 @@ const LAYER_FIXTURES: Record<string, Record<string, unknown>> = {
     position: { xPct: 50, yPct: 50 },
     label: "Start",
   },
+  deviceMockup: {
+    id: "mockup",
+    type: "deviceMockup",
+    titleOrUrl: "app.motionforge.ai",
+  },
+  cursorFlow: {
+    id: "cursor",
+    type: "cursorFlow",
+    waypoints: [{ atMs: 0, xPct: 10, yPct: 10 }],
+  },
 };
 
 const SPATIAL = {

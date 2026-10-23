@@ -7,7 +7,7 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | M0 | governance | docs/mcp-evolution, .cursor, .agents, AGENTS.md, CLAUDE.md | COMPLETED | n/a (docs) | n/a (docs) | files present + no-emoji scan + lead fact-check (2 correction rounds) | a3b92d8 |
 | M1 | themePreset | scene-spec, scene-runtime | COMPLETED | 8 new (3 files, 29 assertions green) | PASS (6/6 workspaces) | npm test 579/579; no-emoji 139 files; 6 presets x 10 tokens verified | pending (M12) |
 | M2 | layoutSlot | scene-spec, scene-runtime | COMPLETED | 10 new (2 files, 31 targeted green) | PASS (6/6 workspaces) | npm test 589/589; no-emoji 140 files; 12 slots, 3-slot zero-overlap + centerStage containment | pending (M12) |
-| M3 | deviceMockup + cursorFlow | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
+| M3 | deviceMockup + cursorFlow | scene-spec, scene-runtime | COMPLETED | 19 new (2 files, 40 targeted green) | PASS (6/6 workspaces) | npm test 608/608; no-emoji 144 files; 12 kinds verified (browser/macbook/iphone/terminal, waypoints cubic ease) | pending (M12) |
 | M4 | bentoGrid + connectorDiagram | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
 | M5 | metricTicker + comparisonSplit (+ field guide for 16 kinds) | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
 | M6 | critique_and_autofix_scene | core-engine, mcp-server, scene-spec | PENDING | pending | pending | pending | pending |
@@ -55,3 +55,14 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
   safe margin and around the canvas centre.
 - Verification: typecheck 6/6, targeted 3 files / 31 tests, full suite 36 files / 589 tests,
   zero-emoji scan 140 files.
+
+### M3: deviceMockup + cursorFlow (2026-10-23)
+- Exported `hexColorSchema` in `packages/scene-spec/src/common.ts` (accepts #38bdf8 / #fff, rejects non-hex / rgb).
+- Added `packages/scene-spec/src/layers/device-mockup.ts`: 4 device types (`browser`, `macbook`, `iphone`, `terminal`), 2 themes (`dark`, `light`), 5 content variants (`dashboard`, `code`, `metrics`, `analytics`, `blank`), `headline`, `accentColor`, and `tiltDeg` (rotateX/rotateY restricted to [-35, 35] deg).
+- Added `packages/scene-spec/src/layers/cursor-flow.ts`: 3 cursor styles (`macos`, `pointer`, `collaborator`), 3 waypoint actions (`move`, `click`, `hover`), `cursorScale`, `accentColor`, and `waypoints` (1-20 waypoints with `atMs`, `xPct`, `yPct`, `action`, `label`).
+- Registered `deviceMockup` and `cursorFlow` in `LAYER_TYPES` (10 -> 12 kinds), `layerSchema`, and field guide with schema-valid examples and registry entries. `deviceMockup` joined `FOREGROUND_LAYER_TYPES`; `cursorFlow` stayed decorative (it cannot close a coverage gap).
+- Updated sanitizer in `packages/scene-spec/src/sanitize.ts` to stably sort cursor waypoints by `atMs` into `SanitizeReport.healed`.
+- Added runtime renderers:
+  - `packages/scene-runtime/src/layers/device-mockup.ts`: authentic frame rendering for browser (traffic lights + URL pill), macbook (camera dot + hinge base), iphone (notch / dynamic island + rounded frame), and terminal (prompt marker + monospace output), with deterministic UI variants and `tiltDeg` applied strictly to the inner frame.
+  - `packages/scene-runtime/src/layers/cursor-flow.ts`: vector SVG cursor silhouettes, cubic ease-in-out waypoint interpolation (`t < 0.5 ? 4t^3 : 1 - (-2t + 2)^3 / 2`), scale dipping to 0.82 with dual expanding ripple rings on click, soft accent halo on hover, and floating label pills driven via `ctx.tl`.
+- Verification: typecheck 6/6 workspaces PASS, targeted 3 files / 40 tests green, full suite 38 files / 608 tests green, zero-emoji scan 144 files clean.

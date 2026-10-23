@@ -27,6 +27,11 @@ const HEX_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const RGB_COLOR = /^rgba?\(\s*[-\d.]+%?(\s*,\s*[-\d.]+%?){2,3}\s*\)$/i;
 const HSL_COLOR = /^hsla?\(\s*[-\d.]+(?:deg)?(\s*,\s*[-\d.]+%?){2,3}\s*\)$/i;
 
+export const hexColorSchema = z.string().regex(
+  /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/,
+  "must be a hex color like #38bdf8",
+);
+
 export const colorSchema = z
   .string()
   .max(64)

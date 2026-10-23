@@ -28,6 +28,17 @@ import { chartLayerSchema, CHART_TYPES } from "./layers/chart.js";
 import { codeBlockLayerSchema, CODE_BLOCK_THEMES } from "./layers/code-block.js";
 import { particleFieldLayerSchema, PARTICLE_PATTERNS } from "./layers/particle-field.js";
 import { ctaLayerSchema, CTA_ICONS, CTA_VARIANTS } from "./layers/cta.js";
+import {
+  deviceMockupLayerSchema,
+  DEVICE_TYPES,
+  DEVICE_THEMES,
+  DEVICE_CONTENT_VARIANTS,
+} from "./layers/device-mockup.js";
+import {
+  cursorFlowLayerSchema,
+  CURSOR_STYLES,
+  CURSOR_ACTIONS,
+} from "./layers/cursor-flow.js";
 import { THEME_PRESETS } from "./themes.js";
 import { LAYOUT_SLOTS } from "./layout-slots.js";
 import {
@@ -49,6 +60,8 @@ export type ChartLayerInput = z.input<typeof chartLayerSchema>;
 export type CodeBlockLayerInput = z.input<typeof codeBlockLayerSchema>;
 export type ParticleFieldLayerInput = z.input<typeof particleFieldLayerSchema>;
 export type CtaLayerInput = z.input<typeof ctaLayerSchema>;
+export type DeviceMockupLayerInput = z.input<typeof deviceMockupLayerSchema>;
+export type CursorFlowLayerInput = z.input<typeof cursorFlowLayerSchema>;
 
 export type AnyLayerInput =
   | BackgroundLayerInput
@@ -60,7 +73,9 @@ export type AnyLayerInput =
   | ChartLayerInput
   | CodeBlockLayerInput
   | ParticleFieldLayerInput
-  | CtaLayerInput;
+  | CtaLayerInput
+  | DeviceMockupLayerInput
+  | CursorFlowLayerInput;
 
 /** Keys every layer needs, plus the timing/motion knobs shared by all of them. */
 export const COMMON_LAYER_REQUIRED = ["id", "type"] as const;
@@ -309,6 +324,51 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
       icon: "arrow",
       entrance: { name: "springPop" },
       sfx: [{ sfx: "pop", offsetMs: 0 }],
+    },
+  },
+  deviceMockup: {
+    required: ["titleOrUrl (defaults to app.motionforge.ai)"],
+    optional: [
+      "deviceType: browser | macbook | iphone | terminal (default browser)",
+      "theme: dark | light (default dark)",
+      "contentVariant: dashboard | code | metrics | analytics | blank (default dashboard)",
+      "headline (heading text rendered above the device)",
+      "accentColor (hex color string)",
+      "tiltDeg ({ rotateX?, rotateY? } between -35 and 35 deg)",
+    ],
+    example: {
+      id: "device-preview",
+      type: "deviceMockup",
+      at: 600,
+      deviceType: "browser",
+      titleOrUrl: "analytics.motionforge.ai",
+      theme: "dark",
+      contentVariant: "dashboard",
+      headline: "Real-time Telemetry",
+      accentColor: "#38bdf8",
+    },
+  },
+  cursorFlow: {
+    required: [
+      "waypoints (1-20 waypoints: [{ atMs, xPct, yPct, action?, label? }])",
+    ],
+    optional: [
+      "cursorStyle: macos | pointer | collaborator (default macos)",
+      "accentColor (hex color, default #38bdf8)",
+      "cursorScale (0.5 to 3, default 1.2)",
+    ],
+    example: {
+      id: "cursor-1",
+      type: "cursorFlow",
+      at: 800,
+      cursorStyle: "macos",
+      accentColor: "#38bdf8",
+      cursorScale: 1.2,
+      waypoints: [
+        { atMs: 0, xPct: 20, yPct: 30, action: "move" },
+        { atMs: 500, xPct: 50, yPct: 50, action: "click", label: "Submit" },
+        { atMs: 1000, xPct: 80, yPct: 70, action: "hover" },
+      ],
     },
   },
 };
@@ -598,6 +658,11 @@ export function authoringDigest(): Record<string, unknown> {
       ctaIcons: CTA_ICONS,
       themePresets: THEME_PRESETS,
       layoutSlots: LAYOUT_SLOTS,
+      deviceTypes: DEVICE_TYPES,
+      deviceThemes: DEVICE_THEMES,
+      deviceContentVariants: DEVICE_CONTENT_VARIANTS,
+      cursorStyles: CURSOR_STYLES,
+      cursorActions: CURSOR_ACTIONS,
     },
     keyframePrecedence: {
       canonical: "keyframes",

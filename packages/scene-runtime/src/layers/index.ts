@@ -10,6 +10,8 @@ import { renderChart } from "./chart.js";
 import { renderCodeBlock } from "./code-block.js";
 import { renderParticleField } from "./particle-field.js";
 import { renderCta } from "./cta.js";
+import { renderDeviceMockup } from "./device-mockup.js";
+import { renderCursorFlow } from "./cursor-flow.js";
 
 export interface BuiltLayer {
   /** element that entrance/emphasis/exit presets animate */
@@ -48,5 +50,9 @@ export function renderLayer(layer: Layer, ctx: LayerContext): BuiltLayer {
       return renderParticleField(layer, ctx);
     case "cta":
       return renderCta(layer, ctx);
+    case "deviceMockup":
+      return renderDeviceMockup(layer, ctx);
+    case "cursorFlow":
+      return renderCursorFlow(layer, ctx);
   }
 }
