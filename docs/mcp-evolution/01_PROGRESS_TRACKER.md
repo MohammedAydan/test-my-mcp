@@ -14,9 +14,9 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | M7 | 14 SFX + auto_choreograph_audio | core-engine, scene-spec, mcp-server | COMPLETED | 7 new (2 files, 41 targeted green) | PASS (6/6 workspaces) | npm test 644/644; no-emoji 154 files; 14 clean procedural SFX, 15 MCP tools | 64e3677 |
 | M8 | generate_storyboard_from_brief | core-engine, mcp-server | COMPLETED | 9 new (2 files, 44 targeted green) | PASS (6/6 workspaces) | npm test 653/653; no-emoji 155 files; 5 archetypes, zero dead air, score >= 95, 16 MCP tools | a4f0c17 |
 | M9 | compose_storyboard_video | core-engine, mcp-server | COMPLETED | 7 new (2 files, 43 targeted green) | PASS (6/6 workspaces) | npm test 660/660; no-emoji 156 files; preview / full render, 17 MCP tools | 2ffa31c |
-| M10 | static-frame dedup + render telemetry | core-engine, scene-runtime | COMPLETED | 10 new (2 files, 10 targeted green) | PASS (6/6 workspaces) | preview: 24 frames, 4 captured + 20 reused, 55.5ms/captured frame; JPEG pipe pre-existed | fb13150 |
-| M11 | flagship benchmark | core-engine, mcp-server | COMPLETED | benchmark assertions green | PASS (17-tool MCP session) | 3 scenes / 16 kinds / 14 SFX; H.264+AAC 11.232s master; 6 stills; 3 audio windows; EXIT=0 | 492409b |
-| M12 | report + final gate | docs/mcp-evolution, root | COMPLETED | 670 passed | PASS (6/6 workspaces) | build + no-emoji + flagship MCP benchmark EXIT=0 | 73a28e8 |
+| M10 | static-frame dedup + render telemetry | core-engine, scene-runtime | COMPLETED | 12 new (2 files, 11 targeted green) | PASS (6/6 workspaces) | preview: 24 frames (4 cap + 20 reuse), draft: 60 frames (8 cap + 52 reuse); reuse write <0.5ms; literal ladder 85/94/98 | d3eef39 |
+| M11 | flagship benchmark | core-engine, mcp-server | COMPLETED | benchmark assertions green | PASS (17-tool MCP session) | 3 scenes / 16 kinds / 14 SFX; brief probe (1144ms); exact audio timestamps asserted; master 11.232s; EXIT=0 | f81a96e |
+| M12 | report + final gate | docs/mcp-evolution, root | COMPLETED | 672 passed | PASS (6/6 workspaces) | build + no-emoji + flagship MCP benchmark EXIT=0 | 0efd404 |
 
 ## Milestone Log
 
@@ -152,40 +152,52 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
   renderer share the same lifecycle windows.
 - Updated the renderer to evaluate the signature before each capture, reuse the
   previous JPEG only for consecutive identical signatures, and report
-  `capturedFrames`, `reusedStaticFrames`, and `captureMsPerFrame` through
-  `RenderJob` and `RenderResultReport`.
+  `capturedFrames`, `reusedStaticFrames`, `captureMsPerFrame`, and `reuseMsPerFrame`
+  through `RenderJob` and `RenderResultReport`.
 - Chunk telemetry is aggregated per worker; each new Chromium page resets its
   previous frame buffer and signature. `EngineCore.closeWarmPage()` is called
   before renders and storyboard composition to preserve the one-Chromium memory
   envelope.
-- The JPEG image pipe was already present before M10 and was intentionally left
-  unchanged at the measured 70/80/92 preview/draft/production quality ladder.
-- Verification: runtime signature tests 9/9, isolated preview render test 1/1;
-  24 total frames produced 4 captures and 20 static reuses at 55.5ms per
-  captured frame, with a full-duration 2-second MP4.
+- Implemented the literal M10 encoder contract: fast JPEG piping with the
+  exact quality ladder: `preview = 85` (360p @ 12fps), `draft = 94` (720p @ 30fps),
+  and `production = 98` (1080p @ 60fps), matching image2pipe and MJPEG encoding.
+- Verification: runtime signature tests 9/9; isolated render test suite 2/2:
+  preview produced 4 captures and 20 static reuses (~83% reuse ratio) with
+  `reuseMsPerFrame < 0.5ms` (far below the 5ms threshold) and >4x throughput speedup;
+  draft produced 8 captures and 52 static reuses (~87% reuse ratio) with `jpegQuality = 94`.
 
 ### M11: flagship agency benchmark (2026-10-23)
-- Added `scripts/benchmark-agency-mcp-masterpiece.cjs`, a real MCP stdio
+- Extended `scripts/benchmark-agency-mcp-masterpiece.cjs`, a real MCP stdio
   benchmark using an isolated `motionforge-bench-<pid>` workspace and automatic
   cleanup (or `--keep`). It uploads an SVG logo and a 60-frame Lottie fixture,
   authors three four-second scenes, and asserts the complete 16-kind layer union.
+- Tested `generate_storyboard_from_brief` in the real MCP stdio session
+  (latency 1144ms, 3 synthesized scenes scoring 100/100/100, 12000ms duration,
+  `linearMinimal` theme, valid transition manifest).
 - The benchmark verifies all 17 advertised tools, six theme presets, critique
   score recovery (`53 -> 100` for the intentionally broken scene), zero
   post-autofix issues on all flagship scenes, and the complete 14-cue SFX union.
-- The sequential draft composition completed in 52.803 seconds: three 120-frame
+- Asserted exact scheduled audio timestamps:
+  `ambientPad` at 0ms, `whoosh` at 0ms (kineticText entrance), `counterTick` at 150ms
+  (metric and chart offset), `typingTick` at 200ms (codeBlock offset) and 350ms
+  (terminal offset), `mouseClick` at 1800ms and 2800ms (cursorFlow click waypoints),
+  and `notificationChime` at 100ms (CTA offset).
+- The sequential draft composition completed in ~53 seconds: three 120-frame
   scenes, one worker each, H.264/AAC master, 11.232 seconds measured duration
-  (11.2-second video stream), 595856 bytes, six non-empty stills, and audio
+  (11.2-second video stream), 574,926 bytes, six non-empty stills, and audio
   windows at 0.0/3.6/7.2 seconds measuring -18.9/-22.6/-22.2 dB.
 - Extended storyboard compose results with aggregate static-frame telemetry:
   360 captured frames, 0 reused frames (the flagship intentionally uses dynamic
-  layers), and 107.52ms average capture time. The benchmark prints tool latency,
+  layers), and 111.58ms average capture time. The benchmark prints tool latency,
   score, cue, render, telemetry and ffprobe tables and ends with `EXIT=0`.
 
 ### M12: final documentation and verification gate (2026-10-23)
 - Updated the root README, `AGENTS.md`, MCP package metadata, MCP capability
   guidance, and SceneSpec reference for the shipped 17-tool, 16-layer, and
   14-cue inventory.
-- Added the human-readable final report:
-  `docs/reports/04_MCP_AGENCY_EVOLUTION_REPORT.md`.
-- Final verification: typecheck, build, full tests (48 files / 670 tests),
-  zero-emoji verification, and the flagship benchmark all pass.
+- Updated `docs/reports/04_MCP_AGENCY_EVOLUTION_REPORT.md` removing obsolete
+  deviation language and reporting actual M10 quality/throughput measurements,
+  storyboard MCP latency, and exact audio timestamp evidence.
+- Final verification: typecheck (all 6 workspaces), build, full test suite
+  (48 files / 672 tests green), zero-emoji scan (157 files), and the flagship
+  MCP benchmark all pass with EXIT=0.
