@@ -81,6 +81,9 @@ export interface ComposeSceneResult {
   renderWallMs: number;
   frames: number;
   workerCount: number;
+  capturedFrames: number;
+  reusedStaticFrames: number;
+  captureMsPerFrame: number;
   transitionToNext: ComposeTransition;
   transitionDurationMs: number;
 }
@@ -93,6 +96,11 @@ export interface ComposeReport {
   quality: string;
   scenes: ComposeSceneResult[];
   probe: MediaProbeReport;
+  telemetry: {
+    capturedFrames: number;
+    reusedStaticFrames: number;
+    captureMsPerFrame: number;
+  };
 }
 
 export interface PlannedTransition {
@@ -315,6 +323,9 @@ export class StoryboardComposer {
           renderWallMs: renderJob.result.wallMs,
           frames: renderJob.result.frames,
           workerCount: renderJob.result.workerCount,
+          capturedFrames: renderJob.result.capturedFrames,
+          reusedStaticFrames: renderJob.result.reusedStaticFrames,
+          captureMsPerFrame: renderJob.result.captureMsPerFrame,
           transitionToNext: transToNext,
           transitionDurationMs: transDurMs,
         });
@@ -562,6 +573,18 @@ export class StoryboardComposer {
         Math.round(finalProbe.durationSec * profile.fps)
       );
 
+      const capturedFrames = sceneResults.reduce((sum, scene) => sum + scene.capturedFrames, 0);
+      const reusedStaticFrames = sceneResults.reduce((sum, scene) => sum + scene.reusedStaticFrames, 0);
+      const captureMsTotal = sceneResults.reduce(
+        (sum, scene) => sum + scene.captureMsPerFrame * scene.capturedFrames,
+        0
+      );
+      const telemetry = {
+        capturedFrames,
+        reusedStaticFrames,
+        captureMsPerFrame: capturedFrames > 0 ? captureMsTotal / capturedFrames : 0,
+      };
+
       if (job) {
         job.status = "succeeded";
         job.progress = 1;
@@ -574,9 +597,7 @@ export class StoryboardComposer {
           encoder: "ffmpeg xfade",
           workerCount: 1,
           profile,
-          capturedFrames: 0,
-          reusedStaticFrames: 0,
-          captureMsPerFrame: 0,
+          ...telemetry,
         };
       }
 
@@ -588,6 +609,7 @@ export class StoryboardComposer {
         quality,
         scenes: sceneResults,
         probe: finalProbe,
+        telemetry,
       };
 
       return report;
