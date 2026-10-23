@@ -67,17 +67,25 @@ describe("buildAudioGraph", () => {
 });
 
 describe("profileFor", () => {
-  it("drafts at 720p/30 regardless of canvas scale", () => {
+  it("previews at 360p/12 with fast JPEG quality 85", () => {
+    const p = profileFor("preview", parseScene({ ...sceneInput, canvas: { shape: "16:9", scale: 1080 } }));
+    expect(p.fps).toBe(12);
+    expect([p.outWidth, p.outHeight]).toEqual([640, 360]);
+    expect(p.jpegQuality).toBe(85);
+  });
+
+  it("drafts at 720p/30 with fast JPEG quality 94 regardless of canvas scale", () => {
     const p = profileFor("draft", parseScene({ ...sceneInput, canvas: { shape: "16:9", scale: 1080 } }));
     expect(p.fps).toBe(30);
     expect([p.outWidth, p.outHeight]).toEqual([1280, 720]);
+    expect(p.jpegQuality).toBe(94);
   });
 
-  it("produces the full canvas at 60 fps in production", () => {
+  it("produces the full canvas at 60 fps in production with crisp quality 98", () => {
     const p = profileFor("production", parseScene({ ...sceneInput, canvas: { shape: "16:9", scale: 1080 } }));
     expect(p.fps).toBe(60);
     expect([p.outWidth, p.outHeight]).toEqual([1920, 1080]);
-    expect(p.jpegQuality).toBe(92);
+    expect(p.jpegQuality).toBe(98);
   });
 });
 

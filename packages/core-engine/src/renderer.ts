@@ -488,6 +488,7 @@ export interface ParallelRenderResult {
   capturedFrames: number;
   reusedStaticFrames: number;
   captureMsPerFrame: number;
+  reuseMsPerFrame: number;
 }
 
 /**
@@ -578,7 +579,9 @@ export async function renderFramesParallel(opts: {
     let workerCapturedFrames = 0;
     let workerReusedFrames = 0;
     let workerCaptureMsSum = 0;
+    let workerReuseMsSum = 0;
     let workerCapturedCount = 0;
+    let workerReusedCount = 0;
     for (const [offsetFrom, offsetTo] of chunks) {
       const chunkFrom = from + offsetFrom;
       const chunkTo = from + offsetTo;
@@ -606,7 +609,9 @@ export async function renderFramesParallel(opts: {
       workerCapturedFrames += telemetry.capturedFrames;
       workerReusedFrames += telemetry.reusedStaticFrames;
       workerCaptureMsSum += telemetry.captureMsPerFrame * telemetry.capturedFrames;
+      workerReuseMsSum += telemetry.reuseMsPerFrame * telemetry.reusedStaticFrames;
       workerCapturedCount += telemetry.capturedFrames;
+      workerReusedCount += telemetry.reusedStaticFrames;
       parts.push({ from: chunkFrom, path: partPath });
     }
     return {
@@ -614,6 +619,7 @@ export async function renderFramesParallel(opts: {
       capturedFrames: workerCapturedFrames,
       reusedStaticFrames: workerReusedFrames,
       captureMsPerFrame: workerCapturedCount > 0 ? workerCaptureMsSum / workerCapturedCount : 0,
+      reuseMsPerFrame: workerReusedCount > 0 ? workerReuseMsSum / workerReusedCount : 0,
     };
   });
 
@@ -626,6 +632,7 @@ export async function renderFramesParallel(opts: {
   const totalCapturedFrames = results.reduce((sum, r) => sum + r.capturedFrames, 0);
   const totalReusedFrames = results.reduce((sum, r) => sum + r.reusedStaticFrames, 0);
   const totalCaptureMsSum = results.reduce((sum, r) => sum + r.captureMsPerFrame * r.capturedFrames, 0);
+  const totalReuseMsSum = results.reduce((sum, r) => sum + r.reuseMsPerFrame * r.reusedStaticFrames, 0);
 
   return {
     partPaths,
@@ -634,6 +641,7 @@ export async function renderFramesParallel(opts: {
     capturedFrames: totalCapturedFrames,
     reusedStaticFrames: totalReusedFrames,
     captureMsPerFrame: totalCapturedFrames > 0 ? totalCaptureMsSum / totalCapturedFrames : 0,
+    reuseMsPerFrame: totalReusedFrames > 0 ? totalReuseMsSum / totalReusedFrames : 0,
   };
 }
 
@@ -660,6 +668,7 @@ async function renderFrameRange(opts: {
   capturedFrames: number;
   reusedStaticFrames: number;
   captureMsPerFrame: number;
+  reuseMsPerFrame: number;
 }> {
   const { profile } = opts;
   // THE GRAIN IS THE ENCODER'S JOB.
@@ -710,6 +719,7 @@ async function renderFrameRange(opts: {
     let capturedFrames = 0;
     let reusedStaticFrames = 0;
     let totalCaptureMs = 0;
+    let totalReuseMs = 0;
 
     for (let frame = opts.from; frame < opts.to; frame++) {
       // Check static-frame signature before capturing
@@ -727,7 +737,10 @@ async function renderFrameRange(opts: {
       let buffer: Buffer;
       if (signature !== null && signature === lastSignature && lastBuffer !== null) {
         // Reuse the previous frame's buffer
+        const reuseStart = Date.now();
         buffer = lastBuffer;
+        await writer.write(buffer);
+        totalReuseMs += Date.now() - reuseStart;
         reusedStaticFrames++;
       } else {
         // Capture new frame
@@ -737,9 +750,9 @@ async function renderFrameRange(opts: {
         capturedFrames++;
         lastBuffer = buffer;
         lastSignature = signature;
+        await writer.write(buffer);
       }
 
-      await writer.write(buffer);
       opts.onFrameDone?.(1);
     }
 
@@ -750,6 +763,7 @@ async function renderFrameRange(opts: {
       capturedFrames,
       reusedStaticFrames,
       captureMsPerFrame: capturedFrames > 0 ? totalCaptureMs / capturedFrames : 0,
+      reuseMsPerFrame: reusedStaticFrames > 0 ? totalReuseMs / reusedStaticFrames : 0,
     };
   } finally {
     await close();

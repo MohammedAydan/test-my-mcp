@@ -84,6 +84,7 @@ export interface ComposeSceneResult {
   capturedFrames: number;
   reusedStaticFrames: number;
   captureMsPerFrame: number;
+  reuseMsPerFrame?: number;
   transitionToNext: ComposeTransition;
   transitionDurationMs: number;
 }
@@ -100,6 +101,7 @@ export interface ComposeReport {
     capturedFrames: number;
     reusedStaticFrames: number;
     captureMsPerFrame: number;
+    reuseMsPerFrame?: number;
   };
 }
 
@@ -326,6 +328,7 @@ export class StoryboardComposer {
           capturedFrames: renderJob.result.capturedFrames,
           reusedStaticFrames: renderJob.result.reusedStaticFrames,
           captureMsPerFrame: renderJob.result.captureMsPerFrame,
+          reuseMsPerFrame: renderJob.result.reuseMsPerFrame,
           transitionToNext: transToNext,
           transitionDurationMs: transDurMs,
         });
@@ -579,10 +582,15 @@ export class StoryboardComposer {
         (sum, scene) => sum + scene.captureMsPerFrame * scene.capturedFrames,
         0
       );
+      const reuseMsTotal = sceneResults.reduce(
+        (sum, scene) => sum + (scene.reuseMsPerFrame ?? 0) * scene.reusedStaticFrames,
+        0
+      );
       const telemetry = {
         capturedFrames,
         reusedStaticFrames,
         captureMsPerFrame: capturedFrames > 0 ? captureMsTotal / capturedFrames : 0,
+        reuseMsPerFrame: reusedStaticFrames > 0 ? reuseMsTotal / reusedStaticFrames : 0,
       };
 
       if (job) {

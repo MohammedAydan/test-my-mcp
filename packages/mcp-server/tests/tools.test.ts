@@ -466,7 +466,7 @@ describe("render_video", () => {
         effectiveFps: 66.6,
         encoder: "libx264",
         workerCount: 4,
-        profile: { quality: "production", fps: 60, outWidth: 1920, outHeight: 1080, jpegQuality: 92 },
+        profile: { quality: "production", fps: 60, outWidth: 1920, outHeight: 1080, jpegQuality: 98 },
       },
     });
     vi.spyOn(engineClient, "renderFileBase64").mockResolvedValue({
@@ -507,7 +507,7 @@ describe("render_video", () => {
         effectiveFps: 30,
         encoder: "libx264",
         workerCount: 2,
-        profile: { quality: "draft", fps: 30, outWidth: 1280, outHeight: 720, jpegQuality: 80 },
+        profile: { quality: "draft", fps: 30, outWidth: 1280, outHeight: 720, jpegQuality: 94 },
       },
     });
     vi.spyOn(engineClient, "renderFileBase64").mockRejectedValue(new EngineError(500, "engine exploded"));

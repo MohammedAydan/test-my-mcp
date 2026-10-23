@@ -275,5 +275,7 @@ export interface RenderResultReport {
     reusedStaticFrames: number;
     /** Average capture time in ms per captured frame */
     captureMsPerFrame: number;
+    /** Average reuse write time in ms per reused frame */
+    reuseMsPerFrame?: number;
   };
 }

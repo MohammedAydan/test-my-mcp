@@ -75,11 +75,63 @@ describe("static-frame reuse telemetry", () => {
 
     // Verify telemetry fields
     expect(status!.result!.capturedFrames).toBeGreaterThan(0);
-    expect(status!.result!.reusedStaticFrames).toBeGreaterThan(0);
+    expect(status!.result!.reusedStaticFrames).toBeGreaterThanOrEqual(18);
     expect(status!.result!.capturedFrames + status!.result!.reusedStaticFrames).toBe(status!.result!.frames);
-    expect(status!.result!.captureMsPerFrame).toBeGreaterThan(0);
+    expect(status!.result!.captureMsPerFrame).toBeGreaterThan(10);
+    expect(status!.result!.profile.jpegQuality).toBe(85);
+
+    // Literal M10 benchmark proof: reuse write latency is well below threshold (< 5ms)
+    expect(status!.result!.reuseMsPerFrame).toBeDefined();
+    expect(status!.result!.reuseMsPerFrame!).toBeLessThan(5);
+
+    // Throughput improvement: reuse path is > 10x faster than full capture
+    expect(status!.result!.captureMsPerFrame).toBeGreaterThan(status!.result!.reuseMsPerFrame! * 10);
+
+    // Effective frame time is significantly lower than full capture time per frame
+    const totalRenderTimeEst =
+      status!.result!.capturedFrames * status!.result!.captureMsPerFrame +
+      status!.result!.reusedStaticFrames * status!.result!.reuseMsPerFrame!;
+    const effectiveFrameMs = totalRenderTimeEst / status!.result!.frames;
+    expect(effectiveFrameMs).toBeLessThan(status!.result!.captureMsPerFrame * 0.4);
 
     // Probe the output file
+    const probe = await probeMedia(status!.result!.mp4Path);
+    expect(probe.durationSec).toBeCloseTo(2.0, 1);
+  }, 120_000);
+
+  it("renders at draft quality with jpegQuality 94 and proves static reuse throughput scaling", async () => {
+    const result = await core.startRender("m10-static", "draft");
+    expect(result.status).toBe("running");
+
+    // Wait for completion sequentially on the same worker
+    let status = core.getRenderStatus(result.jobId);
+    while (status && status.status === "running") {
+      await new Promise((r) => setTimeout(r, 200));
+      status = core.getRenderStatus(result.jobId);
+    }
+
+    expect(status?.status).toBe("succeeded");
+    expect(status?.result).toBeDefined();
+
+    // Draft is 60 frames (2s * 30fps)
+    expect(status!.result!.frames).toBe(60);
+    expect(status!.result!.profile.jpegQuality).toBe(94);
+    expect(status!.result!.capturedFrames).toBeGreaterThan(0);
+    expect(status!.result!.reusedStaticFrames).toBeGreaterThanOrEqual(45);
+    expect(status!.result!.capturedFrames + status!.result!.reusedStaticFrames).toBe(60);
+
+    // Reuse writes are below threshold (< 5ms)
+    expect(status!.result!.reuseMsPerFrame).toBeDefined();
+    expect(status!.result!.reuseMsPerFrame!).toBeLessThan(5);
+
+    // Throughput improvement proof
+    expect(status!.result!.captureMsPerFrame).toBeGreaterThan(status!.result!.reuseMsPerFrame! * 10);
+    const totalEst =
+      status!.result!.capturedFrames * status!.result!.captureMsPerFrame +
+      status!.result!.reusedStaticFrames * status!.result!.reuseMsPerFrame!;
+    const effectiveDraftFrameMs = totalEst / status!.result!.frames;
+    expect(effectiveDraftFrameMs).toBeLessThan(status!.result!.captureMsPerFrame * 0.4);
+
     const probe = await probeMedia(status!.result!.mp4Path);
     expect(probe.durationSec).toBeCloseTo(2.0, 1);
   }, 120_000);

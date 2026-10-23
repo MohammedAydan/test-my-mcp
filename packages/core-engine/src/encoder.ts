@@ -96,7 +96,7 @@ const DEFAULT_PROFILE: RenderProfile = {
   fps: 60,
   outWidth: 1920,
   outHeight: 1080,
-  jpegQuality: 92,
+  jpegQuality: 98,
 };
 
 /**
@@ -309,7 +309,7 @@ export function profileFor(quality: "preview" | "draft" | "production", scene: S
       fps: PREVIEW_FPS,
       outWidth: Math.round((width * scale) / 2) * 2,
       outHeight: Math.round((height * scale) / 2) * 2,
-      jpegQuality: 70,
+      jpegQuality: 85,
     };
   }
   if (quality === "draft") {
@@ -320,7 +320,7 @@ export function profileFor(quality: "preview" | "draft" | "production", scene: S
       fps: DRAFT_FPS,
       outWidth: Math.round((width * scale) / 2) * 2,
       outHeight: Math.round((height * scale) / 2) * 2,
-      jpegQuality: 80,
+      jpegQuality: 94,
     };
   }
   return {
@@ -328,7 +328,7 @@ export function profileFor(quality: "preview" | "draft" | "production", scene: S
     fps: PRODUCTION_FPS,
     outWidth: width,
     outHeight: height,
-    jpegQuality: 92,
+    jpegQuality: 98,
   };
 }
 

@@ -49,6 +49,8 @@ export interface RenderJob {
     reusedStaticFrames: number;
     /** Average capture time in ms per captured frame */
     captureMsPerFrame: number;
+    /** Average reuse write time in ms per reused frame */
+    reuseMsPerFrame?: number;
   };
 }
 
@@ -326,6 +328,7 @@ export class RenderRunner extends EventEmitter {
         capturedFrames: renderResult.capturedFrames,
         reusedStaticFrames: renderResult.reusedStaticFrames,
         captureMsPerFrame: renderResult.captureMsPerFrame,
+        reuseMsPerFrame: renderResult.reuseMsPerFrame,
       };
       this.emit("completed", {
         jobId: job.id,
