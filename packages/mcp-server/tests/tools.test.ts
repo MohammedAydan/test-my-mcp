@@ -96,7 +96,7 @@ describe("MCP contract over a live client session", () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(16);
     // the original six are all still there, unchanged in name
     for (const name of [
       "get_motion_capabilities",
@@ -108,7 +108,7 @@ describe("MCP contract over a live client session", () => {
     ]) {
       expect(tools.map((t) => t.name)).toContain(name);
     }
-    // …and the nine new ones (15 total)
+    // …and the ten new ones (16 total)
     for (const name of [
       "render_scene",
       "get_layer_bounds",
@@ -119,6 +119,7 @@ describe("MCP contract over a live client session", () => {
       "project_asset_manifest",
       "critique_and_autofix_scene",
       "auto_choreograph_audio",
+      "generate_storyboard_from_brief",
     ]) {
       expect(tools.map((t) => t.name)).toContain(name);
     }
@@ -190,9 +191,9 @@ describe("MCP contract over a live client session", () => {
     expect(parsed.minimalValidScene).toBeDefined();
     expect(parsed.nestedShapeNotes).toBeDefined();
 
-    // …and the tool count is still exactly 15
+    // …and the tool count is still exactly 16
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(16);
   });
 });
 
@@ -901,5 +902,75 @@ describe("critique_and_autofix_scene", () => {
     expect(structured.cuesAdded).toBe(12);
     expect(structured.totalCues).toBe(12);
     expect(structured.ambientIncluded).toBe(true);
+  });
+
+  it("calls generate_storyboard_from_brief and returns prose summary and structuredContent", async () => {
+    const mockReport = {
+      projectTitle: "Acme Cloud",
+      themePreset: "linearMinimal" as const,
+      totalDurationMs: 12000,
+      scenes: [
+        {
+          sceneId: "acme-cloud-s1",
+          name: "Acme Cloud - hook",
+          durationMs: 4000,
+          layerKinds: ["background", "kineticText", "metricTicker", "bentoGrid"],
+          score: 100,
+          cueCount: 6,
+        },
+        {
+          sceneId: "acme-cloud-s2",
+          name: "Acme Cloud - product",
+          durationMs: 4000,
+          layerKinds: ["deviceMockup", "connectorDiagram", "codeBlock", "card", "cursorFlow"],
+          score: 100,
+          cueCount: 7,
+        },
+        {
+          sceneId: "acme-cloud-s3",
+          name: "Acme Cloud - proof",
+          durationMs: 4000,
+          layerKinds: ["comparisonSplit", "chart", "cta"],
+          score: 100,
+          cueCount: 6,
+        },
+      ],
+      manifest: [
+        { sceneId: "acme-cloud-s1", index: 0, role: "hook", transitionToNext: "fade" },
+        { sceneId: "acme-cloud-s2", index: 1, role: "product", transitionToNext: "fade" },
+        { sceneId: "acme-cloud-s3", index: 2, role: "proof", transitionToNext: "cut" },
+      ],
+    };
+
+    const spy = vi
+      .spyOn(engineClient, "generateStoryboardFromBrief")
+      .mockResolvedValue(mockReport);
+
+    const client = await connect();
+    const result = await client.callTool({
+      name: "generate_storyboard_from_brief",
+      arguments: {
+        projectTitle: "Acme Cloud",
+        productName: "Acme Engine",
+        tagline: "Ultra-fast video generation platform",
+      },
+    });
+
+    expect(spy).toHaveBeenCalled();
+    const text = result.content
+      .map((c) => (c.type === "text" ? c.text : ""))
+      .join("\n");
+    expect(text).toContain('storyboard generated: "Acme Cloud"');
+    expect(text).toContain("scenes: 3 (acme-cloud-s1, acme-cloud-s2, acme-cloud-s3)");
+    expect(text).toContain("total duration: 12000ms");
+    expect(text).toContain("theme: linearMinimal");
+    expect(text).toContain("scores: acme-cloud-s1: 100, acme-cloud-s2: 100, acme-cloud-s3: 100");
+
+    const structured = (result as any).structuredContent;
+    expect(structured).toBeDefined();
+    expect(structured.projectTitle).toBe("Acme Cloud");
+    expect(structured.totalDurationMs).toBe(12000);
+    expect(structured.scenes).toHaveLength(3);
+    expect(structured.manifest).toHaveLength(3);
   });
 });

@@ -16,6 +16,8 @@ import {
   type CritiqueOptions,
   type CritiqueReport,
   type EngineCore,
+  type StoryboardBrief,
+  type StoryboardReport,
 } from "@motionforge/core-engine";
 import type {
   RenderResultReport,
@@ -354,6 +356,18 @@ export const engineClient = {
       throw new EngineError(error.status ?? error.statusCode ?? 404, error.message, error.issues);
     }
   },
+
+  /** Generate a multi-scene storyboard from a brief. */
+  generateStoryboardFromBrief: async (
+    brief: StoryboardBrief
+  ): Promise<StoryboardReport> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.generateStoryboardFromBrief(brief);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? error.statusCode ?? 400, error.message, error.issues);
+    }
+  },
 };
 
 export type {
@@ -361,4 +375,6 @@ export type {
   AudioChoreographyReport,
   CritiqueOptions,
   CritiqueReport,
+  StoryboardBrief,
+  StoryboardReport,
 };

@@ -6,7 +6,14 @@ import {
   type SceneSpecInput,
   initCreativeProjectSchema,
   type InitCreativeProjectOptions,
+  themePresetSchema,
 } from "@motionforge/scene-spec";
+import {
+  briefMetricSchema,
+  briefFeatureSchema,
+  type StoryboardBrief,
+  type StoryboardReport,
+} from "@motionforge/core-engine";
 
 import {
   engineClient,
@@ -63,6 +70,7 @@ export const TOOL_NAMES = [
   "project_asset_manifest",
   "critique_and_autofix_scene",
   "auto_choreograph_audio",
+  "generate_storyboard_from_brief",
 ] as const;
 
 export const SCENESPEC_RESOURCE_URI = "motionforge://scenespec/v1";
@@ -766,6 +774,35 @@ export async function handleAutoChoreographAudio(args: {
   });
 }
 
+export async function handleGenerateStoryboardFromBrief(
+  brief: StoryboardBrief
+): Promise<ToolTextResult> {
+  return withEngineErrors(async () => {
+    const report = await engineClient.generateStoryboardFromBrief(brief);
+    const sceneLines = report.scenes.map(
+      (s, i) =>
+        `  Scene ${i + 1} [${s.sceneId}] "${s.name}": ${s.durationMs}ms, layers: [${s.layerKinds.join(", ")}], score: ${s.score}, audio cues: ${s.cueCount}`
+    );
+    const manifestLines = report.manifest.map(
+      (m) => `  - ${m.sceneId} (${m.role}) -> ${m.transitionToNext}`
+    );
+    const lines = [
+      `storyboard generated: "${report.projectTitle}"`,
+      `scenes: ${report.scenes.length} (${report.scenes.map((s) => s.sceneId).join(", ")})`,
+      `total duration: ${report.totalDurationMs}ms`,
+      `theme: ${report.themePreset}`,
+      `scores: ${report.scenes.map((s) => `${s.sceneId}: ${s.score}`).join(", ")}`,
+      "",
+      "Scenes:",
+      ...sceneLines,
+      "",
+      "Manifest:",
+      ...manifestLines,
+    ];
+    return ok(lines.join("\n"), report as unknown as Record<string, unknown>);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -1015,6 +1052,37 @@ export function registerTools(server: McpServer): void {
     },
     async ({ sceneId, includeAmbientBed, overwriteExisting, masterGain }) =>
       handleAutoChoreographAudio({ sceneId, includeAmbientBed, overwriteExisting, masterGain })
+  );
+
+  server.registerTool(
+    "generate_storyboard_from_brief",
+    {
+      title: "Generate storyboard from brief",
+      description:
+        "Synthesizes a cohesive multi-scene video storyboard from a project brief, applying responsive layouts, design tokens, autonomous critique and audio choreography.",
+      inputSchema: {
+        projectTitle: z.string().min(1).max(100).describe("Project title (1..100 chars)"),
+        productName: z.string().min(1).max(60).describe("Product name (1..60 chars)"),
+        tagline: z.string().min(1).max(140).describe("Tagline or elevator pitch (1..140 chars)"),
+        keyMetrics: z.array(briefMetricSchema).min(1).max(4).optional().describe("Key metrics/KPIs (1..4)"),
+        features: z.array(briefFeatureSchema).min(1).max(6).optional().describe("Core product features (1..6)"),
+        codeSnippet: z
+          .strictObject({
+            language: z.string().min(1).max(40),
+            code: z.string().min(1).max(8000),
+          })
+          .optional()
+          .describe("Optional code sample to display"),
+        ctaText: z.string().default("Start Building Free").describe("Call to action button text"),
+        ctaUrl: z.string().default("motionforge.ai").describe("Call to action destination URL"),
+        themePreset: themePresetSchema.default("linearMinimal").describe("Visual design system theme preset"),
+        sceneCount: z.number().int().min(2).max(5).default(3).describe("Number of scenes to generate (2..5, default 3)"),
+        sceneDurationMs: z.number().int().min(3000).max(8000).default(4000).describe("Duration per scene in milliseconds (3000..8000, default 4000)"),
+        autoCritiqueAndFix: z.boolean().default(true).describe("Critique layout/contrast and auto-apply fixes"),
+        autoChoreographAudio: z.boolean().default(true).describe("Auto-choreograph SFX cues across the scene timeline"),
+      },
+    },
+    async (args) => handleGenerateStoryboardFromBrief(args as StoryboardBrief)
   );
 }
 

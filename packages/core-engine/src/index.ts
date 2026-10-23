@@ -70,4 +70,21 @@ export {
   resolveTextColor,
   adjustColorForContrast,
 } from "./scene-critic.js";
+export {
+  generateStoryboardFromBrief,
+  storyboardBriefSchema,
+  briefMetricSchema,
+  briefFeatureSchema,
+  slug,
+  parseMetricNumber,
+  normalizeMetrics,
+  normalizeFeatures,
+  SCENE_ARCHETYPES,
+  type BriefMetric,
+  type BriefFeature,
+  type StoryboardBrief,
+  type StoryboardSceneSummary,
+  type StoryboardReport,
+  type SceneArchetypeRole,
+} from "./storyboard-generator.js";
 

@@ -46,6 +46,11 @@ import {
   type AudioChoreographyOptions,
   type AudioChoreographyReport,
 } from "./audio-choreographer.js";
+import {
+  generateStoryboardFromBrief,
+  type StoryboardBrief,
+  type StoryboardReport,
+} from "./storyboard-generator.js";
 import { SceneStore, sceneHash, type StoredScene } from "./scene-store.js";
 import { storeScene, type SceneStoreResponse } from "./scene-operations.js";
 import { ensureSfxBank } from "./sfx-bank.js";
@@ -548,6 +553,13 @@ export class EngineCore extends EventEmitter {
       ambientIncluded: result.ambientIncluded,
       skipped: result.skipped,
     };
+  }
+
+  /**
+   * Synthesizes a cohesive multi-scene video storyboard from a project brief.
+   */
+  async generateStoryboardFromBrief(brief: StoryboardBrief): Promise<StoryboardReport> {
+    return generateStoryboardFromBrief(this, brief);
   }
 
   /**
