@@ -6,7 +6,7 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | M0 | governance | docs/mcp-evolution, .cursor, .agents, AGENTS.md, CLAUDE.md | COMPLETED | n/a (docs) | n/a (docs) | files present + no-emoji scan + lead fact-check (2 correction rounds) | a3b92d8 |
 | M1 | themePreset | scene-spec, scene-runtime | COMPLETED | 8 new (3 files, 29 assertions green) | PASS (6/6 workspaces) | npm test 579/579; no-emoji 139 files; 6 presets x 10 tokens verified | pending (M12) |
-| M2 | layoutSlot | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
+| M2 | layoutSlot | scene-spec, scene-runtime | COMPLETED | 10 new (2 files, 31 targeted green) | PASS (6/6 workspaces) | npm test 589/589; no-emoji 140 files; 12 slots, 3-slot zero-overlap + centerStage containment | pending (M12) |
 | M3 | deviceMockup + cursorFlow | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
 | M4 | bentoGrid + connectorDiagram | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
 | M5 | metricTicker + comparisonSplit (+ field guide for 16 kinds) | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
@@ -42,3 +42,16 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
   layer-kind note is now generated from `LAYER_TYPES` so the count cannot drift.
 - Verification: typecheck 6/6, targeted 3 files / 29 tests, full suite 34 files / 579 tests,
   zero-emoji scan 139 files.
+
+### M2: layoutSlot (2026-10-23)
+- Added `packages/scene-spec/src/layout-slots.ts`: the 12 fixed boxes and
+  `resolveLayoutSlot()` (keyframe > explicit > slot > default).
+- `layerBaseSchema` now accepts `layoutSlot`; the sanitizer fills missing position/size and
+  records the dotted paths in `SanitizeReport.resolved` without overriding explicit values.
+- `resolveTransform()` resolves the same slot box (position and layout size) so a raw layer
+  measured outside the engine agrees with the sanitized scene.
+- `centerStage` is documented as a container slot; the zero-overlap test covers
+  `topHeader` + `topSubhead` + `bottomCenterCta`, and `centerStage` is asserted inside the
+  safe margin and around the canvas centre.
+- Verification: typecheck 6/6, targeted 3 files / 31 tests, full suite 36 files / 589 tests,
+  zero-emoji scan 140 files.

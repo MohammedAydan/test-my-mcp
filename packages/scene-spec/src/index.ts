@@ -21,6 +21,7 @@ export * from "./layers/cta.js";
 export * from "./keyframes.js";
 // --- scene + validation -----------------------------------------------------
 export * from "./themes.js";
+export * from "./layout-slots.js";
 export * from "./scene.js";
 export * from "./validate.js";
 // --- scene sanitizer / normalizer ------------------------------------------

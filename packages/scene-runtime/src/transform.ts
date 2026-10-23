@@ -27,6 +27,8 @@ import {
   legacyKeyframeSamples as sharedLegacyKeyframeSamples,
   KEYFRAME_EASING_FUNCTIONS,
   LEGACY_PROPERTY_MAP as LEGACY_PROPERTY_MAP_SHARED,
+  LAYOUT_SLOT_BOXES,
+  type LayoutSlot,
   type KeyframeEasing,
   type KeyframeProperty,
   type KeyframeTrack,
@@ -193,8 +195,12 @@ export function resolveTransform(layer: SceneLayer, timeMs: number): ResolvedTra
   const scale = pick("scale");
   const uniform = scale === undefined ? authoredScale : clampScale(scale);
 
-  const xPct = pick("xPct") ?? position?.xPct ?? DEFAULT_TRANSFORM.xPct;
-  const yPct = pick("yPct") ?? position?.yPct ?? DEFAULT_TRANSFORM.yPct;
+  const slotBox = layer.layoutSlot && layer.layoutSlot in LAYOUT_SLOT_BOXES
+    ? LAYOUT_SLOT_BOXES[layer.layoutSlot as LayoutSlot]
+    : undefined;
+
+  const xPct = pick("xPct") ?? position?.xPct ?? slotBox?.xPct ?? DEFAULT_TRANSFORM.xPct;
+  const yPct = pick("yPct") ?? position?.yPct ?? slotBox?.yPct ?? DEFAULT_TRANSFORM.yPct;
   const rotation = pick("rotation") ?? layer.rotation ?? DEFAULT_TRANSFORM.rotation;
   const opacity = pick("opacity") ?? layer.opacity ?? DEFAULT_TRANSFORM.opacity;
 
@@ -212,8 +218,13 @@ export function resolveTransform(layer: SceneLayer, timeMs: number): ResolvedTra
   // particle radius (it is full-bleed, so it has no layout box). Only the
   // object shape carries a layout size.
   if (typeof size === "object" && size !== null) {
-    if (size.widthPct !== undefined) resolved.widthPct = clamp(size.widthPct, 0, 400);
-    if (size.heightPct !== undefined) resolved.heightPct = clamp(size.heightPct, 0, 400);
+    const widthPct = size.widthPct ?? slotBox?.widthPct;
+    const heightPct = size.heightPct ?? slotBox?.heightPct;
+    if (widthPct !== undefined) resolved.widthPct = clamp(widthPct, 0, 400);
+    if (heightPct !== undefined) resolved.heightPct = clamp(heightPct, 0, 400);
+  } else if (slotBox && layer.type !== "particleField") {
+    resolved.widthPct = clamp(slotBox.widthPct, 0, 400);
+    resolved.heightPct = clamp(slotBox.heightPct, 0, 400);
   }
 
   return resolved;

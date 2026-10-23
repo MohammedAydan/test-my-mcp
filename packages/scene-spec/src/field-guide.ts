@@ -29,6 +29,7 @@ import { codeBlockLayerSchema, CODE_BLOCK_THEMES } from "./layers/code-block.js"
 import { particleFieldLayerSchema, PARTICLE_PATTERNS } from "./layers/particle-field.js";
 import { ctaLayerSchema, CTA_ICONS, CTA_VARIANTS } from "./layers/cta.js";
 import { THEME_PRESETS } from "./themes.js";
+import { LAYOUT_SLOTS } from "./layout-slots.js";
 import {
   KEYFRAME_EASINGS,
   KEYFRAME_PROPERTIES,
@@ -70,6 +71,7 @@ export const COMMON_LAYER_OPTIONAL = [
   "at (start time in ms, default 0)",
   "duration (visible window in ms, default: until scene end)",
   "trackIndex (0-indexed timeline track lane; non-overlapping clips sharing a trackIndex share a row)",
+  "layoutSlot (named layout slot box from registries.layoutSlots; explicit position and size win over slot values independently)",
   "position ({ xPct, yPct } — center anchor in percent of the canvas; -300..300 so a layer can start off-screen)",
   "scale (uniform multiplier, 0.05-10) / scaleX / scaleY (non-uniform; scaleX/scaleY win over scale)",
   "size ({ widthPct?, heightPct? } — LAYOUT size in percent of the canvas)",
@@ -595,6 +597,7 @@ export function authoringDigest(): Record<string, unknown> {
       ctaVariants: CTA_VARIANTS,
       ctaIcons: CTA_ICONS,
       themePresets: THEME_PRESETS,
+      layoutSlots: LAYOUT_SLOTS,
     },
     keyframePrecedence: {
       canonical: "keyframes",
@@ -624,6 +627,8 @@ export function authoringDigest(): Record<string, unknown> {
         "Sizes normally carry a `*Px` suffix (widthPx, heightPx, labelSizePx). `codeBlock.fontSize` and `particleField.size` are the two exceptions; their `*Px` aliases (fontSizePx, sizePx) are also accepted and are normalised on save.",
       theming:
         "A themePreset injects the --mf-* CSS variables across the stage root, and an explicit layer color always wins.",
+      layout:
+        "Guaranteed-disjoint triples (e.g. topHeader, topSubhead, bottomCenterCta) provide collision-free placement, while centerStage is a container slot that intentionally spans the middle canvas.",
     },
   };
 }

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { colorSchema } from "./common.js";
 import { KEYFRAME_VALUE_RANGES } from "./layers/base.js";
+import { LAYOUT_SLOT_BOXES, type LayoutSlot } from "./layout-slots.js";
 import { sceneShapeSchema } from "./scene.js";
 
 /**
@@ -58,6 +59,8 @@ export interface SanitizeReport {
   healed: string[];
   /** dotted paths of the fields that were clamped into their legal range */
   clamped: string[];
+  /** dotted paths of the layout-slot fields that were resolved */
+  resolved: string[];
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
@@ -294,6 +297,56 @@ function normalizeNewLayerKinds(layer: Record<string, unknown>, path: string, re
 }
 
 /**
+ * Normalize the `layoutSlot` of ONE layer.
+ *
+ * For every layer with a valid `layoutSlot`, fills missing `position.xPct`,
+ * `position.yPct`, `size.widthPct`, `size.heightPct` from `LAYOUT_SLOT_BOXES`.
+ * Never overrides an explicit value. Dotted paths of filled values are
+ * recorded in `report.resolved`.
+ * Unknown slot names are kept untouched on the layer so strict validation can reject them.
+ */
+function normalizeLayoutSlot(layer: Record<string, unknown>, path: string, report: SanitizeReport): void {
+  const slotName = layer.layoutSlot;
+  if (typeof slotName !== "string" || !(slotName in LAYOUT_SLOT_BOXES)) {
+    return;
+  }
+  const box = LAYOUT_SLOT_BOXES[slotName as LayoutSlot];
+
+  if (!("position" in layer) || layer.position === undefined) {
+    layer.position = { xPct: box.xPct, yPct: box.yPct };
+    report.resolved.push(`${path}.position.xPct`, `${path}.position.yPct`);
+  } else if (isPlainObject(layer.position)) {
+    const pos = layer.position as Record<string, unknown>;
+    if (pos.xPct === undefined) {
+      pos.xPct = box.xPct;
+      report.resolved.push(`${path}.position.xPct`);
+    }
+    if (pos.yPct === undefined) {
+      pos.yPct = box.yPct;
+      report.resolved.push(`${path}.position.yPct`);
+    }
+  }
+
+  // particleField shadows size with a numeric radius; do not override with a layout box
+  if (layer.type !== "particleField") {
+    if (!("size" in layer) || layer.size === undefined) {
+      layer.size = { widthPct: box.widthPct, heightPct: box.heightPct };
+      report.resolved.push(`${path}.size.widthPct`, `${path}.size.heightPct`);
+    } else if (isPlainObject(layer.size)) {
+      const sz = layer.size as Record<string, unknown>;
+      if (sz.widthPct === undefined) {
+        sz.widthPct = box.widthPct;
+        report.resolved.push(`${path}.size.widthPct`);
+      }
+      if (sz.heightPct === undefined) {
+        sz.heightPct = box.heightPct;
+        report.resolved.push(`${path}.size.heightPct`);
+      }
+    }
+  }
+}
+
+/**
  * Normalize the spatial / NLE fields of ONE layer.
  *
  * The Studio drags these continuously; a drag that ends 0.4% outside the legal
@@ -344,6 +397,8 @@ function normalizeLayerFields(layer: Record<string, unknown>, path: string, repo
   if ("locked" in layer && typeof layer.locked !== "boolean") {
     delete layer.locked;
   }
+
+  normalizeLayoutSlot(layer, path, report);
 
   const position = layer.position;
   if (isPlainObject(position)) {
@@ -522,7 +577,7 @@ export function sanitizeSceneInputWithReport(
   input: unknown,
   options?: SanitizeOptions
 ): SanitizeReport {
-  const report: SanitizeReport = { scene: input, healed: [], clamped: [] };
+  const report: SanitizeReport = { scene: input, healed: [], clamped: [], resolved: [] };
   if (!isPlainObject(input)) {
     report.scene = input;
     return report;

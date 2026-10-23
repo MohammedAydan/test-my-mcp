@@ -2,6 +2,7 @@ import { z } from "zod";
 import { colorSchema, idSchema, msSchema, offsetSchema } from "../common.js";
 import { presetRefSchema } from "../motion.js";
 import { sfxTriggerSchema } from "../audio.js";
+import { layoutSlotSchema } from "../layout-slots.js";
 
 /**
  * CSS blend modes a layer root may be composited with.
@@ -139,6 +140,11 @@ export const layerBaseSchema = z.strictObject({
   trackIndex: z.number().int().min(0).max(99).optional(),
   /** Authoring alias for trackIndex */
   trackLane: z.number().int().min(0).max(99).optional(),
+  /**
+   * Named layout slot preset. Provides default canvas position and size.
+   * Explicit position and size override slot values independently.
+   */
+  layoutSlot: layoutSlotSchema.optional(),
   /** Rotation in degrees (-3600 to 3600) around layer center */
   rotation: z.number().min(-3600).max(3600).optional(),
   /**
