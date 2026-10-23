@@ -11,6 +11,8 @@ import {
   saveFramesMetaToDisk,
   saveRenderToDisk,
   saveStillsToDisk,
+  type CritiqueOptions,
+  type CritiqueReport,
   type EngineCore,
 } from "@motionforge/core-engine";
 import type {
@@ -324,4 +326,19 @@ export const engineClient = {
       })),
     };
   },
+
+  /** Autonomous art director: critique scene, optionally auto-apply fixes, and save. */
+  critiqueAndAutofixScene: async (
+    sceneId: string,
+    options?: CritiqueOptions
+  ): Promise<CritiqueReport> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.critiqueAndAutofixScene(sceneId, options);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? 404, error.message, error.issues);
+    }
+  },
 };
+
+export type { CritiqueOptions, CritiqueReport };

@@ -10,7 +10,7 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | M3 | deviceMockup + cursorFlow | scene-spec, scene-runtime | COMPLETED | 19 new (2 files, 40 targeted green) | PASS (6/6 workspaces) | npm test 608/608; no-emoji 144 files; 12 kinds verified (browser/macbook/iphone/terminal, waypoints cubic ease) | pending (M12) |
 | M4 | bentoGrid + connectorDiagram | scene-spec, scene-runtime | COMPLETED | 12 new (2 new test files, 35 targeted green) | PASS (6/6 workspaces) | npm test 620/620; no-emoji 148 files; 14 kinds verified (glassmorphic bento cards staggered, cubic Bezier connector diagram with pulse) | pending (M12) |
 | M5 | metricTicker + comparisonSplit (+ field guide for 16 kinds) | scene-spec, scene-runtime | COMPLETED | 12 new (2 new test files, 37 targeted green) | PASS (6/6 workspaces) | npm test 632/632; no-emoji 152 files; 16 kinds verified (tabular digits cubic count ticker, split comparison with check/cross indicators) | pending (M12) |
-| M6 | critique_and_autofix_scene | core-engine, mcp-server, scene-spec | PENDING | pending | pending | pending | pending |
+| M6 | critique_and_autofix_scene | core-engine, mcp-server | COMPLETED | 5 new (2 files, 38 targeted green) | PASS (6/6 workspaces) | npm test 637/637; no-emoji 153 files; 7 rules, 4-pass overlap, WCAG >= 7:1 auto-fix, 14 MCP tools | pending (M12) |
 | M7 | 14 SFX + auto_choreograph_audio | core-engine, scene-spec, mcp-server | PENDING | pending | pending | pending | pending |
 | M8 | generate_storyboard_from_brief | core-engine, mcp-server, scene-spec | PENDING | pending | pending | pending | pending |
 | M9 | compose_storyboard_video | core-engine, mcp-server | PENDING | pending | pending | preview / full render | pending |
@@ -87,3 +87,14 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
   - `packages/scene-runtime/src/layers/metric-ticker.ts`: uppercase label, giant number with tabular figures and monospace font, optional delta pill with accent tint rising in at `layerAtSec + 0.25s`, deterministic cubic easing count (`1 - (1 - p)^3`) registered via `ctx.registerSeekable` and driven by timeline scrubber.
   - `packages/scene-runtime/src/layers/comparison-split.ts`: glass card with two columns, negative cross SVG indicators with `leftAccent` and positive check SVG indicators with `rightAccent`, row stagger entrance at `layerAtSec + 0.08 * rowIndex` (opacity and `translateX(±14px) -> 0`, 0.35s `power2.out` on inner elements only), and central `vsBadge` pill with back.out scale pop at `layerAtSec + 0.15s`.
 - Verification: typecheck 6/6 workspaces PASS, targeted 3 files / 37 tests green, full suite 42 files / 632 tests green, zero-emoji scan 152 files clean.
+
+### M6: critique_and_autofix_scene (2026-10-23)
+- Added `packages/core-engine/src/scene-critic.ts`:
+  - Seven critique rules: `FOREGROUND_OVERLAP` (> 400 px^2 intersection), `SAFE_MARGIN_VIOLATION` (outside 4%..96% safe zone, excluding entrance/exit), `LOW_CONTRAST` (WCAG < 4.2:1 against active background base), `DEAD_AIR_FRAME` (0 visible foreground layers), `VISUAL_CLUTTER` (> 6 visible foreground layers), `TIMING_OVERFLOW` (window or keyframe past scene duration), `RENDER_COST_HAZARD` (`FILTERED_LAYER_LARGE_SCALE`).
+  - Deterministic sampling: 5 evenly spaced timestamps in `[250, durationMs - 250]` plus midpoint of every foreground content layer's active window, deduplicated, sorted, capped at 40 samples.
+  - Deterministic scoring: 100 minus rule deductions (overlap 15 per pair, margin 10 per layer, contrast 12 per layer, dead air 8 per timestamp, clutter 6 per timestamp, timing 20 per layer, cost 10 per warning), clamped to 0..100.
+  - 6-step auto-fix solver: 4-pass vertical/horizontal overlap separation (>= 3% gap inside [8, 92]%), safe margin position clamp and scale reduction, contrast adjustment to >= 7:1 (lightening on dark bg, darkening on light bg), dead air window extension, cost hazard scale clamping (<= 3.5), timing overflow duration clamping and past-duration keyframe dropping.
+- Added `EngineCore.critiqueAndAutofixScene(sceneId, options)` in `packages/core-engine/src/engine-core.ts`: loads scene, runs bounds query on warm page, evaluates issues, applies fixes, saves fixed scene, re-evaluates and returns `CritiqueReport`.
+- Forwarded in `packages/mcp-server/src/engine-client.ts` and registered MCP tool `critique_and_autofix_scene` in `packages/mcp-server/src/tools.ts` with input schema `{ sceneId, autoApplyFixes, sampleTimesMs }`, expanding MCP surface to 14 tools (`TOOL_NAMES`).
+- Verification: typecheck 6/6 workspaces PASS, targeted 2 files / 38 tests green (`scene-critic.test.ts` 4/4, `tools.test.ts` 34/34), full suite 43 files / 637 tests green, zero-emoji scan 153 files clean.
+

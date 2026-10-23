@@ -50,3 +50,19 @@ export {
   type EngineEventMap,
 } from "./engine-core.js";
 export { listVaultAssets, type AssetVaultItem } from "./vault.js";
+export {
+  type CritiqueRule,
+  type CritiqueIssue,
+  type CritiqueOptions,
+  type CritiqueReport,
+  computeSampleTimes,
+  evaluateCritiqueIssues,
+  computeCritiqueScore,
+  applyAutoFixes,
+  contrastRatio,
+  relativeLuminance,
+  resolveBackgroundBase,
+  resolveTextColor,
+  adjustColorForContrast,
+} from "./scene-critic.js";
+

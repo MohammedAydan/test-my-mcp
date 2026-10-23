@@ -96,7 +96,7 @@ describe("MCP contract over a live client session", () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
-    expect(tools).toHaveLength(13);
+    expect(tools).toHaveLength(14);
     // the original six are all still there, unchanged in name
     for (const name of [
       "get_motion_capabilities",
@@ -108,7 +108,7 @@ describe("MCP contract over a live client session", () => {
     ]) {
       expect(tools.map((t) => t.name)).toContain(name);
     }
-    // …and the seven new ones
+    // …and the eight new ones (14 total)
     for (const name of [
       "render_scene",
       "get_layer_bounds",
@@ -117,6 +117,7 @@ describe("MCP contract over a live client session", () => {
       "analyze_scene",
       "upload_asset",
       "project_asset_manifest",
+      "critique_and_autofix_scene",
     ]) {
       expect(tools.map((t) => t.name)).toContain(name);
     }
@@ -188,9 +189,9 @@ describe("MCP contract over a live client session", () => {
     expect(parsed.minimalValidScene).toBeDefined();
     expect(parsed.nestedShapeNotes).toBeDefined();
 
-    // …and the tool count is still exactly 13
+    // …and the tool count is still exactly 14
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(13);
+    expect(tools).toHaveLength(14);
   });
 });
 
@@ -780,5 +781,65 @@ describe("top-level schema strictness", () => {
       text = error instanceof Error ? error.message : String(error);
     }
     expect(text).toMatch(/preset|Unrecognized key/i);
+  });
+});
+
+describe("critique_and_autofix_scene", () => {
+  it("forwards the critique options, formats scoreBefore -> scoreAfter, fix count and structuredContent", async () => {
+    const mockReport = {
+      sceneId: "scene-critic-01",
+      revision: 4,
+      scoreBefore: 53,
+      scoreAfter: 95,
+      issuesBefore: [
+        {
+          rule: "FOREGROUND_OVERLAP" as const,
+          severity: "error" as const,
+          atMs: 500,
+          layerIds: ["title", "card"],
+          message: "Foreground layers overlap",
+          autoFixable: true,
+        },
+      ],
+      appliedFixes: [
+        'Separated overlapping foreground layers "title" and "card" vertically',
+      ],
+      issuesAfter: [],
+      sampledTimesMs: [250, 1000, 2000],
+    };
+
+    const spy = vi
+      .spyOn(engineClient, "critiqueAndAutofixScene")
+      .mockResolvedValue(mockReport);
+
+    const client = await connect();
+    const result = await client.callTool({
+      name: "critique_and_autofix_scene",
+      arguments: {
+        sceneId: "scene-critic-01",
+        autoApplyFixes: true,
+        sampleTimesMs: [250, 1000, 2000],
+      },
+    });
+
+    expect(spy).toHaveBeenCalledWith("scene-critic-01", {
+      autoApplyFixes: true,
+      sampleTimesMs: [250, 1000, 2000],
+    });
+
+    const text = result.content
+      .map((c) => (c.type === "text" ? c.text : ""))
+      .join("\n");
+    expect(text).toContain("53 -> 95");
+    expect(text).toContain("applied fixes: 1");
+    expect(text).toContain("remaining issues: 0 (none)");
+
+    const structured = (result as any).structuredContent;
+    expect(structured).toBeDefined();
+    expect(structured.scoreBefore).toBe(53);
+    expect(structured.scoreAfter).toBe(95);
+    expect(structured.sceneId).toBe("scene-critic-01");
+    expect(structured.revision).toBe(4);
+    expect(structured.appliedFixes).toHaveLength(1);
   });
 });

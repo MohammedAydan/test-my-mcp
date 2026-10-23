@@ -33,6 +33,14 @@ import { probeMedia } from "./media-probe.js";
 import { resolveProjectAssets } from "./project-assets.js";
 import { RenderRunner, type RenderJob, type RenderQuality } from "./render-runner.js";
 import { analyzeScene as analyzeSceneWarnings } from "./scene-analysis.js";
+import {
+  applyAutoFixes,
+  computeCritiqueScore,
+  computeSampleTimes,
+  evaluateCritiqueIssues,
+  type CritiqueOptions,
+  type CritiqueReport,
+} from "./scene-critic.js";
 import { SceneStore, sceneHash, type StoredScene } from "./scene-store.js";
 import { storeScene, type SceneStoreResponse } from "./scene-operations.js";
 import { ensureSfxBank } from "./sfx-bank.js";
@@ -446,6 +454,72 @@ export class EngineCore extends EventEmitter {
       warnings,
       cost,
       keyframePrecedence: buildKeyframePrecedence(scene),
+    };
+  }
+
+  /**
+   * Autonomous art director: critique a scene across layout overlaps, safe margins,
+   * WCAG contrast, dead air frames, visual clutter, timing overflows, and render cost hazards.
+   * Optionally auto-applies fixes and saves the repaired scene.
+   */
+  async critiqueAndAutofixScene(
+    sceneId: string,
+    options?: CritiqueOptions
+  ): Promise<CritiqueReport> {
+    const found = this.store.require(sceneId);
+    const scene = found.scene;
+    const autoApplyFixes = options?.autoApplyFixes !== false;
+    const sampleTimes = computeSampleTimes(scene, options?.sampleTimesMs);
+
+    const boundsBefore = await this.getLayerBoundsAt(sceneId, sampleTimes);
+    const warningsBefore = analyzeSceneWarnings(scene);
+    const issuesBefore = evaluateCritiqueIssues(scene, boundsBefore, warningsBefore);
+    const scoreBefore = computeCritiqueScore(issuesBefore);
+
+    if (!autoApplyFixes || issuesBefore.length === 0) {
+      return {
+        sceneId,
+        revision: found.revision,
+        scoreBefore,
+        scoreAfter: scoreBefore,
+        issuesBefore,
+        appliedFixes: [],
+        issuesAfter: issuesBefore,
+        sampledTimesMs: sampleTimes,
+      };
+    }
+
+    const { fixedScene, appliedFixes } = applyAutoFixes(scene, issuesBefore, boundsBefore);
+
+    if (appliedFixes.length === 0) {
+      return {
+        sceneId,
+        revision: found.revision,
+        scoreBefore,
+        scoreAfter: scoreBefore,
+        issuesBefore,
+        appliedFixes: [],
+        issuesAfter: issuesBefore,
+        sampledTimesMs: sampleTimes,
+      };
+    }
+
+    await this.saveScene(fixedScene);
+    const reloaded = this.store.require(sceneId);
+    const boundsAfter = await this.getLayerBoundsAt(sceneId, sampleTimes);
+    const warningsAfter = analyzeSceneWarnings(reloaded.scene);
+    const issuesAfter = evaluateCritiqueIssues(reloaded.scene, boundsAfter, warningsAfter);
+    const scoreAfter = computeCritiqueScore(issuesAfter);
+
+    return {
+      sceneId,
+      revision: reloaded.revision,
+      scoreBefore,
+      scoreAfter,
+      issuesBefore,
+      appliedFixes,
+      issuesAfter,
+      sampledTimesMs: sampleTimes,
     };
   }
 

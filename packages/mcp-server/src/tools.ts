@@ -61,6 +61,7 @@ export const TOOL_NAMES = [
   "analyze_scene",
   "upload_asset",
   "project_asset_manifest",
+  "critique_and_autofix_scene",
 ] as const;
 
 export const SCENESPEC_RESOURCE_URI = "motionforge://scenespec/v1";
@@ -712,6 +713,30 @@ export async function handleProjectAssetManifest(args: { projectPath: string }):
   });
 }
 
+export async function handleCritiqueAndAutofixScene(args: {
+  sceneId: string;
+  autoApplyFixes?: boolean;
+  sampleTimesMs?: number[];
+}): Promise<ToolTextResult> {
+  return withEngineErrors(async () => {
+    const report = await engineClient.critiqueAndAutofixScene(args.sceneId, {
+      autoApplyFixes: args.autoApplyFixes,
+      sampleTimesMs: args.sampleTimesMs,
+    });
+    const remainingRules = Array.from(new Set(report.issuesAfter.map((i) => i.rule)));
+    const remainingSummary =
+      remainingRules.length === 0 ? "none" : remainingRules.join(", ");
+    const lines = [
+      `critique and auto-fix: ${report.sceneId} (rev ${report.revision})`,
+      `score: ${report.scoreBefore} -> ${report.scoreAfter}`,
+      `applied fixes: ${report.appliedFixes.length}`,
+      ...report.appliedFixes.map((f) => `  - ${f}`),
+      `remaining issues: ${report.issuesAfter.length} (${remainingSummary})`,
+    ];
+    return ok(lines.join("\n"), report as unknown as Record<string, unknown>);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -910,6 +935,29 @@ export function registerTools(server: McpServer): void {
       },
     },
     async ({ projectPath }) => handleProjectAssetManifest({ projectPath })
+  );
+
+  server.registerTool(
+    "critique_and_autofix_scene",
+    {
+      title: "Critique and auto-fix scene",
+      description:
+        "Autonomous art director: analyzes a stored scene for layout overlaps, safe margin violations, low contrast, dead air frames, visual clutter, timing overflows, and render cost hazards, optionally auto-applying non-destructive fixes and saving the updated scene.",
+      inputSchema: {
+        sceneId: z.string().min(1).describe("Scene id from create_or_update_scene"),
+        autoApplyFixes: z
+          .boolean()
+          .default(true)
+          .describe("Automatically apply non-destructive fixes and save the scene (default: true)"),
+        sampleTimesMs: z
+          .array(z.number().min(0))
+          .max(40)
+          .optional()
+          .describe("Optional explicit sample timestamps in ms to measure"),
+      },
+    },
+    async ({ sceneId, autoApplyFixes, sampleTimesMs }) =>
+      handleCritiqueAndAutofixScene({ sceneId, autoApplyFixes, sampleTimesMs })
   );
 }
 

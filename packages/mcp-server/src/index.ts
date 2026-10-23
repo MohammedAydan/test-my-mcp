@@ -17,6 +17,7 @@ export {
   handleAnalyzeScene,
   handleUploadAsset,
   handleProjectAssetManifest,
+  handleCritiqueAndAutofixScene,
   formatFrameMeta,
   formatWarnings,
   type ToolTextResult,
