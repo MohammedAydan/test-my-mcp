@@ -11,6 +11,8 @@ import {
   saveFramesMetaToDisk,
   saveRenderToDisk,
   saveStillsToDisk,
+  type AudioChoreographyOptions,
+  type AudioChoreographyReport,
   type CritiqueOptions,
   type CritiqueReport,
   type EngineCore,
@@ -336,9 +338,27 @@ export const engineClient = {
     try {
       return await core.critiqueAndAutofixScene(sceneId, options);
     } catch (error: any) {
-      throw new EngineError(error.status ?? 404, error.message, error.issues);
+      throw new EngineError(error.status ?? error.statusCode ?? 404, error.message, error.issues);
+    }
+  },
+
+  /** Auto-choreograph audio SFX cues across the 14-cue bank for a scene. */
+  autoChoreographAudio: async (
+    sceneId: string,
+    options?: AudioChoreographyOptions
+  ): Promise<AudioChoreographyReport> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.autoChoreographAudio(sceneId, options);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? error.statusCode ?? 404, error.message, error.issues);
     }
   },
 };
 
-export type { CritiqueOptions, CritiqueReport };
+export type {
+  AudioChoreographyOptions,
+  AudioChoreographyReport,
+  CritiqueOptions,
+  CritiqueReport,
+};

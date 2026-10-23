@@ -11,7 +11,7 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | M4 | bentoGrid + connectorDiagram | scene-spec, scene-runtime | COMPLETED | 12 new (2 new test files, 35 targeted green) | PASS (6/6 workspaces) | npm test 620/620; no-emoji 148 files; 14 kinds verified (glassmorphic bento cards staggered, cubic Bezier connector diagram with pulse) | pending (M12) |
 | M5 | metricTicker + comparisonSplit (+ field guide for 16 kinds) | scene-spec, scene-runtime | COMPLETED | 12 new (2 new test files, 37 targeted green) | PASS (6/6 workspaces) | npm test 632/632; no-emoji 152 files; 16 kinds verified (tabular digits cubic count ticker, split comparison with check/cross indicators) | pending (M12) |
 | M6 | critique_and_autofix_scene | core-engine, mcp-server | COMPLETED | 5 new (2 files, 38 targeted green) | PASS (6/6 workspaces) | npm test 637/637; no-emoji 153 files; 7 rules, 4-pass overlap, WCAG >= 7:1 auto-fix, 14 MCP tools | pending (M12) |
-| M7 | 14 SFX + auto_choreograph_audio | core-engine, scene-spec, mcp-server | PENDING | pending | pending | pending | pending |
+| M7 | 14 SFX + auto_choreograph_audio | core-engine, scene-spec, mcp-server | COMPLETED | 7 new (2 files, 41 targeted green) | PASS (6/6 workspaces) | npm test 644/644; no-emoji 154 files; 14 clean procedural SFX, 15 MCP tools | pending (M12) |
 | M8 | generate_storyboard_from_brief | core-engine, mcp-server, scene-spec | PENDING | pending | pending | pending | pending |
 | M9 | compose_storyboard_video | core-engine, mcp-server | PENDING | pending | pending | preview / full render | pending |
 | M10 | static-frame dedup + JPEG piping | core-engine, scene-runtime | PENDING | pending | pending | pending | pending |
@@ -97,4 +97,14 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 - Added `EngineCore.critiqueAndAutofixScene(sceneId, options)` in `packages/core-engine/src/engine-core.ts`: loads scene, runs bounds query on warm page, evaluates issues, applies fixes, saves fixed scene, re-evaluates and returns `CritiqueReport`.
 - Forwarded in `packages/mcp-server/src/engine-client.ts` and registered MCP tool `critique_and_autofix_scene` in `packages/mcp-server/src/tools.ts` with input schema `{ sceneId, autoApplyFixes, sampleTimesMs }`, expanding MCP surface to 14 tools (`TOOL_NAMES`).
 - Verification: typecheck 6/6 workspaces PASS, targeted 2 files / 38 tests green (`scene-critic.test.ts` 4/4, `tools.test.ts` 34/34), full suite 43 files / 637 tests green, zero-emoji scan 153 files clean.
+
+### M7: 14 SFX + auto_choreograph_audio (2026-10-23)
+- Extended `SFX_NAMES` in `packages/scene-spec/src/audio.ts` with 8 new procedural sound effects: `typingTick`, `mouseClick`, `notificationChime`, `bassDrop`, `glitchHit`, `softSwoosh`, `counterTick`, `ambientPad` (14 total).
+- Implemented 8 deterministic FFmpeg synthesis graphs in `packages/core-engine/src/sfx-bank.ts` (48 kHz stereo, seeded noise, clean lowpass filtering, exact millisecond durations).
+- Added `choreographSceneAudio` and `EngineCore.autoChoreographAudio` in `packages/core-engine`:
+  - Full cue mapping across all 14 bank entries (opening bassDrop + shimmer, layer entrance cues, interactive cursor clicks and hovers, terminal extra typingTick, ending riser, ambientPad bed).
+  - Deduplication: suppresses identical SFX within 120 ms window, recording dropped events into `skipped[]`.
+  - Gain scaling with `masterGain` clamped to 0..2, optional ambient bed toggle, and non-destructive `overwriteExisting` cue retention with stable IDs (`cue-<index>`).
+- Forwarded in `packages/mcp-server/src/engine-client.ts` and registered MCP tool `auto_choreograph_audio` in `packages/mcp-server/src/tools.ts`, expanding the MCP tool registry to 15 tools (`TOOL_NAMES`).
+- Verification: typecheck 6/6 workspaces PASS, targeted 2 files / 41 tests green (`audio-choreography.test.ts` 6/6, `tools.test.ts` 35/35), full suite 44 files / 644 tests green, zero-emoji scan 154 files clean.
 

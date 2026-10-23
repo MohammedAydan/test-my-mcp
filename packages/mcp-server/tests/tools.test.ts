@@ -96,7 +96,7 @@ describe("MCP contract over a live client session", () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(15);
     // the original six are all still there, unchanged in name
     for (const name of [
       "get_motion_capabilities",
@@ -108,7 +108,7 @@ describe("MCP contract over a live client session", () => {
     ]) {
       expect(tools.map((t) => t.name)).toContain(name);
     }
-    // …and the eight new ones (14 total)
+    // …and the nine new ones (15 total)
     for (const name of [
       "render_scene",
       "get_layer_bounds",
@@ -118,6 +118,7 @@ describe("MCP contract over a live client session", () => {
       "upload_asset",
       "project_asset_manifest",
       "critique_and_autofix_scene",
+      "auto_choreograph_audio",
     ]) {
       expect(tools.map((t) => t.name)).toContain(name);
     }
@@ -189,9 +190,9 @@ describe("MCP contract over a live client session", () => {
     expect(parsed.minimalValidScene).toBeDefined();
     expect(parsed.nestedShapeNotes).toBeDefined();
 
-    // …and the tool count is still exactly 14
+    // …and the tool count is still exactly 15
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(15);
   });
 });
 
@@ -841,5 +842,64 @@ describe("critique_and_autofix_scene", () => {
     expect(structured.sceneId).toBe("scene-critic-01");
     expect(structured.revision).toBe(4);
     expect(structured.appliedFixes).toHaveLength(1);
+  });
+
+  it("calls auto_choreograph_audio and returns both text summary and structuredContent", async () => {
+    const mockReport = {
+      sceneId: "scene-audio-01",
+      revision: 2,
+      cuesAdded: 12,
+      totalCues: 12,
+      bySfx: {
+        bassDrop: 1,
+        shimmer: 1,
+        whoosh: 1,
+        softSwoosh: 1,
+        typingTick: 1,
+        counterTick: 1,
+        notificationChime: 1,
+        subImpact: 1,
+        mouseClick: 2,
+        riser: 1,
+        ambientPad: 1,
+      },
+      ambientIncluded: true,
+      skipped: [],
+    };
+
+    const spy = vi
+      .spyOn(engineClient, "autoChoreographAudio")
+      .mockResolvedValue(mockReport);
+
+    const client = await connect();
+    const result = await client.callTool({
+      name: "auto_choreograph_audio",
+      arguments: {
+        sceneId: "scene-audio-01",
+        includeAmbientBed: true,
+        overwriteExisting: false,
+        masterGain: 1,
+      },
+    });
+
+    expect(spy).toHaveBeenCalledWith("scene-audio-01", {
+      includeAmbientBed: true,
+      overwriteExisting: false,
+      masterGain: 1,
+    });
+
+    const text = result.content
+      .map((c) => (c.type === "text" ? c.text : ""))
+      .join("\n");
+    expect(text).toContain('choreographed audio: scene-audio-01 (rev 2)');
+    expect(text).toContain("cues: 12 added, 12 total");
+    expect(text).toContain("ambient bed: on");
+
+    const structured = (result as any).structuredContent;
+    expect(structured).toBeDefined();
+    expect(structured.sceneId).toBe("scene-audio-01");
+    expect(structured.cuesAdded).toBe(12);
+    expect(structured.totalCues).toBe(12);
+    expect(structured.ambientIncluded).toBe(true);
   });
 });

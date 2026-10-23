@@ -62,6 +62,7 @@ export const TOOL_NAMES = [
   "upload_asset",
   "project_asset_manifest",
   "critique_and_autofix_scene",
+  "auto_choreograph_audio",
 ] as const;
 
 export const SCENESPEC_RESOURCE_URI = "motionforge://scenespec/v1";
@@ -737,6 +738,34 @@ export async function handleCritiqueAndAutofixScene(args: {
   });
 }
 
+export async function handleAutoChoreographAudio(args: {
+  sceneId: string;
+  includeAmbientBed?: boolean;
+  overwriteExisting?: boolean;
+  masterGain?: number;
+}): Promise<ToolTextResult> {
+  return withEngineErrors(async () => {
+    const report = await engineClient.autoChoreographAudio(args.sceneId, {
+      includeAmbientBed: args.includeAmbientBed,
+      overwriteExisting: args.overwriteExisting,
+      masterGain: args.masterGain,
+    });
+    const bySfxSummary = Object.entries(report.bySfx)
+      .map(([sfx, count]) => `${sfx}: ${count}`)
+      .join(", ");
+    const lines = [
+      `choreographed audio: ${report.sceneId} (rev ${report.revision})`,
+      `cues: ${report.cuesAdded} added, ${report.totalCues} total`,
+      `bySfx: ${bySfxSummary || "none"}`,
+      `ambient bed: ${report.ambientIncluded ? "on" : "off"}`,
+      ...(report.skipped.length > 0
+        ? [`skipped duplicates: ${report.skipped.length}`, ...report.skipped.map((s) => `  - ${s}`)]
+        : []),
+    ];
+    return ok(lines.join("\n"), report as unknown as Record<string, unknown>);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -958,6 +987,34 @@ export function registerTools(server: McpServer): void {
     },
     async ({ sceneId, autoApplyFixes, sampleTimesMs }) =>
       handleCritiqueAndAutofixScene({ sceneId, autoApplyFixes, sampleTimesMs })
+  );
+
+  server.registerTool(
+    "auto_choreograph_audio",
+    {
+      title: "Auto-choreograph audio SFX cues",
+      description:
+        "Automatically choreograph audio SFX cues across the 14-cue bank for a scene based on its layer entrances, interactions, and duration.",
+      inputSchema: {
+        sceneId: z.string().min(1).describe("Scene id from create_or_update_scene"),
+        includeAmbientBed: z
+          .boolean()
+          .default(true)
+          .describe("Include seamless ambient stereo pad bed at 0ms (default: true)"),
+        overwriteExisting: z
+          .boolean()
+          .default(false)
+          .describe("Replace existing audio cues instead of appending non-duplicates (default: false)"),
+        masterGain: z
+          .number()
+          .min(0)
+          .max(2)
+          .default(1)
+          .describe("Master volume multiplier for choreographed cues (0..2, default: 1)"),
+      },
+    },
+    async ({ sceneId, includeAmbientBed, overwriteExisting, masterGain }) =>
+      handleAutoChoreographAudio({ sceneId, includeAmbientBed, overwriteExisting, masterGain })
   );
 }
 

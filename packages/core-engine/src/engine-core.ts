@@ -41,6 +41,11 @@ import {
   type CritiqueOptions,
   type CritiqueReport,
 } from "./scene-critic.js";
+import {
+  choreographSceneAudio,
+  type AudioChoreographyOptions,
+  type AudioChoreographyReport,
+} from "./audio-choreographer.js";
 import { SceneStore, sceneHash, type StoredScene } from "./scene-store.js";
 import { storeScene, type SceneStoreResponse } from "./scene-operations.js";
 import { ensureSfxBank } from "./sfx-bank.js";
@@ -524,6 +529,28 @@ export class EngineCore extends EventEmitter {
   }
 
   /**
+   * Automatically choreographs audio SFX cues across the 14-cue bank for a scene,
+   * saves the updated scene, and returns the choreography report.
+   */
+  async autoChoreographAudio(
+    sceneId: string,
+    options?: AudioChoreographyOptions
+  ): Promise<AudioChoreographyReport> {
+    const found = this.store.require(sceneId);
+    const result = choreographSceneAudio(found.scene, options);
+    const saved = await this.saveScene(result.updatedScene, found.projectPath);
+    return {
+      sceneId,
+      revision: saved.revision,
+      cuesAdded: result.cuesAdded,
+      totalCues: result.totalCues,
+      bySfx: result.bySfx,
+      ambientIncluded: result.ambientIncluded,
+      skipped: result.skipped,
+    };
+  }
+
+  /**
    * The finished result of a render job — with the ffprobe view of the file.
    *
    * A job that is still running returns its status and progress and NO
@@ -773,3 +800,5 @@ export async function createEngineCore(
   await core.init();
   return core;
 }
+
+export type { AudioChoreographyOptions, AudioChoreographyReport };

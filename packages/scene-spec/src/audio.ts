@@ -2,7 +2,22 @@ import { z } from "zod";
 import { idSchema, msSchema } from "./common.js";
 
 /** The fixed SFX bank shipped with core-engine (real audio files, mixed at render). */
-export const SFX_NAMES = ["whoosh", "pop", "click", "subImpact", "shimmer", "riser"] as const;
+export const SFX_NAMES = [
+  "whoosh",
+  "pop",
+  "click",
+  "subImpact",
+  "shimmer",
+  "riser",
+  "typingTick",
+  "mouseClick",
+  "notificationChime",
+  "bassDrop",
+  "glitchHit",
+  "softSwoosh",
+  "counterTick",
+  "ambientPad",
+] as const;
 export type SfxName = (typeof SFX_NAMES)[number];
 
 /**

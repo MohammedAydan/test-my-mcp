@@ -48,7 +48,12 @@ export {
   createEngineCore,
   type EngineCoreOptions,
   type EngineEventMap,
+  type AudioChoreographyOptions,
+  type AudioChoreographyReport,
 } from "./engine-core.js";
+export {
+  choreographSceneAudio,
+} from "./audio-choreographer.js";
 export { listVaultAssets, type AssetVaultItem } from "./vault.js";
 export {
   type CritiqueRule,
