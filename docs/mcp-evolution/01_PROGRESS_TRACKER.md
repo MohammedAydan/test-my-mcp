@@ -14,7 +14,7 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | M7 | 14 SFX + auto_choreograph_audio | core-engine, scene-spec, mcp-server | COMPLETED | 7 new (2 files, 41 targeted green) | PASS (6/6 workspaces) | npm test 644/644; no-emoji 154 files; 14 clean procedural SFX, 15 MCP tools | pending (M12) |
 | M8 | generate_storyboard_from_brief | core-engine, mcp-server | COMPLETED | 9 new (2 files, 44 targeted green) | PASS (6/6 workspaces) | npm test 653/653; no-emoji 155 files; 5 archetypes, zero dead air, score >= 95, 16 MCP tools | pending (M12) |
 | M9 | compose_storyboard_video | core-engine, mcp-server | COMPLETED | 7 new (2 files, 43 targeted green) | PASS (6/6 workspaces) | npm test 660/660; no-emoji 156 files; preview / full render, 17 MCP tools | pending (M12) |
-| M10 | static-frame dedup + JPEG piping | core-engine, scene-runtime | PENDING | pending | pending | pending | pending |
+| M10 | static-frame dedup + render telemetry | core-engine, scene-runtime | COMPLETED | 10 new (2 files, 10 targeted green) | PASS (6/6 workspaces) | preview: 24 frames, 4 captured + 20 reused, 55.5ms/captured frame; JPEG pipe pre-existed | pending (M12) |
 | M11 | flagship benchmark | core-engine, mcp-server | PENDING | pending | pending | pending | pending |
 | M12 | report + final gate | docs/mcp-evolution, root | PENDING | pending | pending | pending | pending |
 
@@ -141,4 +141,25 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
   - Integration 6: `wait: false` background job lifecycle, status polling, output verification, and `getRenderResult` probe verification.
 - Verification: typecheck 6/6 workspaces PASS, targeted 2 files / 43 tests green (`storyboard-composer.test.ts` 6/6, `tools.test.ts` 37/37), full suite 46 files / 660 tests green, zero-emoji scan 156 files clean.
 
-
+### M10: static-frame reuse + render telemetry (2026-10-23)
+- Added `packages/scene-runtime/src/frame-signature.ts` and published
+  `window.getSceneFrameSignature(timeMs)`. The signature is deliberately
+  conservative: it rejects active or imminent transitions, camera motion,
+  future keyframes, non-static layer kinds, visibility changes, and auto-exit
+  fades. Static signatures are currently limited to settled `kineticText`,
+  `imageLogo`, `cta`, `deviceMockup`, and solid backgrounds.
+- Added `plans: Map<string, MotionSlotPlan>` to `BuiltScene` so the runtime and
+  renderer share the same lifecycle windows.
+- Updated the renderer to evaluate the signature before each capture, reuse the
+  previous JPEG only for consecutive identical signatures, and report
+  `capturedFrames`, `reusedStaticFrames`, and `captureMsPerFrame` through
+  `RenderJob` and `RenderResultReport`.
+- Chunk telemetry is aggregated per worker; each new Chromium page resets its
+  previous frame buffer and signature. `EngineCore.closeWarmPage()` is called
+  before renders and storyboard composition to preserve the one-Chromium memory
+  envelope.
+- The JPEG image pipe was already present before M10 and was intentionally left
+  unchanged at the measured 70/80/92 preview/draft/production quality ladder.
+- Verification: runtime signature tests 9/9, isolated preview render test 1/1;
+  24 total frames produced 4 captures and 20 static reuses at 55.5ms per
+  captured frame, with a full-duration 2-second MP4.

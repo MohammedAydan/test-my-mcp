@@ -485,6 +485,9 @@ export interface ParallelRenderResult {
   partPaths: string[];
   frames: number;
   workerCount: number;
+  capturedFrames: number;
+  reusedStaticFrames: number;
+  captureMsPerFrame: number;
 }
 
 /**
@@ -572,6 +575,10 @@ export async function renderFramesParallel(opts: {
   const workers = ranges.map(async ([from, to], i) => {
     const parts: Array<{ from: number; path: string }> = [];
     const chunks = splitRanges(to - from, Math.ceil((to - from) / Math.max(1, chunkFrames)));
+    let workerCapturedFrames = 0;
+    let workerReusedFrames = 0;
+    let workerCaptureMsSum = 0;
+    let workerCapturedCount = 0;
     for (const [offsetFrom, offsetTo] of chunks) {
       const chunkFrom = from + offsetFrom;
       const chunkTo = from + offsetTo;
@@ -579,7 +586,7 @@ export async function renderFramesParallel(opts: {
         opts.jobDir,
         `part_${String(i).padStart(2, "0")}_${String(parts.length).padStart(2, "0")}.mp4`
       );
-      await renderFrameRange({
+      const telemetry = await renderFrameRange({
         pool: opts.pool,
         sceneId: opts.sceneId,
         baseUrl: opts.baseUrl,
@@ -596,17 +603,38 @@ export async function renderFramesParallel(opts: {
         ...(opts.store ? { store: opts.store } : {}),
         onFrameDone: opts.onProgress,
       });
+      workerCapturedFrames += telemetry.capturedFrames;
+      workerReusedFrames += telemetry.reusedStaticFrames;
+      workerCaptureMsSum += telemetry.captureMsPerFrame * telemetry.capturedFrames;
+      workerCapturedCount += telemetry.capturedFrames;
       parts.push({ from: chunkFrom, path: partPath });
     }
-    return parts;
+    return {
+      parts,
+      capturedFrames: workerCapturedFrames,
+      reusedStaticFrames: workerReusedFrames,
+      captureMsPerFrame: workerCapturedCount > 0 ? workerCaptureMsSum / workerCapturedCount : 0,
+    };
   });
 
   // frame order, not worker order: the concat demuxer plays the parts as given
-  const partPaths = (await Promise.all(workers))
-    .flat()
+  const results = await Promise.all(workers);
+  const partPaths = results
+    .flatMap((r) => r.parts)
     .sort((a, b) => a.from - b.from)
     .map((part) => part.path);
-  return { partPaths, frames: totalFrames, workerCount: ranges.length };
+  const totalCapturedFrames = results.reduce((sum, r) => sum + r.capturedFrames, 0);
+  const totalReusedFrames = results.reduce((sum, r) => sum + r.reusedStaticFrames, 0);
+  const totalCaptureMsSum = results.reduce((sum, r) => sum + r.captureMsPerFrame * r.capturedFrames, 0);
+
+  return {
+    partPaths,
+    frames: totalFrames,
+    workerCount: ranges.length,
+    capturedFrames: totalCapturedFrames,
+    reusedStaticFrames: totalReusedFrames,
+    captureMsPerFrame: totalCapturedFrames > 0 ? totalCaptureMsSum / totalCapturedFrames : 0,
+  };
 }
 
 async function renderFrameRange(opts: {
@@ -628,7 +656,11 @@ async function renderFrameRange(opts: {
   /** the scene store — the zero-port `/api/scenes/:id` route answers from it */
   store?: SceneStore;
   onFrameDone?: (framesDone: number) => void;
-}): Promise<void> {
+}): Promise<{
+  capturedFrames: number;
+  reusedStaticFrames: number;
+  captureMsPerFrame: number;
+}> {
   const { profile } = opts;
   // THE GRAIN IS THE ENCODER'S JOB.
   //
@@ -673,13 +705,52 @@ async function renderFrameRange(opts: {
     });
 
     const writer = new StdinWriter(proc);
+    let lastSignature: string | null = null;
+    let lastBuffer: Buffer | null = null;
+    let capturedFrames = 0;
+    let reusedStaticFrames = 0;
+    let totalCaptureMs = 0;
+
     for (let frame = opts.from; frame < opts.to; frame++) {
-      const buffer = await captureFrame(page, frame, profile.jpegQuality);
+      // Check static-frame signature before capturing
+      const frameMs = Math.round((frame / profile.fps) * 1000);
+      let signature: string | null = null;
+      try {
+        signature = await page.evaluate(
+          (t) => (globalThis as any).getSceneFrameSignature?.(t),
+          frameMs
+        );
+      } catch {
+        signature = null;
+      }
+
+      let buffer: Buffer;
+      if (signature !== null && signature === lastSignature && lastBuffer !== null) {
+        // Reuse the previous frame's buffer
+        buffer = lastBuffer;
+        reusedStaticFrames++;
+      } else {
+        // Capture new frame
+        const captureStart = Date.now();
+        buffer = await captureFrame(page, frame, profile.jpegQuality);
+        totalCaptureMs += Date.now() - captureStart;
+        capturedFrames++;
+        lastBuffer = buffer;
+        lastSignature = signature;
+      }
+
       await writer.write(buffer);
       opts.onFrameDone?.(1);
     }
+
     proc.stdin.end();
     await encodeDone;
+
+    return {
+      capturedFrames,
+      reusedStaticFrames,
+      captureMsPerFrame: capturedFrames > 0 ? totalCaptureMs / capturedFrames : 0,
+    };
   } finally {
     await close();
   }

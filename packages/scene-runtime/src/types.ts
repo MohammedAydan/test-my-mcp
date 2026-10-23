@@ -98,6 +98,8 @@ declare global {
      * the gizmo itself without rotating the box twice.
      */
     getLayerBounds?(): Record<string, LayerBoundsReport>;
+    /** Stable signature for a frame that can safely reuse the previous JPEG. */
+    getSceneFrameSignature?(timeMs: number): string | null;
     /**
      * Mount (or REPLACE) a scene in the ALREADY-LOADED page — no navigation.
      *

@@ -613,6 +613,9 @@ export class EngineCore extends EventEmitter {
                 outHeight: job.result.profile.outHeight,
                 jpegQuality: job.result.profile.jpegQuality,
               },
+              capturedFrames: job.result.capturedFrames ?? 0,
+              reusedStaticFrames: job.result.reusedStaticFrames ?? 0,
+              captureMsPerFrame: job.result.captureMsPerFrame ?? 0,
             },
           }
         : {}),

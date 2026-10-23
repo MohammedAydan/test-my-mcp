@@ -84,6 +84,8 @@ export interface BuiltScene {
    * the live overrides the Studio's direct manipulation produces.
    */
   pipeline: TransformPipeline;
+  /** Motion plans for every layer, keyed by layer id. Used for static-frame detection. */
+  plans: Map<string, MotionSlotPlan>;
 }
 
 /**
@@ -294,6 +296,12 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
 
   lifecycle.applyInitial();
 
+  // Collect motion plans for static-frame signature
+  const plans = new Map<string, MotionSlotPlan>();
+  for (const { layer, plan } of descriptors) {
+    plans.set(layer.id, plan);
+  }
+
   window.masterTimeline = tl;
   return {
     tl,
@@ -303,6 +311,7 @@ export function buildScene(scene: SceneSpec, stage: Stage, opts: SceneBuildOptio
     coverage: { windows, deadGaps, ok: deadGaps.length === 0 },
     describeFrame: makeFrameDescriber(scene, stage, overlays, descriptors),
     pipeline,
+    plans,
   };
 }
 

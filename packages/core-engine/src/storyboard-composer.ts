@@ -574,6 +574,9 @@ export class StoryboardComposer {
           encoder: "ffmpeg xfade",
           workerCount: 1,
           profile,
+          capturedFrames: 0,
+          reusedStaticFrames: 0,
+          captureMsPerFrame: 0,
         };
       }
 

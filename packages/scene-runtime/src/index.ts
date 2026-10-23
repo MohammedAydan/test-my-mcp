@@ -5,7 +5,8 @@ import { createStage, resetStage, type Stage } from "./stage.js";
 import { applyThemeVars } from "./theme.js";
 import { loadSceneFonts } from "./fonts.js";
 import { assetKindOf, fetchScene, preloadAssets, resolveAssetUrl } from "./api.js";
-import { buildScene, type FrameDescription } from "./scene-builder.js";
+import { buildScene, type FrameDescription, type BuiltScene } from "./scene-builder.js";
+import { getSceneFrameSignature } from "./frame-signature.js";
 import { mountTimelineUI, type TimelineUIHandle } from "./timeline-ui.js";
 import {
   clampFrame,
@@ -47,6 +48,8 @@ interface MountedScene {
   describeFrame: (timeMs: number) => FrameDescription;
   /** the single owner of every layer's transform */
   pipeline: TransformPipeline;
+  /** The built scene with motion plans, for static-frame signature */
+  built: BuiltScene;
   settle: FrameSettler;
   ui: TimelineUIHandle | null;
 }
@@ -308,7 +311,7 @@ async function mountScene(
   const srcById = new Map((scene.assets ?? []).map((asset) => [asset.id, asset.src]));
 
   const seekables: Seekable[] = [];
-  const { tl, lifecycle, describeFrame, pipeline } = buildScene(scene, stage, {
+  const built = buildScene(scene, stage, {
     fonts,
     resolveAsset: (assetId) => {
       const src = srcById.get(assetId);
@@ -345,9 +348,9 @@ async function mountScene(
     seekTimeline: () => {
       // suppressEvents = false → onUpdate callbacks (counters, progress bars,
       // Lottie scrubbing) run on every seek, including non-linear jumps
-      tl.seek(targetTimeSec, false);
+      built.tl.seek(targetTimeSec, false);
     },
-    applyLifecycle: (timeSec) => lifecycle.apply(timeSec * 1000),
+    applyLifecycle: (timeSec) => built.lifecycle.apply(timeSec * 1000),
     runSeekables: async (timeSec) => {
       for (const seek of seekables) await seek(timeSec);
     },
@@ -365,9 +368,9 @@ async function mountScene(
   // flush are kept: a web font DOES change the size of the text it renders.
   const layoutSettle = createLayoutSettler({
     seekTimeline: () => {
-      tl.seek(targetTimeSec, false);
+      built.tl.seek(targetTimeSec, false);
     },
-    applyLifecycle: (timeSec) => lifecycle.apply(timeSec * 1000),
+    applyLifecycle: (timeSec) => built.lifecycle.apply(timeSec * 1000),
     runSeekables: async () => undefined,
     fontsReady: () => document.fonts.ready.then(() => undefined),
     decodeImages: async () => undefined,
@@ -390,10 +393,11 @@ async function mountScene(
     scene,
     fps,
     totalFrames,
-    tl,
-    lifecycle,
-    describeFrame,
-    pipeline,
+    tl: built.tl,
+    lifecycle: built.lifecycle,
+    describeFrame: built.describeFrame,
+    pipeline: built.pipeline,
+    built,
     settle: async (timeSec: number) => {
       targetTimeSec = timeSec;
       await settle(timeSec);
@@ -401,8 +405,10 @@ async function mountScene(
     ui: null,
   };
   // numeric per-frame description for `inspect_scene_keyframes`
-  window.describeFrame = describeFrame;
+  window.describeFrame = built.describeFrame;
   window.getLayerBounds = computeLayerBounds;
+  // static-frame signature for render reuse
+  window.getSceneFrameSignature = (t: number) => getSceneFrameSignature(scene, built, t);
   // the warm-page door: the engine pushes a scene in without navigating
   window.mountSceneFromHost = mountSceneFromHost;
 
@@ -425,7 +431,7 @@ async function mountScene(
     // runtime's scrubber is only mounted when the runtime is opened STANDALONE
     // (a browser tab). Inside the Studio it would be a second, conflicting
     // transport sitting on top of the composition.
-    mounted.ui = mountTimelineUI(tl, scene, fps);
+    mounted.ui = mountTimelineUI(built.tl, scene, fps);
   }
 }
 
@@ -602,6 +608,7 @@ function unmountScene(): void {
   mounted.lifecycle.clear();
   window.describeFrame = undefined;
   window.getLayerBounds = undefined;
+  window.getSceneFrameSignature = undefined;
   applyThemeVars(stage.stage, undefined);
   resetStage(stage);
   mounted = null;

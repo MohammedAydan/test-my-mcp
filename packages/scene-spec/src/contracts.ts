@@ -269,5 +269,11 @@ export interface RenderResultReport {
     encoder: string;
     workerCount: number;
     profile: { quality: string; fps: number; outWidth: number; outHeight: number; jpegQuality: number };
+    /** Frames actually captured (not reused) */
+    capturedFrames: number;
+    /** Frames reused via static-frame detection */
+    reusedStaticFrames: number;
+    /** Average capture time in ms per captured frame */
+    captureMsPerFrame: number;
   };
 }

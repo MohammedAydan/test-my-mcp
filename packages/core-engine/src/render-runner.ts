@@ -43,6 +43,12 @@ export interface RenderJob {
     encoder: string;
     workerCount: number;
     profile: RenderProfile;
+    /** Frames actually captured (not reused) */
+    capturedFrames: number;
+    /** Frames reused via static-frame detection */
+    reusedStaticFrames: number;
+    /** Average capture time in ms per captured frame */
+    captureMsPerFrame: number;
   };
 }
 
@@ -254,7 +260,7 @@ export class RenderRunner extends EventEmitter {
       // exactly as before.
       graphPromise.catch(() => undefined);
 
-      const { partPaths, frames, workerCount } = await renderFramesParallel({
+      const renderResult = await renderFramesParallel({
         pool: this.pool,
         scene,
         sceneId: job.sceneId,
@@ -283,8 +289,8 @@ export class RenderRunner extends EventEmitter {
 
       // per-part sanity: frame counts straight from the encoded segments
       await Promise.all(
-        partPaths.map(
-          (p) =>
+        renderResult.partPaths.map(
+            (p: string) =>
             new Promise<void>((resolve) => {
               execFile(
                 "ffprobe",
@@ -300,7 +306,7 @@ export class RenderRunner extends EventEmitter {
             })
         )
       );
-      const concatPath = await concatParts(partPaths, jobDir);
+      const concatPath = await concatParts(renderResult.partPaths, jobDir);
       const graph = await graphPromise;
       const slug =
         scene.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "scene";
@@ -311,12 +317,15 @@ export class RenderRunner extends EventEmitter {
       job.result = {
         mp4Path,
         mp4Url: `/api/renders/${job.id}/file`,
-        frames,
+        frames: renderResult.frames,
         wallMs,
-        effectiveFps: Number((frames / (wallMs / 1000)).toFixed(2)),
+        effectiveFps: Number((renderResult.frames / (wallMs / 1000)).toFixed(2)),
         encoder,
         profile,
-        workerCount,
+        workerCount: renderResult.workerCount,
+        capturedFrames: renderResult.capturedFrames,
+        reusedStaticFrames: renderResult.reusedStaticFrames,
+        captureMsPerFrame: renderResult.captureMsPerFrame,
       };
       this.emit("completed", {
         jobId: job.id,
