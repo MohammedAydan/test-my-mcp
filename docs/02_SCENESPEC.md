@@ -69,7 +69,7 @@ Every layer has:
 | field | type | default | notes |
 |---|---|---|---|
 | `id` | string | required | unique within scene |
-| `type` | enum | required | `background` \| `imageLogo` \| `kineticText` \| `card` \| `lottie` \| `foregroundFX` \| `chart` \| `codeBlock` \| `particleField` \| `cta` |
+| `type` | enum | required | `background` \| `imageLogo` \| `kineticText` \| `card` \| `lottie` \| `foregroundFX` \| `chart` \| `codeBlock` \| `particleField` \| `cta` \| `deviceMockup` \| `cursorFlow` \| `bentoGrid` \| `connectorDiagram` \| `metricTicker` \| `comparisonSplit` |
 | `at` | number | `0` | layer start (ms) |
 | `duration` | number | scene end | layer active window (ms) |
 | `z` | int | auto | draw order |
@@ -330,7 +330,7 @@ perspective rig. `moves` compose on top of keyframes.
   "cues":  [ { "at": 250, "sfx": "whoosh", "gain": 1, "pan": 0 } ]
 }
 ```
-SFX bank (fixed): `whoosh · pop · click · subImpact · shimmer · riser`.
+SFX bank (fixed, 14 cues): `whoosh · pop · click · subImpact · shimmer · riser · typingTick · mouseClick · notificationChime · bassDrop · glitchHit · softSwoosh · counterTick · ambientPad`.
 Layers may also declare shorthand cues: `"sfx": [{ "sfx": "pop", "offsetMs": 120 }]`
 (relative to the layer's `at`); both are merged into the absolute cue list at render.
 

@@ -59,12 +59,16 @@ npm run pull-render -- --project . --jobId <id> --quality draft
 Agents should read `AGENTS.md` in the new project and install the skill
 (`skills/motionforge-creative-project/SKILL.md`).
 
-## MCP tool contract (6 tools)
+## MCP tool contract (17 tools)
 
 ```
 get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
-                          →  inspect_scene_keyframes  →  open_live_timeline_preview
-                          →  render_video
+                           →  inspect_scene_keyframes  →  open_live_timeline_preview
+                           →  render_video / render_scene → get_layer_bounds
+                           →  get_render_status → get_render_result → analyze_scene
+                           →  upload_asset → project_asset_manifest
+                           →  critique_and_autofix_scene → auto_choreograph_audio
+                           →  generate_storyboard_from_brief → compose_storyboard_video
 ```
 
 When `projectPath` is provided to `create_or_update_scene`, `inspect_scene_keyframes`,
@@ -93,9 +97,8 @@ lifecycle / opacity / bbox / text-overflow) next to the images.
 
 ## Status
 
-- **Engine & Core Pipeline:** Complete and passing (329/329 tests). Headless rendering, MCP adapter, and CLI workflows are verified.
+- **Engine & Core Pipeline:** Complete and passing (670 tests after the v5.0 agency milestones). Headless rendering, MCP adapter, and CLI workflows are verified.
 - **Desktop Application & Studio UX:** Currently in remediation. An exhaustive zero-trust audit conducted in October 2026 identified 11 UX interaction and architecture issues.
   - See [`docs/11_CURRENT_STATE_AUDIT.md`](docs/11_CURRENT_STATE_AUDIT.md) for empirical test results and root causes.
   - See [`docs/12_FEATURE_STATUS_MATRIX.md`](docs/12_FEATURE_STATUS_MATRIX.md) for the verified status of all 39 features.
   - See [`docs/plans/`](docs/plans/) and [`docs/13_NEXT_STEPS.md`](docs/13_NEXT_STEPS.md) for the prioritized remediation roadmap.
-

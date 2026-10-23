@@ -16,7 +16,7 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | M9 | compose_storyboard_video | core-engine, mcp-server | COMPLETED | 7 new (2 files, 43 targeted green) | PASS (6/6 workspaces) | npm test 660/660; no-emoji 156 files; preview / full render, 17 MCP tools | pending (M12) |
 | M10 | static-frame dedup + render telemetry | core-engine, scene-runtime | COMPLETED | 10 new (2 files, 10 targeted green) | PASS (6/6 workspaces) | preview: 24 frames, 4 captured + 20 reused, 55.5ms/captured frame; JPEG pipe pre-existed | pending (M12) |
 | M11 | flagship benchmark | core-engine, mcp-server | COMPLETED | benchmark assertions green | PASS (17-tool MCP session) | 3 scenes / 16 kinds / 14 SFX; H.264+AAC 11.232s master; 6 stills; 3 audio windows; EXIT=0 | pending (M12) |
-| M12 | report + final gate | docs/mcp-evolution, root | PENDING | pending | pending | pending | pending |
+| M12 | report + final gate | docs/mcp-evolution, root | COMPLETED | 670 passed | PASS (6/6 workspaces) | build + no-emoji + flagship MCP benchmark EXIT=0 | pending (final commit) |
 
 ## Milestone Log
 
@@ -172,11 +172,20 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 - The benchmark verifies all 17 advertised tools, six theme presets, critique
   score recovery (`53 -> 100` for the intentionally broken scene), zero
   post-autofix issues on all flagship scenes, and the complete 14-cue SFX union.
-- The sequential draft composition completed in 53.274 seconds: three 120-frame
+- The sequential draft composition completed in 52.803 seconds: three 120-frame
   scenes, one worker each, H.264/AAC master, 11.232 seconds measured duration
   (11.2-second video stream), 595856 bytes, six non-empty stills, and audio
   windows at 0.0/3.6/7.2 seconds measuring -18.9/-22.6/-22.2 dB.
 - Extended storyboard compose results with aggregate static-frame telemetry:
   360 captured frames, 0 reused frames (the flagship intentionally uses dynamic
-  layers), and 108.84ms average capture time. The benchmark prints tool latency,
+  layers), and 107.52ms average capture time. The benchmark prints tool latency,
   score, cue, render, telemetry and ffprobe tables and ends with `EXIT=0`.
+
+### M12: final documentation and verification gate (2026-10-23)
+- Updated the root README, `AGENTS.md`, MCP package metadata, MCP capability
+  guidance, and SceneSpec reference for the shipped 17-tool, 16-layer, and
+  14-cue inventory.
+- Added the human-readable final report:
+  `docs/reports/04_MCP_AGENCY_EVOLUTION_REPORT.md`.
+- Final verification: typecheck, build, full tests (48 files / 670 tests),
+  zero-emoji verification, and the flagship benchmark all pass.

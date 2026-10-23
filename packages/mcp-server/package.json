@@ -2,7 +2,7 @@
   "name": "@motionforge/mcp-server",
   "version": "0.1.0",
   "type": "module",
-  "description": "Thin MCP adapter: exactly 5 tools proxying core-engine HTTP. Zero rendering logic lives here.",
+  "description": "Thin MCP adapter: exactly 17 tools proxying core-engine in-process. Zero rendering logic lives here.",
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts"

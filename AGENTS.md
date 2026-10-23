@@ -15,7 +15,7 @@ packages/
   scene-runtime/   @motionforge/scene-runtime — Vite + TS + Tailwind + GSAP browser canvas (DOM/SVG/Lottie layers, camera rig, timeline UI)
   studio/          @motionforge/studio      — Solid.js Pro NLE user interface (the desktop shell's renderer)
   desktop/         @motionforge/desktop     — Electron shell hosting EngineCore in the main process
-  mcp-server/      @motionforge/mcp-server   — Thin MCP wrapper exposing exactly 13 tools, talks to core-engine in-process
+  mcp-server/      @motionforge/mcp-server   — Thin MCP wrapper exposing exactly 17 tools, talks to core-engine in-process
 ```
 
 > **v3.0 (2026-10-20).** The Studio was rebuilt as a modular Pro NLE. The
@@ -45,7 +45,7 @@ packages/
    render frames.)
 5. **No placeholders.** No `TODO`, no stubbed return values, no mock data committed as
    if functional. If a feature isn't built yet, it doesn't ship in that commit.
-6. **The LLM surface is 13 tools today; 17 when v5.0 is complete** — the original six
+6. **The LLM surface is 17 tools** — the original six
    (`get_motion_capabilities`, `init_creative_project`, `create_or_update_scene`,
    `inspect_scene_keyframes`, `open_live_timeline_preview`, `render_video`) plus the
    seven the production audit added (`render_scene`, `get_layer_bounds`,
@@ -169,7 +169,7 @@ npm run sync-template-scenes   # regenerate templates/creative-project/scenes/*.
 is the agent skill, and `scripts/*.mjs` are the CLIs. **The project kit is CLI-only — it
 never adds a sixth MCP tool.**
 
-### MCP tool contract (13 tools)
+### MCP tool contract (17 tools)
 
 ```
 get_motion_capabilities  →  init_creative_project  →  create_or_update_scene
@@ -373,7 +373,7 @@ FFmpeg 6.x and (for rendering) Playwright Chromium are expected on the host.
 | The shared report contracts (engine → MCP ⇄ Studio) | `packages/scene-spec/src/contracts.ts` |
 | The engine's warm browser page (the inspection path) | `packages/core-engine/src/warm-page.ts` |
 | The render cost model (the multipliers, the worker budget) | `packages/core-engine/src/cost-analysis.ts` |
-| The MCP server's 13 tools | `packages/mcp-server/src/tools.ts` |
+| The MCP server's 17 tools | `packages/mcp-server/src/tools.ts` |
 | Pro NLE design tokens (colour, type, metrics) | `packages/studio/src/styles/tokens.css` |
 | A new UI icon | `packages/studio/src/components/icons/NleIcons.tsx` — **never** an emoji |
 | The frameless window chrome / window controls | `packages/studio/src/components/shell/TitleBar.tsx` + `packages/desktop/src/{main,preload}.ts` |
@@ -410,7 +410,7 @@ Key points for agents working in this repo:
    - Layers are multi-track (`trackIndex`) and the asset vault drags onto both
      the canvas and the timeline.
 3. **Verification is a gate, not a claim:**
-   `npm run typecheck` (6 workspaces), `npm test` (496 tests),
+    `npm run typecheck` (6 workspaces), `npm test` (670 tests),
    `npm run verify:no-emoji`, `npm run verify:pro-nle` (60 practical checks
    against the real Electron app) and `npm run verify:ux-gizmo` (66 checks)
    must all be green.
@@ -422,8 +422,8 @@ Key points for agents working in this repo:
 MotionForge v5.0 evolves the codebase into an autonomous "Headless AI Video Agency Engine" capable of transforming raw briefs into broadcast-grade commercial video deliverables.
 
 ### Target Inventory Targets
-- **17 MCP Tools:** 13 tools today, expanding to 17 with `critique_and_autofix_scene`, `auto_choreograph_audio`, `generate_storyboard_from_brief`, and `compose_storyboard_video`.
-- **16 Layer Kinds:** 10 existing layer kinds, expanding to 16 with `deviceMockup`, `cursorFlow`, `bentoGrid`, `connectorDiagram`, `metricTicker`, and `comparisonSplit`.
+- **17 MCP Tools:** the six original tools plus `render_scene`, `get_layer_bounds`, `get_render_status`, `get_render_result`, `analyze_scene`, `upload_asset`, `project_asset_manifest`, `critique_and_autofix_scene`, `auto_choreograph_audio`, `generate_storyboard_from_brief`, and `compose_storyboard_video`.
+- **16 Layer Kinds:** the original ten plus `deviceMockup`, `cursorFlow`, `bentoGrid`, `connectorDiagram`, `metricTicker`, and `comparisonSplit`.
 - **6 Theme Presets:** `appleKeynoteDark`, `linearMinimal`, `stripeVibrant`, `vercelMonochrome`, `emeraldFintech`, and `editorialLight` (see `packages/scene-spec/src/themes.ts`).
 - **12 Layout Slots:** `heroCenter`, `topHeader`, `topSubhead`, `bottomSubhead`, `bottomCenterCta`, `splitLeft`, `splitRight`, `gridTopLeft`, `gridTopRight`, `gridBottomLeft`, `gridBottomRight`, and `centerStage`.
 - **14 Procedural SFX Cues:** 6 existing cues (`shimmer`, `riser`, `whoosh`, `subImpact`, `pop`, `click`), expanding to 14 with 8 new cues: `typingTick`, `mouseClick`, `notificationChime`, `bassDrop`, `glitchHit`, `softSwoosh`, `counterTick`, and `ambientPad`.
