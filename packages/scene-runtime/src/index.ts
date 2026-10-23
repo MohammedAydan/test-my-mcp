@@ -2,6 +2,7 @@ import "./style.css";
 import type { gsap } from "gsap";
 import { resolveCanvasSize, sceneSpecSchema, type Canvas, type SceneSpec } from "@motionforge/scene-spec";
 import { createStage, resetStage, type Stage } from "./stage.js";
+import { applyThemeVars } from "./theme.js";
 import { loadSceneFonts } from "./fonts.js";
 import { assetKindOf, fetchScene, preloadAssets, resolveAssetUrl } from "./api.js";
 import { buildScene, type FrameDescription } from "./scene-builder.js";
@@ -299,6 +300,7 @@ async function mountScene(
 
   const { width, height } = resolveCanvasSize(scene.canvas);
   stage.setSize(width, height);
+  applyThemeVars(stage.stage, scene.themePreset);
 
   const { lottieJson, imageSizes } = await preloadAssets(scene);
   const fonts = await loadSceneFonts(scene);
@@ -600,6 +602,7 @@ function unmountScene(): void {
   mounted.lifecycle.clear();
   window.describeFrame = undefined;
   window.getLayerBounds = undefined;
+  applyThemeVars(stage.stage, undefined);
   resetStage(stage);
   mounted = null;
 }

@@ -81,13 +81,14 @@ export function renderCta(layer: CtaLayer, ctx: LayerContext): { content: HTMLEl
     background = variant === "pill" ? (bgColor ?? accent) : accent;
     border = "1px solid " + withAlpha(background, 0.9);
     shadow = `0 16px 40px ${withAlpha(background, 0.34)}`;
-    ink = textColor ?? contrastInk(background);
+    const defaultInk = contrastInk(background) === "#ffffff" ? "var(--mf-text-primary, #ffffff)" : "#0b1020";
+    ink = textColor ?? defaultInk;
   } else if (variant === "glass") {
     const tint = bgColor ?? accent;
     background = `color-mix(in srgb, ${tint} 18%, transparent)`;
     border = "1px solid rgba(255,255,255,0.26)";
     shadow = "0 20px 46px rgba(0,0,0,0.34)";
-    ink = textColor ?? "#ffffff";
+    ink = textColor ?? "var(--mf-text-primary, #ffffff)";
   } else {
     // outline
     background = bgColor ?? "transparent";

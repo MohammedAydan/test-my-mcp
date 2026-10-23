@@ -23,13 +23,23 @@ function resolveDirection(layer: CardLayer): "ltr" | "rtl" {
   return texts.some((t): t is string => typeof t === "string" && hasArabic(t)) ? "rtl" : "ltr";
 }
 
-function glassCss(blurPx: number, tintColor: string, tintOpacity: number, borderOpacity: number): string {
+function glassCss(
+  blurPx: number,
+  tintColor: string,
+  tintOpacity: number,
+  borderOpacity: number,
+  hasExplicitTintColor = false
+): string {
+  const defaultBg = `color-mix(in srgb, ${tintColor} ${Math.round(tintOpacity * 100)}%, transparent)`;
+  const backgroundRule = hasExplicitTintColor
+    ? `background:${tintColor};background:${defaultBg}`
+    : `background:${tintColor};background:var(--mf-card-bg, ${defaultBg})`;
+  const borderRule = `border:1px solid var(--mf-card-border, rgba(255,255,255,${borderOpacity}))`;
   return [
     `backdrop-filter:blur(${blurPx}px)`,
     `-webkit-backdrop-filter:blur(${blurPx}px)`,
-    `background:${tintColor}`,
-    "background:" + `color-mix(in srgb, ${tintColor} ${Math.round(tintOpacity * 100)}%, transparent)`,
-    `border:1px solid rgba(255,255,255,${borderOpacity})`,
+    backgroundRule,
+    borderRule,
     `box-shadow:0 24px 60px rgba(0,0,0,0.35)`,
   ].join(";");
 }
@@ -58,6 +68,10 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
       1
     );
     const widthPx = num(v.widthPx, Number.NaN);
+    const hasExplicitTintColor =
+      Boolean((v as { glass?: { tintColor?: string } }).glass?.tintColor) &&
+      (v as { glass?: { tintColor?: string } }).glass?.tintColor !== "#000000" &&
+      (v as { glass?: { tintColor?: string } }).glass?.tintColor !== "#0b0f1a";
     card.style.cssText = [
       "position:relative",
       Number.isFinite(widthPx) ? `width:${clamp(widthPx, 0, 4000)}px` : "width:max-content",
@@ -68,7 +82,8 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
         clamp(num(glass.blurPx, 20), 0, 200),
         safeColor(glass.tintColor, "#000000"),
         clamp(num(glass.tintOpacity, 0.5), 0, 1),
-        borderOpacity
+        borderOpacity,
+        hasExplicitTintColor
       ),
     ].join(";");
     host.appendChild(card);
@@ -112,13 +127,13 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     if (typeof v.title === "string" && v.title.length > 0) {
       const title = document.createElement("div");
       title.textContent = v.title;
-      title.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "headline")};font-weight:800;font-size:34px;color:#fff;margin-bottom:10px;text-align:${textAlign};${CRISP_TEXT_CSS};`;
+      title.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "headline")};font-weight:800;font-size:34px;color:var(--mf-text-primary, #fff);margin-bottom:10px;text-align:${textAlign};${CRISP_TEXT_CSS};`;
       card.appendChild(title);
     }
     if (typeof v.body === "string" && v.body.length > 0) {
       const body = document.createElement("div");
       body.textContent = v.body;
-      body.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:400;font-size:22px;line-height:1.45;color:rgba(255,255,255,0.82);text-align:${textAlign};${CRISP_TEXT_CSS};`;
+      body.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:400;font-size:22px;line-height:1.45;color:var(--mf-text-secondary, rgba(255,255,255,0.82));text-align:${textAlign};${CRISP_TEXT_CSS};`;
       card.appendChild(body);
     }
   } else if (v.variant === "progressBar") {
@@ -145,7 +160,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     if (typeof v.label === "string" && v.label.length > 0) {
       const label = document.createElement("div");
       label.textContent = v.label;
-      label.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:600;font-size:24px;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${CRISP_TEXT_CSS};`;
+      label.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, "body")};font-weight:600;font-size:24px;color:var(--mf-text-primary, #fff);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${CRISP_TEXT_CSS};`;
       header.appendChild(label);
     }
 
@@ -178,7 +193,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
         `font-family:${fontFamilyFor(ctx.fonts, "metric")}`,
         "font-weight:800",
         "font-size:26px",
-        "color:#fff",
+        "color:var(--mf-text-primary, #fff)",
         "flex:none",
         "font-variant-numeric:tabular-nums",
         "direction:ltr",
@@ -202,7 +217,7 @@ export function renderCard(layer: CardLayer, ctx: LayerContext): { content: HTML
     const num2 = document.createElement("div");
     num2.dir = isRTL ? "rtl" : "ltr";
     const sizePx = clamp(num(v2.sizePx, 120), 8, 800);
-    num2.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, v2.role)};font-weight:800;font-size:${sizePx}px;color:#fff;font-variant-numeric:tabular-nums;${CRISP_TEXT_CSS};`;
+    num2.style.cssText = `font-family:${fontFamilyFor(ctx.fonts, v2.role)};font-weight:800;font-size:${sizePx}px;color:var(--mf-text-primary, #fff);font-variant-numeric:tabular-nums;${CRISP_TEXT_CSS};`;
     host.appendChild(num2);
 
     const decimals = clamp(Math.round(num(v2.decimals, 0)), 0, 20);

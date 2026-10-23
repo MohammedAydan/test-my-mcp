@@ -20,6 +20,7 @@ export * from "./layers/cta.js";
 // --- keyframe evaluation (shared by the runtime AND the studio) --------------
 export * from "./keyframes.js";
 // --- scene + validation -----------------------------------------------------
+export * from "./themes.js";
 export * from "./scene.js";
 export * from "./validate.js";
 // --- scene sanitizer / normalizer ------------------------------------------

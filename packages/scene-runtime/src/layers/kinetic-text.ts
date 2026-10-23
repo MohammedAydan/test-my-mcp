@@ -225,7 +225,11 @@ function buildHighlight(highlight: NonNullable<KineticTextLayer["highlight"]>): 
 /** Solid color → color; gradient → background-clip:text gradient fill. */
 function applyTextPaint(el: HTMLElement, fill?: Paint, stroke?: { color: string; widthPx: number }): void {
   if (typeof fill === "string") {
-    el.style.color = fill;
+    if (fill === "#ffffff" || fill === "#fff") {
+      el.style.color = "var(--mf-text-primary, #ffffff)";
+    } else {
+      el.style.color = fill;
+    }
   } else if (fill && typeof fill === "object" && Array.isArray((fill as { stops?: unknown }).stops)) {
     const gradient = fill as { angleDeg?: number; stops: Array<{ color: string; at: number; opacity?: number }> };
     const stops = gradient.stops
@@ -238,10 +242,10 @@ function applyTextPaint(el: HTMLElement, fill?: Paint, stroke?: { color: string;
       el.style.backgroundClip = "text";
       el.style.color = "transparent";
     } else {
-      el.style.color = "#ffffff";
+      el.style.color = "var(--mf-text-primary, #ffffff)";
     }
   } else {
-    el.style.color = "#ffffff";
+    el.style.color = "var(--mf-text-primary, #ffffff)";
   }
   if (stroke && typeof stroke.color === "string") {
     el.style.webkitTextStroke = `${clamp(num(stroke.widthPx, 1), 0, 40)}px ${stroke.color}`;

@@ -14,6 +14,7 @@ import { chartLayerSchema } from "./layers/chart.js";
 import { codeBlockLayerSchema } from "./layers/code-block.js";
 import { particleFieldLayerSchema } from "./layers/particle-field.js";
 import { ctaLayerSchema } from "./layers/cta.js";
+import { themePresetSchema } from "./themes.js";
 
 // ---------------------------------------------------------------------------
 // Canvas
@@ -202,6 +203,7 @@ export const sceneShapeSchema = z.strictObject({
   camera: cameraSchema.default({}),
   transitions: z.array(transitionSchema).max(32).default([]),
   audio: audioSchema.default({}),
+  themePreset: themePresetSchema.optional(),
 });
 
 export const sceneSpecSchema = sceneShapeSchema

@@ -61,7 +61,10 @@ export function renderBackground(layer: BackgroundLayer, ctx: LayerContext): { c
   }
 
   if (v.variant === "meshGradient") {
-    content.style.background = safeColor(v.base, "#05070d");
+    const isDefaultBase = !v.base || v.base === "#05070d";
+    content.style.background = isDefaultBase
+      ? "var(--mf-bg-base, #05070d)"
+      : safeColor(v.base, "var(--mf-bg-base, #05070d)");
     const durationSec = Math.max(0.001, num(ctx.scene.durationMs, 1000) / 1000);
     // A malformed scene must DEGRADE, never crash the preview. The
     // inspector used to write `{variant:"meshGradient", color:…}` (no
@@ -73,7 +76,8 @@ export function renderBackground(layer: BackgroundLayer, ctx: LayerContext): { c
       // EVERY field is guarded: a blob with a string `radiusPct` used to
       // paint `width:NaN%`, which collapsed the blob to nothing (and, with
       // the old `filter: blur(70px)`, painted a giant smeared rectangle).
-      const color = safeColor(b?.color, "#38bdf8");
+      const blobVar = `--mf-bg-blob-${(i % 3) + 1}`;
+      const color = safeColor(b?.color, `var(${blobVar}, #38bdf8)`);
       const xPct = num(b?.xPct, 50);
       const yPct = num(b?.yPct, 50);
       const radiusPct = clamp(num(b?.radiusPct, 40), 5, 200);

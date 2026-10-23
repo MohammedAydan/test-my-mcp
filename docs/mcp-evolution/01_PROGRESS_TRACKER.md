@@ -4,8 +4,8 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 
 | ID | Milestone / Feature | Packages Touched | Status | Unit Tests | Typecheck | Benchmark / Verification | Commit |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| M0 | governance | docs/mcp-evolution, .cursor, .agents, AGENTS.md, CLAUDE.md | COMPLETED | n/a (docs) | n/a (docs) | files present + no-emoji scan + lead fact-check (2 correction rounds) | pending (working tree) |
-| M1 | themePreset | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
+| M0 | governance | docs/mcp-evolution, .cursor, .agents, AGENTS.md, CLAUDE.md | COMPLETED | n/a (docs) | n/a (docs) | files present + no-emoji scan + lead fact-check (2 correction rounds) | a3b92d8 |
+| M1 | themePreset | scene-spec, scene-runtime | COMPLETED | 8 new (3 files, 29 assertions green) | PASS (6/6 workspaces) | npm test 579/579; no-emoji 139 files; 6 presets x 10 tokens verified | pending (M12) |
 | M2 | layoutSlot | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
 | M3 | deviceMockup + cursorFlow | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
 | M4 | bentoGrid + connectorDiagram | scene-spec, scene-runtime, studio | PENDING | pending | pending | pending | pending |
@@ -27,3 +27,18 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 - Created root `CLAUDE.md` and appended v5.0 operational instructions to `AGENTS.md`.
 - Verified zero emoji across all new governance and documentation assets.
 - Corrected specification facts per M0-FIX: aligned 6 theme presets, 12 layout slots, 8 new procedural SFX cues, real Chromium launch args, and verified telemetry/schema paths.
+
+### M1: themePreset (2026-10-23)
+- Added `packages/scene-spec/src/themes.ts`: six presets, exact token tables, the
+  `themePresetSchema`, and a `THEME_CSS_VARS` map whose `bgBlobs` entry expands to the
+  three numbered `--mf-bg-blob-*` variables.
+- Added `themePreset` to `sceneShapeSchema` (optional — absence stays absence) and exported the
+  theme surface from `packages/scene-spec/src/index.ts`.
+- Added `applyThemeVars()` / `getThemeCssVars()` in `packages/scene-runtime/src/theme.ts`;
+  the runtime applies the variables on `#stage` at mount and clears them on unmount.
+- Wired theme fallbacks into `kineticText`, `card`, `cta` and the `background` mesh gradient,
+  keeping today's literals as the CSS fallback so an unthemed scene is unchanged.
+- Field guide documents `themePreset`, the six preset names and the theming note; the
+  layer-kind note is now generated from `LAYER_TYPES` so the count cannot drift.
+- Verification: typecheck 6/6, targeted 3 files / 29 tests, full suite 34 files / 579 tests,
+  zero-emoji scan 139 files.

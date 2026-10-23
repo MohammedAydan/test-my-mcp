@@ -28,6 +28,7 @@ import { chartLayerSchema, CHART_TYPES } from "./layers/chart.js";
 import { codeBlockLayerSchema, CODE_BLOCK_THEMES } from "./layers/code-block.js";
 import { particleFieldLayerSchema, PARTICLE_PATTERNS } from "./layers/particle-field.js";
 import { ctaLayerSchema, CTA_ICONS, CTA_VARIANTS } from "./layers/cta.js";
+import { THEME_PRESETS } from "./themes.js";
 import {
   KEYFRAME_EASINGS,
   KEYFRAME_PROPERTIES,
@@ -532,6 +533,7 @@ export const SCENE_TOP_LEVEL_REQUIRED = ["schemaVersion", "name", "canvas", "dur
 
 export const SCENE_TOP_LEVEL_OPTIONAL = [
   "id (stable id — re-posting the same id updates the scene in place)",
+  "themePreset (optional art direction theme: appleKeynoteDark | linearMinimal | stripeVibrant | vercelMonochrome | emeraldFintech | editorialLight)",
   "assets ([] — declare every file referenced by a layer)",
   "fonts ([] — one entry per typography role)",
   "camera ({ perspective?, drift?, keyframes?, moves? })",
@@ -592,6 +594,7 @@ export function authoringDigest(): Record<string, unknown> {
       particlePatterns: PARTICLE_PATTERNS,
       ctaVariants: CTA_VARIANTS,
       ctaIcons: CTA_ICONS,
+      themePresets: THEME_PRESETS,
     },
     keyframePrecedence: {
       canonical: "keyframes",
@@ -616,9 +619,11 @@ export function authoringDigest(): Record<string, unknown> {
       effects: "emphasis presets and camera moves are temporary — they return to the baseline when their window ends",
       inspection: "inspect_scene_keyframes returns framesMeta[] (camera pose, transition phase, per-layer lifecycle/opacity/bbox/textOverflow) — read it before judging a frame",
       layerKinds:
-        "There are TEN layer types: background, imageLogo, kineticText, card, lottie, foregroundFX, chart, codeBlock, particleField, cta. The last four are first-class and behave like the others — they carry their own timing, motion presets, position, filters and keyframes.",
+        `There are ${LAYER_TYPES.length} layer types: ${LAYER_TYPES.join(", ")}. Every kind carries its own timing, motion presets, position, filters and keyframes.`,
       sizeUnits:
         "Sizes normally carry a `*Px` suffix (widthPx, heightPx, labelSizePx). `codeBlock.fontSize` and `particleField.size` are the two exceptions; their `*Px` aliases (fontSizePx, sizePx) are also accepted and are normalised on save.",
+      theming:
+        "A themePreset injects the --mf-* CSS variables across the stage root, and an explicit layer color always wins.",
     },
   };
 }
