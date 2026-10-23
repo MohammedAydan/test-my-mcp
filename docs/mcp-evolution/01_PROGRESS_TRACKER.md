@@ -16,7 +16,7 @@ Single source of truth for the v5.0 "Headless AI Video Agency Engine" milestone 
 | M9 | compose_storyboard_video | core-engine, mcp-server | COMPLETED | 7 new (2 files, 43 targeted green) | PASS (6/6 workspaces) | npm test 660/660; no-emoji 156 files; preview / full render, 17 MCP tools | pending (M12) |
 | M10 | static-frame dedup + render telemetry | core-engine, scene-runtime | COMPLETED | 10 new (2 files, 10 targeted green) | PASS (6/6 workspaces) | preview: 24 frames, 4 captured + 20 reused, 55.5ms/captured frame; JPEG pipe pre-existed | pending (M12) |
 | M11 | flagship benchmark | core-engine, mcp-server | COMPLETED | benchmark assertions green | PASS (17-tool MCP session) | 3 scenes / 16 kinds / 14 SFX; H.264+AAC 11.232s master; 6 stills; 3 audio windows; EXIT=0 | pending (M12) |
-| M12 | report + final gate | docs/mcp-evolution, root | COMPLETED | 670 passed | PASS (6/6 workspaces) | build + no-emoji + flagship MCP benchmark EXIT=0 | pending (final commit) |
+| M12 | report + final gate | docs/mcp-evolution, root | COMPLETED | 670 passed | PASS (6/6 workspaces) | build + no-emoji + flagship MCP benchmark EXIT=0 | 73a28e8 |
 
 ## Milestone Log
 
