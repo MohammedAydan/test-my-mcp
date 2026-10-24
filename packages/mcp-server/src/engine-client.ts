@@ -23,6 +23,11 @@ import {
   type EngineCore,
   type StoryboardBrief,
   type StoryboardReport,
+  type ProcessImageOptions,
+  type SynthesizeNarrationOptions,
+  type NarrationSynthesisResult,
+  type MixSceneSoundtrackInput,
+  type MixSoundtrackResult,
 } from "@motionforge/core-engine";
 import type {
   RenderResultReport,
@@ -385,6 +390,45 @@ export const engineClient = {
       throw new EngineError(error.status ?? error.statusCode ?? 400, error.message, error.issues);
     }
   },
+
+  /** Process image assets (crop16x9, coverResize, colorGrade, removeBackground, generateScrim). */
+  processImageAsset: async (options: {
+    source: { assetId?: string; filePath?: string; url?: string; buffer?: Buffer };
+    operations: ProcessImageOptions;
+    outputName: string;
+    projectPath?: string;
+  }): Promise<{ id: string; name: string; src: string; kind: string; size: number; mimeType: string }> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.processImageAsset(options);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? error.statusCode ?? 400, error.message, error.issues);
+    }
+  },
+
+  /** Synthesize voiceover narration and frame-accurate 2-line balanced SRT subtitles. */
+  synthesizeNarrationAndSubtitles: async (
+    options: SynthesizeNarrationOptions
+  ): Promise<NarrationSynthesisResult> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.synthesizeNarrationAndSubtitles(options);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? error.statusCode ?? 400, error.message, error.issues);
+    }
+  },
+
+  /** Mix scene narration, procedural ambient score bed, and SFX with sidechain ducking. */
+  mixSceneSoundtrack: async (
+    input: MixSceneSoundtrackInput
+  ): Promise<MixSoundtrackResult> => {
+    const core = await getInProcessCore();
+    try {
+      return await core.mixSceneSoundtrack(input);
+    } catch (error: any) {
+      throw new EngineError(error.status ?? error.statusCode ?? 400, error.message, error.issues);
+    }
+  },
 };
 
 export type {
@@ -398,5 +442,10 @@ export type {
   CritiqueOptions,
   CritiqueReport,
   StoryboardBrief,
+  ProcessImageOptions,
+  SynthesizeNarrationOptions,
+  NarrationSynthesisResult,
+  MixSceneSoundtrackInput,
+  MixSoundtrackResult,
   StoryboardReport,
 };

@@ -58,6 +58,12 @@ export class RendererPool {
         // one device pixel per CSS pixel, whatever the host display scale is
         "--force-device-scale-factor=1",
         "--hide-scrollbars",
+        "--use-gl=angle",
+        "--use-angle=d3d11",
+        "--enable-gpu-rasterization",
+        "--enable-zero-copy",
+        "--ignore-gpu-blocklist",
+        "--disable-software-rasterizer",
       ],
     });
     this.browsers.push(browser);

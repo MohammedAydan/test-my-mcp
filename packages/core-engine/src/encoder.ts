@@ -191,6 +191,19 @@ export function encoderArgs(
   const floor = productionBitrateFloor(size) * (grain ? GRAIN_BITRATE_FACTOR : 1);
   const grainTune = grain && encoder === "libx264" ? GRAIN_TUNE : [];
   switch (encoder) {
+    case "h264_amf":
+      // AMD AMF hardware encoder (Windows / Radeon GPUs like RX 5500 XT)
+      // Quality options: speed, balanced, quality
+      // Rate control: cqp, vbr_peak, cbr
+      if (quality === "preview") {
+        return ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "32", "-qp_p", "32", "-b:v", "1M"];
+      }
+      return quality === "draft"
+        ? ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", grain ? "24" : "28", "-qp_p", grain ? "24" : "28", "-b:v", grain ? "12M" : "4M"]
+        : [
+            "-c:v", "h264_amf", "-quality", "quality", "-rc", "vbr_peak",
+            ...rateControl(floor),
+          ];
     case "h264_nvenc":
       // draft: the fastest preset, CRF (the smallest file the content allows)
       // production: the slow preset, ABR with a TARGET bitrate
@@ -236,7 +249,7 @@ export function encoderArgs(
 
 export async function availableEncoders(): Promise<string[]> {
   // vaapi is omitted: it needs explicit VADevice plumbing, not just an encoder probe
-  const preference = ["h264_nvenc", "h264_qsv", "h264_videotoolbox", "libx264"];
+  const preference = ["h264_nvenc", "h264_amf", "h264_qsv", "h264_videotoolbox", "libx264"];
   const listing = await new Promise<string>((resolve) => {
     const proc = spawn("ffmpeg", ["-hide_banner", "-encoders"]);
     let out = "";
@@ -254,7 +267,9 @@ export async function availableEncoders(): Promise<string[]> {
  * encoder (or seeing encoded bytes) is not enough — a broken driver must fall
  * through to the next candidate.
  */
-export async function pickEncoder(quality: "draft" | "production"): Promise<string> {
+export async function pickEncoder(
+  quality: "preview" | "draft" | "production" = "draft"
+): Promise<string> {
   const candidates = await availableEncoders();
   if (candidates.length === 0) {
     throw new FfmpegError("no H.264 encoders available", "ffmpeg -encoders returned nothing");
@@ -503,15 +518,15 @@ export function buildAudioGraph(
     if (music.fadeOutMs > 0) {
       fades.push(`afade=t=out:st=${Math.max(0, durationSec - music.fadeOutMs / 1000).toFixed(3)}:d=${(music.fadeOutMs / 1000).toFixed(3)}`);
     }
-    const chain =
-      `[${inputIndex}:a]` +
-      `atrim=0:${durationSec.toFixed(3)},` +
-      (music.normalize ? "loudnorm=I=-21:TP=-1.5:LRA=11," : "") +
-      `volume=${music.gain},` +
-      fades.join(",") +
-      // pad short music, clamp long music — every chain spans the scene exactly
-      `,apad=whole_dur=${durationSec.toFixed(3)},atrim=end=${durationSec.toFixed(3)}` +
-      `[m${inputIndex}]`;
+    const musicFilters: string[] = [
+      `atrim=0:${durationSec.toFixed(3)}`,
+      music.normalize ? "loudnorm=I=-21:TP=-1.5:LRA=11" : "",
+      `volume=${music.gain}`,
+      ...fades,
+      `apad=whole_dur=${durationSec.toFixed(3)}`,
+      `atrim=end=${durationSec.toFixed(3)}`,
+    ].filter(Boolean);
+    const chain = `[${inputIndex}:a]${musicFilters.join(",")}[m${inputIndex}]`;
     chains.push(chain);
     inputIndex++;
   }

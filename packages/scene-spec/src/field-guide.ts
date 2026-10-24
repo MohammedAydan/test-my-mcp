@@ -52,6 +52,15 @@ import {
 import {
   comparisonSplitLayerSchema,
 } from "./layers/comparison-split.js";
+import {
+  cartographicRouteLayerSchema,
+} from "./layers/cartographic-route.js";
+import {
+  editorialRuleLayerSchema,
+} from "./layers/editorial-rule.js";
+import {
+  timelineStripLayerSchema,
+} from "./layers/timeline-strip.js";
 import { THEME_PRESETS } from "./themes.js";
 import { LAYOUT_SLOTS } from "./layout-slots.js";
 import {
@@ -79,6 +88,9 @@ export type BentoGridLayerInput = z.input<typeof bentoGridLayerSchema>;
 export type ConnectorDiagramLayerInput = z.input<typeof connectorDiagramLayerSchema>;
 export type MetricTickerLayerInput = z.input<typeof metricTickerLayerSchema>;
 export type ComparisonSplitLayerInput = z.input<typeof comparisonSplitLayerSchema>;
+export type CartographicRouteLayerInput = z.input<typeof cartographicRouteLayerSchema>;
+export type EditorialRuleLayerInput = z.input<typeof editorialRuleLayerSchema>;
+export type TimelineStripLayerInput = z.input<typeof timelineStripLayerSchema>;
 
 export type AnyLayerInput =
   | BackgroundLayerInput
@@ -96,7 +108,10 @@ export type AnyLayerInput =
   | BentoGridLayerInput
   | ConnectorDiagramLayerInput
   | MetricTickerLayerInput
-  | ComparisonSplitLayerInput;
+  | ComparisonSplitLayerInput
+  | CartographicRouteLayerInput
+  | EditorialRuleLayerInput
+  | TimelineStripLayerInput;
 
 /** Keys every layer needs, plus the timing/motion knobs shared by all of them. */
 export const COMMON_LAYER_REQUIRED = ["id", "type"] as const;
@@ -530,6 +545,85 @@ export const LAYER_FIELD_GUIDE: Record<LayerType, LayerFieldGuideEntry> = {
       leftAccent: "#ef4444",
       rightAccent: "#10b981",
       vsBadge: "VS",
+    },
+  },
+  cartographicRoute: {
+    summary: "Documentary animated cartographic path with start/end pin indicators, dark halo underlay, and dashed stroke.",
+    required: ["waypoints (array of { xPct, yPct, label? }, min 2, max 16)"],
+    optional: [
+      "strokeColor (hex color, default '#d4af37')",
+      "strokeWidthPx (stroke width in pixels, default 3.5)",
+      "dashed (boolean, default true)",
+      "dashArray (SVG dash pattern, default '8 6')",
+      "haloColor (dark underlay color, default '#0a0a0c')",
+      "haloWidthPx (halo stroke width, default 8)",
+      "haloOpacity (halo opacity 0..1, default 0.75)",
+      "curved (smooth Catmull-Rom Bezier curve, default true)",
+      "startPin ({ label?, color?, radiusPx?, pulse? })",
+      "endPin ({ label?, color?, radiusPx?, pulse? })",
+      "drawDurationMs (duration to animate path draw-in, default 1800)",
+    ],
+    example: {
+      id: "route-map",
+      type: "cartographicRoute",
+      at: 400,
+      waypoints: [
+        { xPct: 20, yPct: 40, label: "Origin" },
+        { xPct: 50, yPct: 35 },
+        { xPct: 80, yPct: 65, label: "Destination" },
+      ],
+      strokeColor: "#d4af37",
+      startPin: { label: "London", color: "#d4af37" },
+      endPin: { label: "Singapore", color: "#14b8a6" },
+      drawDurationMs: 1600,
+    },
+  },
+  editorialRule: {
+    summary: "Gold or accent divider rule with gradient fade ends and optional center diamond or dot ornament.",
+    required: ["id (unique string id)", "type ('editorialRule')"],
+    optional: [
+      "orientation ('horizontal' | 'vertical', default 'horizontal')",
+      "lengthPct (percent of canvas dimension, default 60)",
+      "thicknessPx (rule thickness in px, default 2)",
+      "color (hex color, default '#d4af37')",
+      "fadeEnds (gradient fade on extremities, default true)",
+      "centerOrnament ('none' | 'diamond' | 'dot', default 'diamond')",
+      "ornamentSizePx (ornament size in px, default 8)",
+      "drawDurationMs (draw-in duration ms, default 1200)",
+    ],
+    example: {
+      id: "divider",
+      type: "editorialRule",
+      at: 200,
+      orientation: "horizontal",
+      lengthPct: 70,
+      color: "#d4af37",
+      centerOrnament: "diamond",
+    },
+  },
+  timelineStrip: {
+    summary: "Horizontal chronological timeline axis with event date tags, marker dots, and staggered labels.",
+    required: ["events (array of { date, title, description?, active? }, min 2, max 8)"],
+    optional: [
+      "lineColor (hex color, default '#d4af37')",
+      "markerColor (marker dot color, default '#ffffff')",
+      "activeMarkerColor (active marker dot color, default '#d4af37')",
+      "textColor (typography color, default '#ffffff')",
+      "accentColor (accent color, default '#d4af37')",
+      "widthPct (percent of canvas width, default 85)",
+      "staggerMs (staggered entrance delay ms, default 250)",
+      "showDescriptions (boolean, default true)",
+    ],
+    example: {
+      id: "timeline",
+      type: "timelineStrip",
+      at: 500,
+      widthPct: 90,
+      events: [
+        { date: "1998", title: "Foundation", description: "Early exploration", active: false },
+        { date: "2012", title: "Scale", description: "Global adoption", active: false },
+        { date: "2026", title: "Autonomous Era", description: "Engine unification", active: true },
+      ],
     },
   },
 };

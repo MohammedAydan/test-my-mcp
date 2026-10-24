@@ -549,12 +549,51 @@ export function computeLayerBounds(): LayerBounds {
     const layoutHeight = element.offsetHeight;
     const width = layoutWidth * resolved.scaleX;
     const height = layoutHeight * resolved.scaleY;
-    const cx = (resolved.xPct / 100) * designW;
-    const cy = (resolved.yPct / 100) * designH;
+    const px = (resolved.xPct / 100) * designW;
+    const py = (resolved.yPct / 100) * designH;
+
+    let x: number;
+    let y: number;
+    let cx: number;
+    let cy: number;
+
+    switch (resolved.anchor) {
+      case "topLeft":
+        x = px;
+        y = py;
+        cx = px + width / 2;
+        cy = py + height / 2;
+        break;
+      case "topRight":
+        x = px - width;
+        y = py;
+        cx = px - width / 2;
+        cy = py + height / 2;
+        break;
+      case "bottomLeft":
+        x = px;
+        y = py - height;
+        cx = px + width / 2;
+        cy = py - height / 2;
+        break;
+      case "bottomRight":
+        x = px - width;
+        y = py - height;
+        cx = px - width / 2;
+        cy = py - height / 2;
+        break;
+      case "center":
+      default:
+        x = px - width / 2;
+        y = py - height / 2;
+        cx = px;
+        cy = py;
+        break;
+    }
 
     result[layerId] = {
-      x: round1(cx - width / 2),
-      y: round1(cy - height / 2),
+      x: round1(x),
+      y: round1(y),
       width: round1(width),
       height: round1(height),
       layoutWidth: round1(layoutWidth),

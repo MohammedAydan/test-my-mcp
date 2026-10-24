@@ -68,10 +68,14 @@ import {
   ensureDirs,
   listVaultAssets,
   mimeFor,
+  resolveAssetSource,
   sanitizeVaultName,
   saveVaultUpload,
   type AssetVaultItem,
 } from "./vault.js";
+import { ImageProcessorService, type ProcessImageOptions } from "./image-processor.js";
+import { AudioStudioService, type SynthesizeNarrationOptions, type NarrationSynthesisResult } from "./audio-studio.js";
+import { SoundtrackMixerService, type MixSceneSoundtrackInput, type MixSoundtrackResult } from "./soundtrack-mixer.js";
 
 export interface EngineCoreOptions extends EnginePathOptions {
   port?: number;
@@ -117,6 +121,9 @@ export interface EngineEventMap {
 export class EngineCore extends EventEmitter {
   readonly store: SceneStore;
   readonly runner: RenderRunner;
+  readonly imageProcessor: ImageProcessorService;
+  readonly audioStudio: AudioStudioService;
+  readonly soundtrackMixer: SoundtrackMixerService;
   readonly log: (msg: string) => void;
   private watchers: fs.FSWatcher[] = [];
   private debounceTimers = new Map<string, NodeJS.Timeout>();
@@ -143,6 +150,9 @@ export class EngineCore extends EventEmitter {
       scenesDir: paths.storageDir,
     });
     this.runner = new RenderRunner(config, paths, this.store, this.log);
+    this.imageProcessor = new ImageProcessorService();
+    this.audioStudio = new AudioStudioService(paths);
+    this.soundtrackMixer = new SoundtrackMixerService(paths);
 
     // Forward runner events to EngineCore event bus
     this.runner.on("progress", (evt) => {
@@ -350,6 +360,47 @@ export class EngineCore extends EventEmitter {
       updatedAt: Date.now(),
       ...(projectPath ? { projectPath } : {}),
     };
+  }
+
+  async processImageAsset(options: {
+    source: { assetId?: string; filePath?: string; url?: string; buffer?: Buffer };
+    operations: ProcessImageOptions;
+    outputName: string;
+    projectPath?: string;
+  }): Promise<AssetVaultItem> {
+    let inputBuffer: Buffer | null = null;
+    if (options.source.buffer) {
+      inputBuffer = options.source.buffer;
+    } else if (options.source.filePath) {
+      inputBuffer = await fsp.readFile(options.source.filePath);
+    } else if (options.source.url) {
+      const res = await fetch(options.source.url);
+      if (!res.ok) throw new Error(`Failed to fetch image from URL: ${res.statusText}`);
+      inputBuffer = Buffer.from(await res.arrayBuffer());
+    } else if (options.source.assetId) {
+      const p = resolveAssetSource(
+        this.paths,
+        options.source.assetId.startsWith("vault:")
+          ? options.source.assetId
+          : `vault:${options.source.assetId}`
+      );
+      inputBuffer = await fsp.readFile(p);
+    }
+
+    const processed = await this.imageProcessor.process(inputBuffer, options.operations);
+    return this.ingestAsset(processed, options.outputName, "image", options.projectPath);
+  }
+
+  async synthesizeNarrationAndSubtitles(
+    options: SynthesizeNarrationOptions
+  ): Promise<NarrationSynthesisResult> {
+    return this.audioStudio.synthesizeNarrationAndSubtitles(options);
+  }
+
+  async mixSceneSoundtrack(
+    input: MixSceneSoundtrackInput
+  ): Promise<MixSoundtrackResult> {
+    return this.soundtrackMixer.mixSceneSoundtrack(input);
   }
 
   /**

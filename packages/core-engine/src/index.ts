@@ -102,4 +102,29 @@ export {
   type StoryboardPlan,
   type PlannedTransition,
 } from "./storyboard-composer.js";
+export {
+  ImageProcessorService,
+  type ProcessImageOptions,
+  type Crop16x9Options,
+  type CoverResizeOptions,
+  type ColorGradeOptions,
+  type RemoveBackgroundOptions,
+  type GenerateScrimOptions,
+} from "./image-processor.js";
+export {
+  AudioStudioService,
+  formatSrtTime,
+  balanceSubtitleLines,
+  generateSrtContent,
+  type SynthesizeNarrationOptions,
+  type NarrationSynthesisResult,
+  type SubtitleCue,
+  type WordBoundary,
+} from "./audio-studio.js";
+export {
+  SoundtrackMixerService,
+  type MixSceneSoundtrackInput,
+  type MixSoundtrackResult,
+  type SoundtrackCue,
+} from "./soundtrack-mixer.js";
 

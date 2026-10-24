@@ -155,6 +155,9 @@ export const FOREGROUND_LAYER_TYPES = [
   "connectorDiagram",
   "metricTicker",
   "comparisonSplit",
+  "cartographicRoute",
+  "editorialRule",
+  "timelineStrip",
 ] as const;
 export type ForegroundLayerType = (typeof FOREGROUND_LAYER_TYPES)[number];
 

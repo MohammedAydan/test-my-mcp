@@ -19,6 +19,16 @@ export interface KeyframeSample {
   easing: KeyframeEasing;
 }
 
+function bounceOut(t: number): number {
+  const n1 = 7.5625;
+  const d1 = 2.75;
+  let p = t;
+  if (p < 1 / d1) return n1 * p * p;
+  if (p < 2 / d1) return n1 * (p -= 1.5 / d1) * p + 0.75;
+  if (p < 2.5 / d1) return n1 * (p -= 2.25 / d1) * p + 0.9375;
+  return n1 * (p -= 2.625 / d1) * p + 0.984375;
+}
+
 /** The easing curves of the flat keyframe surface. */
 export const KEYFRAME_EASING_FUNCTIONS: Record<KeyframeEasing, (t: number) => number> = {
   linear: (t) => t,
@@ -26,6 +36,62 @@ export const KEYFRAME_EASING_FUNCTIONS: Record<KeyframeEasing, (t: number) => nu
   easeOut: (t) => 1 - (1 - t) * (1 - t),
   easeInOut: (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) * (-2 * t + 2)) / 2),
   cubic: (t) => t * t * t,
+  "power1.in": (t) => t * t,
+  "power1.out": (t) => 1 - (1 - t) * (1 - t),
+  "power1.inOut": (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2),
+  "power2.in": (t) => t * t * t,
+  "power2.out": (t) => 1 - Math.pow(1 - t, 3),
+  "power2.inOut": (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2),
+  "power3.in": (t) => Math.pow(t, 4),
+  "power3.out": (t) => 1 - Math.pow(1 - t, 4),
+  "power3.inOut": (t) => (t < 0.5 ? 8 * Math.pow(t, 4) : 1 - Math.pow(-2 * t + 2, 4) / 2),
+  "power4.in": (t) => Math.pow(t, 5),
+  "power4.out": (t) => 1 - Math.pow(1 - t, 5),
+  "power4.inOut": (t) => (t < 0.5 ? 16 * Math.pow(t, 5) : 1 - Math.pow(-2 * t + 2, 5) / 2),
+  "expo.in": (t) => (t === 0 ? 0 : Math.pow(2, 10 * t - 10)),
+  "expo.out": (t) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t)),
+  "expo.inOut": (t) =>
+    t === 0 ? 0 : t === 1 ? 1 : t < 0.5 ? Math.pow(2, 20 * t - 10) / 2 : (2 - Math.pow(2, -20 * t + 10)) / 2,
+  "circ.in": (t) => 1 - Math.sqrt(1 - Math.pow(t, 2)),
+  "circ.out": (t) => Math.sqrt(1 - Math.pow(t - 1, 2)),
+  "circ.inOut": (t) =>
+    t < 0.5
+      ? (1 - Math.sqrt(1 - Math.pow(2 * t, 2))) / 2
+      : (Math.sqrt(1 - Math.pow(-2 * t + 2, 2)) + 1) / 2,
+  "sine.in": (t) => 1 - Math.cos((t * Math.PI) / 2),
+  "sine.out": (t) => Math.sin((t * Math.PI) / 2),
+  "sine.inOut": (t) => -(Math.cos(Math.PI * t) - 1) / 2,
+  "back.in(1.7)": (t) => 2.70158 * t * t * t - 1.70158 * t * t,
+  "back.out(1.7)": (t) => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2),
+  "back.out(2.5)": (t) => 1 + 3.5 * Math.pow(t - 1, 3) + 2.5 * Math.pow(t - 1, 2),
+  "back.out(4)": (t) => 1 + 5 * Math.pow(t - 1, 3) + 4 * Math.pow(t - 1, 2),
+  "back.inOut(1.7)": (t) => {
+    const c = 1.70158 * 1.525;
+    return t < 0.5
+      ? (Math.pow(2 * t, 2) * ((c + 1) * 2 * t - c)) / 2
+      : (Math.pow(2 * t - 2, 2) * ((c + 1) * (t * 2 - 2) + c) + 2) / 2;
+  },
+  "elastic.in(1,0.75)": (t) =>
+    t === 0
+      ? 0
+      : t === 1
+      ? 1
+      : -Math.pow(2, 10 * t - 10) * Math.sin((t * 10 - 10.75) * ((2 * Math.PI) / 3)),
+  "elastic.out(1,0.5)": (t) =>
+    t === 0
+      ? 0
+      : t === 1
+      ? 1
+      : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1,
+  "elastic.out(1,0.75)": (t) =>
+    t === 0
+      ? 0
+      : t === 1
+      ? 1
+      : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1,
+  "bounce.in": (t) => 1 - bounceOut(1 - t),
+  "bounce.out": (t) => bounceOut(t),
+  "steps(12)": (t) => Math.floor(t * 12) / 12,
 };
 
 /** The legacy `tracks` property names mapped onto the unified property set. */

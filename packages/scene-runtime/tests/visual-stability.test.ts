@@ -339,7 +339,7 @@ describe("text splitting", () => {
     expect(unit.style.margin).toBe("-0.12em -0.08em");
     expect(unit.style.paddingTop).toBe("0.12em");
     expect(unit.style.marginTop).toBe("-0.12em");
-    expect(unit.style.lineHeight).toBe("1.35");
+    expect(unit.style.lineHeight).toBe("inherit");
     expect(TEXT_UNIT_GUARD_CSS).toContain("padding:0.12em 0.08em");
     expect(TEXT_UNIT_GUARD_CSS).toContain("margin:-0.12em -0.08em");
   });

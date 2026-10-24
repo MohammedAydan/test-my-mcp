@@ -5,8 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 
 import type { EngineConfig, EnginePaths } from "./config.js";
-import { profileFor } from "./encoder.js";
-import { runFfmpeg } from "./encoder.js";
+import { encoderArgs, pickEncoder, profileFor, runFfmpeg } from "./encoder.js";
 import { probeMedia } from "./media-probe.js";
 import type { MediaProbeReport } from "@motionforge/scene-spec";
 import type { RenderJob, RenderQuality, RenderRunner } from "./render-runner.js";
@@ -538,6 +537,9 @@ export class StoryboardComposer {
           const lastALabel = `a${plan.transitions.length}`;
           const filterComplex = [...videoFilters, ...audioFilters].join(";");
 
+          const detectedEncoder = await pickEncoder(quality);
+          const encArgs = encoderArgs(detectedEncoder, quality, profile);
+
           await runFfmpeg(
             [
               ...inputArgs,
@@ -547,14 +549,9 @@ export class StoryboardComposer {
               `[${lastVLabel}]`,
               "-map",
               `[${lastALabel}]`,
-              "-c:v",
-              "libx264",
               "-pix_fmt",
               "yuv420p",
-              "-preset",
-              "veryfast",
-              "-crf",
-              "20",
+              ...encArgs,
               "-c:a",
               "aac",
               "-b:a",

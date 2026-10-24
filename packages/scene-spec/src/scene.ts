@@ -20,6 +20,9 @@ import { bentoGridLayerSchema } from "./layers/bento-grid.js";
 import { connectorDiagramLayerSchema } from "./layers/connector-diagram.js";
 import { metricTickerLayerSchema } from "./layers/metric-ticker.js";
 import { comparisonSplitLayerSchema } from "./layers/comparison-split.js";
+import { cartographicRouteLayerSchema } from "./layers/cartographic-route.js";
+import { editorialRuleLayerSchema } from "./layers/editorial-rule.js";
+import { timelineStripLayerSchema } from "./layers/timeline-strip.js";
 import { themePresetSchema } from "./themes.js";
 
 // ---------------------------------------------------------------------------
@@ -138,6 +141,9 @@ export const LAYER_TYPES = [
   "connectorDiagram",
   "metricTicker",
   "comparisonSplit",
+  "cartographicRoute",
+  "editorialRule",
+  "timelineStrip",
 ] as const;
 export type LayerType = (typeof LAYER_TYPES)[number];
 
@@ -172,6 +178,9 @@ export const layerSchema = z.discriminatedUnion("type", [
   connectorDiagramLayerSchema,
   metricTickerLayerSchema,
   comparisonSplitLayerSchema,
+  cartographicRouteLayerSchema,
+  editorialRuleLayerSchema,
+  timelineStripLayerSchema,
 ]);
 export type Layer = z.infer<typeof layerSchema>;
 

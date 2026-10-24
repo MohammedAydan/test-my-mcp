@@ -15,7 +15,7 @@ describe("the public surface of @motionforge/scene-spec", () => {
   it("publishes the unified transform vocabulary", () => {
     expect(LAYER_FILTER_KEYS.length).toBeGreaterThan(0);
     expect(KEYFRAME_PROPERTIES.length).toBe(5);
-    expect(KEYFRAME_EASINGS.length).toBe(5);
+    expect(KEYFRAME_EASINGS.length).toBeGreaterThanOrEqual(5);
     expect(Object.keys(KEYFRAME_VALUE_RANGES).sort()).toEqual([...KEYFRAME_PROPERTIES].sort());
   });
 

@@ -29,6 +29,7 @@ import {
   LEGACY_PROPERTY_MAP as LEGACY_PROPERTY_MAP_SHARED,
   LAYOUT_SLOT_BOXES,
   type LayoutSlot,
+  type LayerAnchor,
   type KeyframeEasing,
   type KeyframeProperty,
   type KeyframeTrack,
@@ -53,6 +54,7 @@ export interface ResolvedTransform {
   scaleY: number;
   rotation: number;
   opacity: number;
+  anchor?: LayerAnchor;
   /** layout width as a percent of the canvas (authored via `layer.size`) */
   widthPct?: number;
   /** layout height as a percent of the canvas (authored via `layer.size`) */
@@ -67,13 +69,14 @@ export const DEFAULT_TRANSFORM: ResolvedTransform = Object.freeze({
   scaleY: 1,
   rotation: 0,
   opacity: 1,
+  anchor: "center",
 });
 
 /**
  * The easing curves a unified keyframe may use.
  *
- * These are the curves the runtime implements EXACTLY. The five names are a
- * closed set so the Studio can previews exactly what the renderer produces.
+ * These are the curves the runtime implements EXACTLY. The names are a
+ * closed set so the Studio can preview exactly what the renderer produces.
  */
 const EASINGS: Record<KeyframeEasing, (t: number) => number> = KEYFRAME_EASING_FUNCTIONS;
 
@@ -90,6 +93,38 @@ export const GSAP_EASES: Record<KeyframeEasing, string> = {
   easeOut: "power2.out",
   easeInOut: "power2.inOut",
   cubic: "power3.in",
+  "power1.in": "power1.in",
+  "power1.out": "power1.out",
+  "power1.inOut": "power1.inOut",
+  "power2.in": "power2.in",
+  "power2.out": "power2.out",
+  "power2.inOut": "power2.inOut",
+  "power3.in": "power3.in",
+  "power3.out": "power3.out",
+  "power3.inOut": "power3.inOut",
+  "power4.in": "power4.in",
+  "power4.out": "power4.out",
+  "power4.inOut": "power4.inOut",
+  "expo.in": "expo.in",
+  "expo.out": "expo.out",
+  "expo.inOut": "expo.inOut",
+  "circ.in": "circ.in",
+  "circ.out": "circ.out",
+  "circ.inOut": "circ.inOut",
+  "sine.in": "sine.in",
+  "sine.out": "sine.out",
+  "sine.inOut": "sine.inOut",
+  "back.in(1.7)": "back.in(1.7)",
+  "back.out(1.7)": "back.out(1.7)",
+  "back.out(2.5)": "back.out(2.5)",
+  "back.out(4)": "back.out(4)",
+  "back.inOut(1.7)": "back.inOut(1.7)",
+  "elastic.in(1,0.75)": "elastic.in(1,0.75)",
+  "elastic.out(1,0.5)": "elastic.out(1,0.5)",
+  "elastic.out(1,0.75)": "elastic.out(1,0.75)",
+  "bounce.in": "bounce.in",
+  "bounce.out": "bounce.out",
+  "steps(12)": "steps(12)",
 };
 
 /** The legacy `tracks[].property` names the unified pipeline understands. */
@@ -204,6 +239,7 @@ export function resolveTransform(layer: SceneLayer, timeMs: number): ResolvedTra
   const rotation = pick("rotation") ?? layer.rotation ?? DEFAULT_TRANSFORM.rotation;
   const opacity = pick("opacity") ?? layer.opacity ?? DEFAULT_TRANSFORM.opacity;
 
+  const anchor = layer.anchor ?? "center";
   const resolved: ResolvedTransform = {
     xPct: clamp(xPct, -300, 300),
     yPct: clamp(yPct, -300, 300),
@@ -211,6 +247,7 @@ export function resolveTransform(layer: SceneLayer, timeMs: number): ResolvedTra
     scaleY: clampScale(layer.scaleY ?? uniform),
     rotation: clamp(rotation, -3600, 3600),
     opacity: clamp(opacity, 0, 1),
+    anchor,
   };
 
   const size = layer.size;
@@ -230,14 +267,47 @@ export function resolveTransform(layer: SceneLayer, timeMs: number): ResolvedTra
   return resolved;
 }
 
+export function anchorTranslation(anchor?: LayerAnchor): { xPct: number; yPct: number } {
+  switch (anchor) {
+    case "topLeft":
+      return { xPct: 0, yPct: 0 };
+    case "topRight":
+      return { xPct: -100, yPct: 0 };
+    case "bottomLeft":
+      return { xPct: 0, yPct: -100 };
+    case "bottomRight":
+      return { xPct: -100, yPct: -100 };
+    case "center":
+    default:
+      return { xPct: -50, yPct: -50 };
+  }
+}
+
+export function anchorOrigin(anchor?: LayerAnchor): string {
+  switch (anchor) {
+    case "topLeft":
+      return "0% 0%";
+    case "topRight":
+      return "100% 0%";
+    case "bottomLeft":
+      return "0% 100%";
+    case "bottomRight":
+      return "100% 100%";
+    case "center":
+    default:
+      return "50% 50%";
+  }
+}
+
 /**
  * The single CSS transform string used by every layer.
  *
- * `translate(-50%,-50%)` centres the content on its anchor, the scale is
- * non-uniform, and the rotation happens about the content's own centre.
+ * Translate centers or aligns the content on its anchor according to `t.anchor`,
+ * the scale is non-uniform, and rotation happens about the anchor.
  */
 export function transformCss(t: ResolvedTransform): string {
-  return `translate(-50%,-50%) scale(${t.scaleX}, ${t.scaleY}) rotate(${t.rotation}deg)`;
+  const { xPct, yPct } = anchorTranslation(t.anchor);
+  return `translate(${xPct}%,${yPct}%) scale(${t.scaleX}, ${t.scaleY}) rotate(${t.rotation}deg)`;
 }
 
 /**
@@ -329,6 +399,7 @@ export function applyLayerTransform(el: HTMLElement, t: ResolvedTransform, layer
   el.style.left = `${t.xPct}%`;
   el.style.top = `${t.yPct}%`;
   el.style.transform = transformCss(t);
+  el.style.transformOrigin = anchorOrigin(t.anchor);
   el.style.opacity = String(t.opacity);
 
   const authored = el.dataset.mfAuthoredFilter ?? "";

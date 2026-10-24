@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { colorSchema, idSchema, msSchema, offsetSchema } from "../common.js";
+import { colorSchema, EASINGS, idSchema, msSchema, offsetSchema } from "../common.js";
 import { presetRefSchema } from "../motion.js";
 import { sfxTriggerSchema } from "../audio.js";
 import { layoutSlotSchema } from "../layout-slots.js";
@@ -18,6 +18,16 @@ export const LAYER_BLEND_MODES = [
   "plus-lighter",
 ] as const;
 export type LayerBlendMode = (typeof LAYER_BLEND_MODES)[number];
+
+export const LAYER_ANCHORS = [
+  "center",
+  "topLeft",
+  "topRight",
+  "bottomLeft",
+  "bottomRight",
+] as const;
+export type LayerAnchor = (typeof LAYER_ANCHORS)[number];
+export const layerAnchorSchema = z.enum(LAYER_ANCHORS);
 
 export const keyframeSchema = z.strictObject({
   at: msSchema,
@@ -79,7 +89,14 @@ export type KeyframeProperty = (typeof KEYFRAME_PROPERTIES)[number];
  * Deliberately small: these are the curves the runtime implements EXACTLY, so
  * the value the Studio previews is the value the renderer produces.
  */
-export const KEYFRAME_EASINGS = ["linear", "easeIn", "easeOut", "easeInOut", "cubic"] as const;
+export const KEYFRAME_EASINGS = [
+  "linear",
+  "easeIn",
+  "easeOut",
+  "easeInOut",
+  "cubic",
+  ...EASINGS.filter((e) => e !== "linear"),
+] as const;
 export type KeyframeEasing = (typeof KEYFRAME_EASINGS)[number];
 
 /** The legal range of a keyframe's value, per property. */
@@ -157,6 +174,12 @@ export const layerBaseSchema = z.strictObject({
    * `lottie`) re-declare it with their own required/defaulted shape.
    */
   position: offsetSchema.optional(),
+  /**
+   * Spatial anchor point of the layer. Default: "center".
+   * For left-aligned editorial text with maxWidthPct, "topLeft" ensures
+   * deterministic left margin alignment from position.xPct.
+   */
+  anchor: layerAnchorSchema.default("center").optional(),
   /** Uniform scale multiplier (1 = the authored size). */
   scale: z.number().min(0.05).max(10).optional(),
   /** Non-uniform scale on the X axis. Overrides the uniform `scale`. */

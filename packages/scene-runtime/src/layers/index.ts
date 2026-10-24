@@ -16,6 +16,9 @@ import { renderBentoGrid } from "./bento-grid.js";
 import { renderConnectorDiagram } from "./connector-diagram.js";
 import { renderMetricTicker } from "./metric-ticker.js";
 import { renderComparisonSplit } from "./comparison-split.js";
+import { renderCartographicRoute } from "./cartographic-route.js";
+import { renderEditorialRule } from "./editorial-rule.js";
+import { renderTimelineStrip } from "./timeline-strip.js";
 
 export interface BuiltLayer {
   /** element that entrance/emphasis/exit presets animate */
@@ -66,5 +69,11 @@ export function renderLayer(layer: Layer, ctx: LayerContext): BuiltLayer {
       return renderMetricTicker(layer, ctx);
     case "comparisonSplit":
       return renderComparisonSplit(layer, ctx);
+    case "cartographicRoute":
+      return renderCartographicRoute(layer, ctx);
+    case "editorialRule":
+      return renderEditorialRule(layer, ctx);
+    case "timelineStrip":
+      return renderTimelineStrip(layer, ctx);
   }
 }

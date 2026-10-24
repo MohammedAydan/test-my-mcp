@@ -222,7 +222,7 @@ export const CRISP_TEXT_CSS = [
 export const TEXT_UNIT_GUARD_CSS = [
   "padding:0.12em 0.08em",
   "margin:-0.12em -0.08em",
-  "line-height:1.35",
+  "line-height:inherit",
   "white-space:pre",
   "unicode-bidi:isolate",
 ].join(";");

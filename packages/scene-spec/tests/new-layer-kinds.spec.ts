@@ -30,8 +30,8 @@ const BASE: SceneSpecInput = {
 };
 
 describe("the layer-type registry", () => {
-  it("now carries SIXTEEN kinds", () => {
-    expect(LAYER_TYPES).toHaveLength(16);
+  it("now carries NINETEEN kinds", () => {
+    expect(LAYER_TYPES).toHaveLength(19);
     expect([...LAYER_TYPES]).toEqual([
       "background",
       "imageLogo",
@@ -49,6 +49,9 @@ describe("the layer-type registry", () => {
       "connectorDiagram",
       "metricTicker",
       "comparisonSplit",
+      "cartographicRoute",
+      "editorialRule",
+      "timelineStrip",
     ]);
   });
 });

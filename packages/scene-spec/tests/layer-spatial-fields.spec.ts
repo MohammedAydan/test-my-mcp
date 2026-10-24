@@ -107,6 +107,26 @@ const LAYER_FIXTURES: Record<string, Record<string, unknown>> = {
     rightTitle: "MotionForge",
     rightItems: ["Programmatic API", "Sub-second preview"],
   },
+  cartographicRoute: {
+    id: "route",
+    type: "cartographicRoute",
+    waypoints: [
+      { xPct: 10, yPct: 10 },
+      { xPct: 90, yPct: 90 },
+    ],
+  },
+  editorialRule: {
+    id: "rule",
+    type: "editorialRule",
+  },
+  timelineStrip: {
+    id: "timeline",
+    type: "timelineStrip",
+    events: [
+      { date: "2020", title: "Launch" },
+      { date: "2024", title: "Scale" },
+    ],
+  },
 };
 
 const SPATIAL = {

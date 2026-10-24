@@ -23,6 +23,9 @@ export * from "./layers/bento-grid.js";
 export * from "./layers/connector-diagram.js";
 export * from "./layers/metric-ticker.js";
 export * from "./layers/comparison-split.js";
+export * from "./layers/cartographic-route.js";
+export * from "./layers/editorial-rule.js";
+export * from "./layers/timeline-strip.js";
 // --- keyframe evaluation (shared by the runtime AND the studio) --------------
 export * from "./keyframes.js";
 // --- scene + validation -----------------------------------------------------

@@ -82,7 +82,24 @@ describe("layer filters", () => {
 describe("layer keyframes", () => {
   it("declares the closed property and easing vocabularies", () => {
     expect([...KEYFRAME_PROPERTIES]).toEqual(["xPct", "yPct", "scale", "rotation", "opacity"]);
-    expect([...KEYFRAME_EASINGS]).toEqual(["linear", "easeIn", "easeOut", "easeInOut", "cubic"]);
+    expect(KEYFRAME_EASINGS).toContain("linear");
+    expect(KEYFRAME_EASINGS).toContain("easeIn");
+    expect(KEYFRAME_EASINGS).toContain("easeOut");
+    expect(KEYFRAME_EASINGS).toContain("easeInOut");
+    expect(KEYFRAME_EASINGS).toContain("cubic");
+    expect(KEYFRAME_EASINGS).toContain("sine.inOut");
+    expect(KEYFRAME_EASINGS).toContain("power2.out");
+  });
+
+  it("accepts standard GSAP easing vocabulary in layer keyframes", () => {
+    const parsed = layerKeyframeSchema.parse({
+      id: "k1",
+      timeMs: 1000,
+      property: "xPct",
+      value: 40,
+      easing: "sine.inOut",
+    });
+    expect(parsed.easing).toBe("sine.inOut");
   });
 
   it("accepts a keyframe and defaults the easing", () => {

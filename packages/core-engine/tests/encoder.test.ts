@@ -64,6 +64,48 @@ describe("buildAudioGraph", () => {
     expect(graph.outLabel).toBeNull();
     expect(graph.inputArgs).toEqual([]);
   });
+
+  it("handles music with zero fades without emitting double commas", () => {
+    const paths = enginePaths();
+    const sceneWithMusic: SceneSpecInput = {
+      ...sceneInput,
+      assets: [{ id: "m1", kind: "audio", src: "https://example.com/music.mp3" }],
+      audio: {
+        music: {
+          assetId: "m1",
+          gain: 0.8,
+          fadeInMs: 0,
+          fadeOutMs: 0,
+          normalize: false,
+        },
+        cues: [],
+      },
+    };
+    const graph = buildAudioGraph(parseScene(sceneWithMusic), paths, 5.0);
+    expect(graph.filterComplex).not.toContain(",,");
+    expect(graph.filterComplex).toContain("volume=0.8,apad");
+  });
+});
+
+describe("encoderArgs for AMD AMF", () => {
+  it("generates correct AMF arguments across quality profiles", async () => {
+    const { encoderArgs } = await import("../src/encoder.js");
+    const previewArgs = encoderArgs("h264_amf", "preview");
+    expect(previewArgs).toContain("h264_amf");
+    expect(previewArgs).toContain("-quality");
+    expect(previewArgs).toContain("speed");
+
+    const draftArgs = encoderArgs("h264_amf", "draft");
+    expect(draftArgs).toContain("h264_amf");
+    expect(draftArgs).toContain("speed");
+    expect(draftArgs).toContain("-rc");
+    expect(draftArgs).toContain("cqp");
+
+    const prodArgs = encoderArgs("h264_amf", "production");
+    expect(prodArgs).toContain("h264_amf");
+    expect(prodArgs).toContain("quality");
+    expect(prodArgs).toContain("vbr_peak");
+  });
 });
 
 describe("profileFor", () => {

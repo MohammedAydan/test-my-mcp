@@ -366,6 +366,12 @@ export class WarmPage {
         "--font-render-hinting=none",
         "--force-device-scale-factor=1",
         "--hide-scrollbars",
+        "--use-gl=angle",
+        "--use-angle=d3d11",
+        "--enable-gpu-rasterization",
+        "--enable-zero-copy",
+        "--ignore-gpu-blocklist",
+        "--disable-software-rasterizer",
       ],
     });
     this.browser = browser;

@@ -1,3 +1,4 @@
+import fsp from "node:fs/promises";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
@@ -44,6 +45,13 @@ import {
  * | `upload_asset` | put a file into the vault — an agent could not author a job without a logo |
  * | `project_asset_manifest` | what the project already has |
  * | `render_scene` | an alias of `render_video` (the name some hosts expect) |
+ * | `critique_and_autofix_scene` | autonomous layout/contrast art director and auto-fixer |
+ * | `auto_choreograph_audio` | autonomous SFX cue choreography across 14-cue bank |
+ * | `generate_storyboard_from_brief` | autonomous end-to-end multi-scene storyboard synthesis |
+ * | `compose_storyboard_video` | sequential rendering and xfade crossfade stitching |
+ * | `process_image_asset` | deterministic Sharp processing: 16:9 crop, cover resize, grading, bg removal, scrims |
+ * | `synthesize_narration_and_subtitles` | broadcast-mastered TTS voiceover and synchronized 2-line .srt |
+ * | `mix_scene_soundtrack` | procedural ambient score & sidechain ducking mixer (-6 dB speech ducking, -17 LUFS master) |
  *
  * Validation happens in two layers, and BOTH surfaces reach the caller:
  *  1. The advertised tool schema IS the real `sceneSpecSchema`, so hosts that
@@ -74,6 +82,9 @@ export const TOOL_NAMES = [
   "auto_choreograph_audio",
   "generate_storyboard_from_brief",
   "compose_storyboard_video",
+  "process_image_asset",
+  "synthesize_narration_and_subtitles",
+  "mix_scene_soundtrack",
 ] as const;
 
 export const SCENESPEC_RESOURCE_URI = "motionforge://scenespec/v1";
@@ -682,6 +693,8 @@ export async function handleUploadAsset(args: {
   name: string;
   kind?: string;
   projectPath?: string;
+  sourceFilePath?: string;
+  sourceUrl?: string;
   /** the file's bytes, base64 */
   contentBase64?: string;
   /** the file's bytes, as UTF-8 text (SVG, JSON, …) */
@@ -689,13 +702,21 @@ export async function handleUploadAsset(args: {
 }): Promise<ToolTextResult> {
   return withEngineErrors(async () => {
     let bytes: Buffer;
-    if (args.contentBase64 !== undefined) {
+    if (args.sourceFilePath !== undefined) {
+      bytes = await fsp.readFile(args.sourceFilePath);
+    } else if (args.sourceUrl !== undefined) {
+      const res = await fetch(args.sourceUrl);
+      if (!res.ok) {
+        return failed(`Failed to fetch file from sourceUrl: ${res.statusText}`);
+      }
+      bytes = Buffer.from(await res.arrayBuffer());
+    } else if (args.contentBase64 !== undefined) {
       bytes = Buffer.from(args.contentBase64, "base64");
     } else if (args.contentText !== undefined) {
       bytes = Buffer.from(args.contentText, "utf8");
     } else {
       return failed(
-        "upload_asset needs either `contentBase64` (binary) or `contentText` (UTF-8 text, e.g. an SVG)."
+        "upload_asset needs either `sourceFilePath` (local path), `sourceUrl` (remote URL), `contentBase64` (binary), or `contentText` (UTF-8 text, e.g. an SVG)."
       );
     }
     if (bytes.length === 0) {
@@ -707,6 +728,97 @@ export async function handleUploadAsset(args: {
       `vault src: ${item.src}\n` +
       `declare it in scene.assets as { "id": "<your id>", "kind": "${item.kind}", "src": "${item.src}" }`;
     return ok(text, item as unknown as Record<string, unknown>);
+  });
+}
+
+/** `process_image_asset` — perform deterministic image transformations with Sharp. */
+export async function handleProcessImageAsset(args: {
+  sourceAssetId?: string;
+  sourceFilePath?: string;
+  sourceUrl?: string;
+  outputName: string;
+  projectPath?: string;
+  crop16x9?: boolean | { width?: number; height?: number };
+  coverResize?: { width: number; height: number; position?: string };
+  colorGrade?: { brightness?: number; saturation?: number; tintHex?: string };
+  removeBackground?: boolean | { threshold?: number; featherPx?: number; keyColorHex?: string };
+  generateScrim?: { direction: "left" | "right" | "bottom" | "top" | "full" | "radial"; color?: string; opacity?: number; width?: number; height?: number };
+}): Promise<ToolTextResult> {
+  return withEngineErrors(async () => {
+    const item = await engineClient.processImageAsset({
+      source: {
+        assetId: args.sourceAssetId,
+        filePath: args.sourceFilePath,
+        url: args.sourceUrl,
+      },
+      operations: {
+        crop16x9: args.crop16x9,
+        coverResize: args.coverResize,
+        colorGrade: args.colorGrade,
+        removeBackground: args.removeBackground,
+        generateScrim: args.generateScrim,
+      },
+      outputName: args.outputName,
+      projectPath: args.projectPath,
+    });
+    const text =
+      `image processed and saved: ${item.name} (${item.kind}, ${item.size} bytes)\n` +
+      `vault src: ${item.src}\n` +
+      `declare it in scene.assets as { "id": "<your id>", "kind": "image", "src": "${item.src}" }`;
+    return ok(text, item as unknown as Record<string, unknown>);
+  });
+}
+
+/** `synthesize_narration_and_subtitles` — local TTS with broadcast mastering & synchronized SRT. */
+export async function handleSynthesizeNarrationAndSubtitles(args: {
+  text: string;
+  voice?: string;
+  rate?: string;
+  pitch?: string;
+  volume?: string;
+  outputName?: string;
+  projectPath?: string;
+  timelineOffsetMs?: number;
+  maxCharsPerLine?: number;
+}): Promise<ToolTextResult> {
+  return withEngineErrors(async () => {
+    const result = await engineClient.synthesizeNarrationAndSubtitles(args);
+    const lines = [
+      `narration synthesized and mastered: ${result.durationSec.toFixed(2)}s (${result.durationMs}ms)`,
+      `loudness: ${result.loudnessLUFS.toFixed(1)} LUFS (standardized for documentary/commercial speech)`,
+      `audio vault src: ${result.vaultSrc}`,
+      `subtitles: ${result.cues.length} frame-accurate 2-line balanced cues generated`,
+      `srt path: ${result.srtPath}`,
+      "",
+      "first 3 subtitle cues:",
+      ...result.cues.slice(0, 3).map((c) => `  [${c.startTime} --> ${c.endTime}] ${c.lines.join(" / ")}`),
+    ];
+    return ok(lines.join("\n"), result as unknown as Record<string, unknown>);
+  });
+}
+
+/** `mix_scene_soundtrack` — procedural ambient score & sidechain ducking mixer. */
+export async function handleMixSceneSoundtrack(args: {
+  narrationSrc: string;
+  ambientBedSrc?: string;
+  cues?: Array<{ atMs: number; sfx: string; gain?: number; pan?: number }>;
+  durationSec?: number;
+  outputName?: string;
+  projectPath?: string;
+  duckingDb?: number;
+  targetLufs?: number;
+  ceilingDbTP?: number;
+}): Promise<ToolTextResult> {
+  return withEngineErrors(async () => {
+    const result = await engineClient.mixSceneSoundtrack(args);
+    const lines = [
+      `scene soundtrack mixed successfully: ${result.durationSec.toFixed(2)}s (${result.durationMs}ms)`,
+      `integrated master loudness: ${result.measuredLufs.toFixed(1)} LUFS (ceiling -1.5 dBTP)`,
+      `speech ducking: background music automatically ducked by -6 dB during narration`,
+      `soundtrack vault src: ${result.vaultSrc}`,
+      `declare it in scene.audio.music as { "assetId": "<music-asset-id>", "gain": 1.0 }`,
+    ];
+    return ok(lines.join("\n"), result as unknown as Record<string, unknown>);
   });
 }
 
@@ -1021,17 +1133,129 @@ export function registerTools(server: McpServer): void {
     {
       title: "Upload a file into the asset vault",
       description:
-        "Put a file into the engine's asset vault so a scene can reference it as `vault:<name>`. Accepts UTF-8 text (an SVG, a Lottie JSON) via contentText, or any binary via contentBase64. With projectPath the file is ALSO written into the project's assets/ tree.",
+        "Put a file into the engine's asset vault so a scene can reference it as `vault:<name>`. Accepts UTF-8 text (an SVG, a Lottie JSON) via contentText, any binary via contentBase64, local file via sourceFilePath, or remote download via sourceUrl. With projectPath the file is ALSO written into the project's assets/ tree.",
       inputSchema: {
         name: z.string().min(1).describe("File name with its extension, e.g. logo.svg"),
         kind: z.string().optional().describe("images | video | audio | lottie (inferred from the extension when omitted)"),
         projectPath: z.string().optional().describe("Project root; the file is copied into its assets/ tree too"),
         contentBase64: z.string().optional().describe("The file's bytes, base64"),
         contentText: z.string().optional().describe("The file's bytes as UTF-8 text"),
+        sourceFilePath: z.string().optional().describe("Local file path to read asset bytes from (avoids large base64 in stdio)"),
+        sourceUrl: z.string().optional().describe("Remote URL to download asset bytes from"),
       },
     },
-    async ({ name, kind, projectPath, contentBase64, contentText }) =>
-      handleUploadAsset({ name, kind, projectPath, contentBase64, contentText })
+    async ({ name, kind, projectPath, contentBase64, contentText, sourceFilePath, sourceUrl }) =>
+      handleUploadAsset({ name, kind, projectPath, contentBase64, contentText, sourceFilePath, sourceUrl })
+  );
+
+  server.registerTool(
+    "process_image_asset",
+    {
+      title: "Process an image asset with Sharp",
+      description:
+        "Perform deterministic image transformations with Sharp: 16:9 cinematic crop, cover resize, duotone/color grading, background removal (luminance/color key with feathered alpha), and gradient scrim generation. Outputs a new asset in the vault and optional project folder.",
+      inputSchema: {
+        sourceAssetId: z.string().optional().describe("Existing vault asset ID or name"),
+        sourceFilePath: z.string().optional().describe("Local file path on disk"),
+        sourceUrl: z.string().optional().describe("Remote image URL to fetch"),
+        outputName: z.string().min(1).describe("Output file name in vault (e.g. hero-processed.png)"),
+        projectPath: z.string().optional().describe("Optional project directory to save processed image"),
+        crop16x9: z
+          .union([z.boolean(), z.object({ width: z.number().optional(), height: z.number().optional() })])
+          .optional()
+          .describe("Crop or pad to 16:9 cinematic aspect ratio"),
+        coverResize: z
+          .object({
+            width: z.number().int().min(1),
+            height: z.number().int().min(1),
+            position: z.string().optional(),
+          })
+          .optional()
+          .describe("Resize image to cover specified dimensions"),
+        colorGrade: z
+          .object({
+            brightness: z.number().min(0).max(3).optional(),
+            saturation: z.number().min(0).max(3).optional(),
+            tintHex: z.string().optional(),
+          })
+          .optional()
+          .describe("Apply brightness, saturation, and tint hex color grade"),
+        removeBackground: z
+          .union([
+            z.boolean(),
+            z.object({
+              threshold: z.number().min(0).max(255).optional(),
+              featherPx: z.number().min(0).max(20).optional(),
+              keyColorHex: z.string().optional(),
+            }),
+          ])
+          .optional()
+          .describe("Remove background with luminance or color-key thresholding and feathered alpha"),
+        generateScrim: z
+          .object({
+            direction: z.enum(["left", "right", "bottom", "top", "full", "radial"]),
+            color: z.string().optional(),
+            opacity: z.number().min(0).max(1).optional(),
+            width: z.number().optional(),
+            height: z.number().optional(),
+          })
+          .optional()
+          .describe("Generate or composite a cinematic gradient scrim"),
+      },
+    },
+    async (args) => handleProcessImageAsset(args as any)
+  );
+
+  server.registerTool(
+    "synthesize_narration_and_subtitles",
+    {
+      title: "Synthesize narration voiceover and synchronized subtitles",
+      description:
+        "Synthesizes voiceover speech, applies professional broadcast mastering (resample to 48kHz, highpass 75Hz, lowpass 11kHz, EBU R128 normalization to -18 LUFS, brickwall limiting at -1.5 dBTP), and generates frame-accurate 2-line balanced subtitles (<= 42 chars/line) formatted as .srt.",
+      inputSchema: {
+        text: z.string().min(1).describe("Narration script text to speak"),
+        voice: z.string().optional().describe("Voice identifier (default: en-US-ChristopherNeural)"),
+        rate: z.string().optional().describe("Speech rate modifier (e.g. +0%, -10%)"),
+        pitch: z.string().optional().describe("Pitch modifier (e.g. +0Hz)"),
+        volume: z.string().optional().describe("Volume modifier (e.g. +0%)"),
+        outputName: z.string().optional().describe("Output file name slug without extension (default: narration)"),
+        projectPath: z.string().optional().describe("Optional project directory to save audio and srt files"),
+        timelineOffsetMs: z.number().min(0).optional().describe("Timeline start offset in ms for subtitles (default: 0)"),
+        maxCharsPerLine: z.number().min(20).max(80).optional().describe("Maximum subtitle characters per line (default: 42)"),
+      },
+    },
+    async (args) => handleSynthesizeNarrationAndSubtitles(args)
+  );
+
+  server.registerTool(
+    "mix_scene_soundtrack",
+    {
+      title: "Mix scene soundtrack with sidechain ducking",
+      description:
+        "Mixes narration WAVs, ambient pads, and SFX cues for a scene. Uses FFmpeg sidechaincompress ducking so background music automatically drops by -6 dB during speech and master loudness hits -17 LUFS with -1.5 dBTP ceiling.",
+      inputSchema: {
+        narrationSrc: z.string().describe("Vault asset path or URL/file path for narration audio"),
+        ambientBedSrc: z.string().optional().describe("Optional ambient music bed; if omitted, a multi-harmonic ambient pad is synthesized procedurally"),
+        cues: z
+          .array(
+            z.object({
+              atMs: z.number().min(0).describe("Timestamp in ms to trigger cue"),
+              sfx: z.string().describe("SFX name or bank cue"),
+              gain: z.number().min(0).max(2).optional().describe("Gain multiplier (default: 1.0)"),
+              pan: z.number().min(-1).max(1).optional().describe("Stereo pan (-1 left .. +1 right)"),
+            })
+          )
+          .optional()
+          .describe("SFX cues to mix into soundtrack"),
+        durationSec: z.number().min(0.5).optional().describe("Target duration in seconds"),
+        outputName: z.string().optional().describe("Output file name slug without extension"),
+        projectPath: z.string().optional().describe("Optional project directory to save mixed audio"),
+        duckingDb: z.number().optional().describe("Ducking attenuation in dB during speech (default: -6 dB)"),
+        targetLufs: z.number().optional().describe("Integrated master loudness target (default: -17 LUFS)"),
+        ceilingDbTP: z.number().optional().describe("Master true-peak ceiling (default: -1.5 dBTP)"),
+      },
+    },
+    async (args) => handleMixSceneSoundtrack(args)
   );
 
   server.registerTool(

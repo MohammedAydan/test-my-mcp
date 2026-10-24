@@ -97,7 +97,7 @@ describe("MCP contract over a live client session", () => {
     const client = await connect();
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([...TOOL_NAMES].sort());
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(20);
     // the original six are all still there, unchanged in name
     for (const name of [
       "get_motion_capabilities",
@@ -192,9 +192,9 @@ describe("MCP contract over a live client session", () => {
     expect(parsed.minimalValidScene).toBeDefined();
     expect(parsed.nestedShapeNotes).toBeDefined();
 
-    // …and the tool count is still exactly 17
+    // …and the tool count is still exactly 20
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(17);
+    expect(tools).toHaveLength(20);
   });
 });
 
@@ -1079,5 +1079,115 @@ describe("critique_and_autofix_scene", () => {
     expect(text2).toContain("compose storyboard master compose-async999 started in background (wait: false)");
     const struct2 = (result2 as any).structuredContent;
     expect(struct2).toEqual({ jobId: "compose-async999", status: "running" });
+  });
+
+  it("calls process_image_asset and returns processed image metadata", async () => {
+    const mockItem = {
+      name: "hero-processed.png",
+      kind: "images" as const,
+      size: 42000,
+      src: "vault:hero-processed.png",
+      sha256: "abc123sha",
+    };
+
+    const spy = vi
+      .spyOn(engineClient, "processImageAsset")
+      .mockResolvedValue(mockItem);
+
+    const client = await connect();
+    const result = await client.callTool({
+      name: "process_image_asset",
+      arguments: {
+        sourceFilePath: "/tmp/source.png",
+        outputName: "hero-processed.png",
+        crop16x9: true,
+        colorGrade: { brightness: 1.1, saturation: 1.2 },
+      },
+    });
+
+    expect(spy).toHaveBeenCalled();
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(text).toContain("image processed and saved: hero-processed.png");
+    expect(text).toContain("vault src: vault:hero-processed.png");
+    const struct = (result as any).structuredContent;
+    expect(struct).toBeDefined();
+    expect(struct.name).toBe("hero-processed.png");
+    expect(struct.size).toBe(42000);
+  });
+
+  it("calls synthesize_narration_and_subtitles and returns mastered audio and srt data", async () => {
+    const mockResult = {
+      audioPath: "/tmp/narration.wav",
+      srtPath: "/tmp/narration.srt",
+      vaultSrc: "vault:narration.wav",
+      durationSec: 4.5,
+      durationMs: 4500,
+      loudnessLUFS: -18.0,
+      cues: [
+        {
+          index: 1,
+          startTime: "00:00:00,000",
+          endTime: "00:00:02,100",
+          lines: ["Welcome to MotionForge.", "The autonomous video engine."],
+        },
+      ],
+    };
+
+    const spy = vi
+      .spyOn(engineClient, "synthesizeNarrationAndSubtitles")
+      .mockResolvedValue(mockResult);
+
+    const client = await connect();
+    const result = await client.callTool({
+      name: "synthesize_narration_and_subtitles",
+      arguments: {
+        text: "Welcome to MotionForge. The autonomous video engine.",
+        voice: "en-US-ChristopherNeural",
+      },
+    });
+
+    expect(spy).toHaveBeenCalled();
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(text).toContain("narration synthesized and mastered: 4.50s (4500ms)");
+    expect(text).toContain("loudness: -18.0 LUFS");
+    expect(text).toContain("vault:narration.wav");
+    const struct = (result as any).structuredContent;
+    expect(struct).toBeDefined();
+    expect(struct.durationMs).toBe(4500);
+    expect(struct.loudnessLUFS).toBe(-18.0);
+  });
+
+  it("calls mix_scene_soundtrack and returns sidechain-ducked mixed audio report", async () => {
+    const mockResult = {
+      outputPath: "/tmp/soundtrack.wav",
+      vaultSrc: "vault:scene-soundtrack.wav",
+      durationSec: 5.0,
+      durationMs: 5000,
+      measuredLufs: -17.0,
+    };
+
+    const spy = vi
+      .spyOn(engineClient, "mixSceneSoundtrack")
+      .mockResolvedValue(mockResult);
+
+    const client = await connect();
+    const result = await client.callTool({
+      name: "mix_scene_soundtrack",
+      arguments: {
+        narrationSrc: "vault:narration.wav",
+        duckingDb: -6,
+        targetLufs: -17,
+      },
+    });
+
+    expect(spy).toHaveBeenCalled();
+    const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    expect(text).toContain("scene soundtrack mixed successfully: 5.00s (5000ms)");
+    expect(text).toContain("integrated master loudness: -17.0 LUFS");
+    expect(text).toContain("background music automatically ducked by -6 dB");
+    const struct = (result as any).structuredContent;
+    expect(struct).toBeDefined();
+    expect(struct.vaultSrc).toBe("vault:scene-soundtrack.wav");
+    expect(struct.measuredLufs).toBe(-17.0);
   });
 });
